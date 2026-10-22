@@ -23,12 +23,44 @@ import com.school.sarvodayaattendance.data.AppStorage
 import com.school.sarvodayaattendance.data.BackupPayload
 import com.school.sarvodayaattendance.data.Student
 import com.school.sarvodayaattendance.utils.FaceMatcherEngine
+import java.io.BufferedReader
+import java.io.InputStreamReader
 
 class AdminActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var filePathCallback: ValueCallback<Array<Uri>>? = null
     private val gson = Gson()
+
+    // Native Restore Picker for 200KB+ HTML/JSON backup files
+    private val nativeRestoreLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val sb = StringBuilder()
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    BufferedReader(InputStreamReader(stream)).use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            sb.append(line).append("\n")
+                        }
+                    }
+                }
+                val ok = AppStorage.importFromHtmlOrJson(this, sb.toString())
+                if (ok) {
+                    FaceMatcherEngine.clearCache()
+                    val count = AppStorage.loadData(this).students.size
+                    Toast.makeText(this, "✔ डेटा रिस्टोर हो गया! (कुल छात्र: $count)", Toast.LENGTH_LONG).show()
+                    webView.reload()
+                } else {
+                    Toast.makeText(this, "❌ अमान्य बैकअप फ़ाइल!", Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this, "❌ फ़ाइल पढ़ने में त्रुटि!", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     private val fileChooserLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -59,6 +91,8 @@ class AdminActivity : AppCompatActivity() {
         ws.domStorageEnabled = true
         ws.allowFileAccess = true
         ws.allowContentAccess = true
+        ws.allowFileAccessFromFileURLs = true
+        ws.allowUniversalAccessFromFileURLs = true
 
         webView.addJavascriptInterface(NativeAdminBridge(), "AndroidBridge")
         webView.webViewClient = WebViewClient()
@@ -71,11 +105,12 @@ class AdminActivity : AppCompatActivity() {
                 this@AdminActivity.filePathCallback?.onReceiveValue(null)
                 this@AdminActivity.filePathCallback = filePathCallback
                 return try {
-                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                    val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
                         addCategory(Intent.CATEGORY_OPENABLE)
                         type = "*/*"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                     }
-                    fileChooserLauncher.launch(intent)
+                    fileChooserLauncher.launch(Intent.createChooser(intent, "फाइल चुनें"))
                     true
                 } catch (e: Exception) {
                     this@AdminActivity.filePathCallback = null
@@ -84,7 +119,6 @@ class AdminActivity : AppCompatActivity() {
             }
         }
 
-        // सीधे assets फोल्डर से admin.html लोड करें (इससे Kotlin Compiler कभी क्रैश नहीं होगा)
         webView.loadUrl("file:///android_asset/admin.html")
     }
 
@@ -97,39 +131,19 @@ class AdminActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun openNativeRestorePicker() {
+            runOnUiThread {
+                nativeRestoreLauncher.launch("*/*")
+            }
+        }
+
+        @JavascriptInterface
         fun saveNativePayload(jsonStr: String) {
             try {
-                val mapType = object : TypeToken<Map<String, Any>>() {}.type
-                val rawMap: Map<String, Any> = gson.fromJson(jsonStr, mapType)
-
-                val stuJson = gson.toJson(rawMap["students"] ?: emptyList<Any>())
-                val stuType = object : TypeToken<MutableList<Student>>() {}.type
-                val stuList: MutableList<Student> = gson.fromJson(stuJson, stuType)
-
-                val attJson = gson.toJson(rawMap["attendance"] ?: emptyMap<String, Any>())
-                val attType = object : TypeToken<MutableMap<String, MutableList<String>>>() {}.type
-                val attMap: MutableMap<String, MutableList<String>> = gson.fromJson(attJson, attType)
-
-                val holJson = gson.toJson(rawMap["holidays"] ?: emptyMap<String, Any>())
-                val holType = object : TypeToken<MutableMap<String, MutableMap<String, String>>>() {}.type
-                val holMap: MutableMap<String, MutableMap<String, String>> = try {
-                    gson.fromJson(holJson, holType)
-                } catch (e: Exception) {
-                    mutableMapOf()
+                val ok = AppStorage.importFromHtmlOrJson(this@AdminActivity, jsonStr)
+                if (ok) {
+                    FaceMatcherEngine.clearCache()
                 }
-
-                val pin = (rawMap["adminPin"] as? String) ?: "123456"
-                val scanOnly = (rawMap["isScannerOnlyPack"] as? Boolean) ?: false
-
-                val newPayload = BackupPayload(
-                    students = stuList,
-                    attendance = attMap,
-                    holidays = holMap,
-                    adminPin = pin,
-                    isScannerOnlyPack = scanOnly
-                )
-                AppStorage.saveData(this@AdminActivity, newPayload)
-                FaceMatcherEngine.clearCache()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
