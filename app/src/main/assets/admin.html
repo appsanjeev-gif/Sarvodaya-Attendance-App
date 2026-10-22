@@ -119,11 +119,9 @@
       <div class="section-label" style="color:#1e3a8a;">💾 मास्टर डेटा बैकअप एवं रिस्टोर</div>
       <div style="display:flex;gap:8px;">
         <button type="button" class="btn-primary" style="padding:10px;font-size:13px;flex:1;" onclick="exportMasterBackupJson()">📥 मास्टर बैकअप सेव</button>
-        <div class="btn-primary" style="padding:10px;font-size:13px;flex:1;position:relative;overflow:hidden;text-align:center;">
-          <span>📤 रिस्टोर (Restore)</span>
-          <input type="file" accept=".html,.json" style="position:absolute;inset:0;opacity:0;" onchange="restoreAppData(event)">
-        </div>
+        <button type="button" class="btn-primary" style="padding:10px;font-size:13px;flex:1;background:#0f766e;" onclick="triggerNativeRestore()">📤 रिस्टोर (Restore)</button>
       </div>
+    </div>
     </div>
   </div>
 
