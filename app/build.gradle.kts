@@ -37,18 +37,21 @@ dependencies {
     implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("androidx.activity:activity-ktx:1.8.2")
 
-    // CameraX (Live Superfast Auto-Scan Camera)
+    // CameraX (Live Superfast Auto-Scan Camera) + Guava ListenableFuture
     val cameraxVersion = "1.3.1"
     implementation("androidx.camera:camera-core:$cameraxVersion")
     implementation("androidx.camera:camera-camera2:$cameraxVersion")
     implementation("androidx.camera:camera-lifecycle:$cameraxVersion")
     implementation("androidx.camera:camera-view:$cameraxVersion")
+    implementation("com.google.guava:guava:31.1-android")
 
-    // Google ML Kit Face Detection (Offline 3D Face Landmarks & Contours)
+    // Google ML Kit Face Detection & Tasks
     implementation("com.google.mlkit:face-detection:16.1.6")
+    implementation("com.google.android.gms:play-services-tasks:18.1.0")
 
-    // JSON & PC HTML Backup Parser
+    // JSON & Coroutines
     implementation("com.google.code.gson:gson:2.10.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
 }
