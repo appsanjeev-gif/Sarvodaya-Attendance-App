@@ -296,7 +296,7 @@ class MainActivity : AppCompatActivity() {
         uiHandler.postDelayed(hideCardRunnable!!, durationMs)
     }
 
-    private fun showPinDialog() {
+    private fun LengthFilter(6) {
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
             hint = "6-अंकों का पिन (डिफ़ॉल्ट: 123456)"
