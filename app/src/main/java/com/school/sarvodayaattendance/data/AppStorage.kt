@@ -69,8 +69,7 @@ object AppStorage {
     }
 
     fun isSundayOrHoliday(payload: BackupPayload, dateKey: String, targetClass: String): Boolean {
-        val reason = getHolidayReason(payload, dateKey, targetClass)
-        return reason != null
+        return getHolidayReason(payload, dateKey, targetClass) != null
     }
 
     fun getHolidayReason(payload: BackupPayload, dateKey: String, targetClass: String): String? {
@@ -92,22 +91,27 @@ object AppStorage {
         }
     }
 
-    // PC के ब्राउज़र (HTML या JSON) से सेव की गई फ़ाइल को सीधे Native App में इम्पोर्ट करना
+    // HTML (v15/v16) या JSON बैकअप फ़ाइल को 100% सटीक रूप से निकालने और सेव करने का इंजन
     fun importFromHtmlOrJson(context: Context, fileContent: String): Boolean {
         return try {
             var jsonStr = fileContent.trim()
             if (!jsonStr.startsWith("{")) {
-                val marker = "id=\"embeddedAppData\""
-                val idx = jsonStr.indexOf(marker)
-                if (idx != -1) {
-                    val sub = jsonStr.substring(idx)
-                    val start = sub.indexOf(">")
-                    val end = sub.indexOf("</script>")
-                    if (start != -1 && end != -1) {
-                        jsonStr = sub.substring(start + 1, end).trim()
+                val regex = Regex("""<script[^>]*id=["']embeddedAppData["'][^>]*>([\s\S]*?)</script>""", RegexOption.IGNORE_CASE)
+                val match = regex.find(jsonStr)
+                if (match != null) {
+                    jsonStr = match.groupValues[1].trim()
+                } else {
+                    val idx = jsonStr.indexOf("embeddedAppData")
+                    if (idx != -1) {
+                        val start = jsonStr.indexOf(">", idx)
+                        val end = jsonStr.indexOf("</script>", start)
+                        if (start != -1 && end != -1) {
+                            jsonStr = jsonStr.substring(start + 1, end).trim()
+                        }
                     }
                 }
             }
+
             val mapType = object : TypeToken<Map<String, Any>>() {}.type
             val rawMap: Map<String, Any> = gson.fromJson(jsonStr, mapType)
 
@@ -119,9 +123,29 @@ object AppStorage {
             val attType = object : TypeToken<MutableMap<String, MutableList<String>>>() {}.type
             val attMap: MutableMap<String, MutableList<String>> = gson.fromJson(attJson, attType)
 
+            val normalizedHolidays = mutableMapOf<String, MutableMap<String, String>>()
+            val rawHolidays = rawMap["holidays"]
+            if (rawHolidays is Map<*, *>) {
+                for ((k, v) in rawHolidays) {
+                    val dateKey = k?.toString() ?: continue
+                    if (v is String) {
+                        normalizedHolidays[dateKey] = mutableMapOf("सभी" to v)
+                    } else if (v is Map<*, *>) {
+                        val scopeMap = mutableMapOf<String, String>()
+                        for ((sk, sv) in v) {
+                            if (sk != null && sv != null) {
+                                scopeMap[sk.toString()] = sv.toString()
+                            }
+                        }
+                        normalizedHolidays[dateKey] = scopeMap
+                    }
+                }
+            }
+
             val current = loadData(context)
             current.students = stuList
             current.attendance = attMap
+            current.holidays = normalizedHolidays
             if (rawMap["adminPin"] is String) {
                 current.adminPin = rawMap["adminPin"] as String
             }
