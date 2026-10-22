@@ -1,0 +1,582 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>एडमिन डैशबोर्ड</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; user-select: none; }
+  body { background: #f1f5f9; color: #0f172a; padding-bottom: 30px; }
+  .top-header { background: #ffffff; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #e2e8f0; }
+  .school-brand { display: flex; align-items: center; gap: 10px; }
+  .school-logo { width: 36px; height: 36px; border-radius: 50%; background: #ea580c; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 17px; }
+  .school-title { font-size: 16px; font-weight: 800; color: #0f172a; }
+  .admin-wrap { padding: 12px; max-width: 480px; margin: 0 auto; }
+  .admin-banner { background: linear-gradient(135deg, #1e3a8a, #0f766e); color: #fff; padding: 15px; border-radius: 16px; margin-bottom: 12px; }
+  .date-picker-badge { position: relative; display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.22); border: 1.5px solid rgba(255,255,255,0.7); padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 800; color: #fff; overflow: hidden; }
+  .date-picker-badge input[type="date"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; }
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: #fff; color: #0f172a; padding: 10px; border-radius: 12px; text-align: center; }
+  .stat-box-label { font-size: 12.5px; font-weight: 800; }
+  .stat-box-val { font-size: 21px; font-weight: 900; margin-top: 2px; }
+  .card-section { background: #fff; border-radius: 15px; padding: 12px; margin-bottom: 12px; border: 1px solid #e2e8f0; }
+  .section-label { font-size: 14.5px; font-weight: 800; color: #0f172a; margin-bottom: 8px; }
+  .class-breakdown-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
+  .class-mini-stat { background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 10px; padding: 8px 4px; text-align: center; font-size: 11.5px; font-weight: 800; }
+  .class-mini-stat.selected-cls { background: #eff6ff; border: 2px solid #1e3a8a; }
+  .roll-badges-scroll { display: flex; flex-wrap: wrap; gap: 6px; max-height: 74px; overflow-y: auto; }
+  .roll-num-circle { min-width: 30px; height: 30px; padding: 0 6px; border-radius: 999px; background: #16a34a; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12.5px; font-weight: 900; }
+  .start-scan-big-btn { width: 100%; background: #16a34a; color: #fff; border: none; padding: 14px; border-radius: 14px; font-size: 17px; font-weight: 900; margin-bottom: 12px; }
+  .admin-actions-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
+  .action-tile { background: #fff; border: 1.5px solid #cbd5e1; border-radius: 14px; padding: 12px 6px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 5px; font-weight: 800; font-size: 12px; }
+  .sub-modal { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.78); z-index: 60; justify-content: center; align-items: flex-end; }
+  .sub-modal.open { display: flex; }
+  .modal-sheet { width: 100%; max-width: 480px; max-height: 92vh; background: #fff; border-top-left-radius: 20px; border-top-right-radius: 20px; display: flex; flex-direction: column; overflow: hidden; }
+  .modal-header { padding: 13px 15px; background: #0f172a; color: #fff; display: flex; justify-content: space-between; align-items: center; }
+  .modal-title { font-size: 16px; font-weight: 800; }
+  .close-btn { background: rgba(255,255,255,0.2); color: #fff; border: none; width: 32px; height: 32px; border-radius: 50%; font-size: 16px; }
+  .modal-body { padding: 14px; overflow-y: auto; flex: 1; }
+  .form-group { margin-bottom: 10px; }
+  .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  label.field-lbl { display: block; font-size: 12.5px; font-weight: 800; color: #334155; margin-bottom: 4px; }
+  input, select { width: 100%; padding: 9px 10px; border: 1.5px solid #cbd5e1; border-radius: 9px; font-size: 14px; background: #f8fafc; user-select: text; }
+  .photo-thumbs { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .photo-thumb { width: 54px; height: 54px; border-radius: 8px; object-fit: cover; border: 2px solid #16a34a; }
+  .btn-primary { width: 100%; background: #1e3a8a; color: #fff; border: none; padding: 12px; border-radius: 10px; font-size: 15px; font-weight: 800; }
+  .btn-danger { background: #fee2e2; color: #dc2626; border: 1px solid #fca5a5; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 12px; }
+  .btn-success-sm { background: #16a34a; color: #fff; border: none; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 12px; position: relative; overflow: hidden; display: inline-flex; align-items: center; }
+  .btn-locked-sm { background: #dcfce7; color: #15803d; border: 1px solid #86efac; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 12px; }
+  .btn-edit-sm { background: #dbeafe; color: #1e3a8a; border: 1px solid #93c5fd; padding: 6px 10px; border-radius: 8px; font-weight: 800; font-size: 12px; }
+  .class-pill { flex: 1; padding: 8px; border-radius: 999px; border: 1px solid #cbd5e1; background: #f8fafc; font-weight: 800; font-size: 13px; text-align: center; }
+  .class-pill.active { background: #1e3a8a; color: #fff; }
+  .student-item-card { border: 1.5px solid #cbd5e1; border-radius: 13px; padding: 11px; margin-bottom: 10px; background: #fff; }
+  .student-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .student-avatar-wrap { position: relative; width: 52px; height: 52px; }
+  .student-avatar-img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 2px solid #1e3a8a; }
+  .roll-circle { width: 52px; height: 52px; border-radius: 50%; background: #1e3a8a; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 800; }
+  .roll-mini-badge { position: absolute; bottom: -2px; right: -2px; background: #1e3a8a; color: #fff; font-size: 10.5px; font-weight: 900; padding: 1px 5px; border-radius: 999px; border: 1px solid #fff; }
+  .att-summary-bar { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 8px; margin-bottom: 6px; }
+  .six-day-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; background: #fff; border-radius: 8px; padding: 6px; margin-top: 5px; }
+  .six-day-cell { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 3px 2px; font-size: 10.5px; font-weight: 800; text-align: center; white-space: nowrap; }
+  .student-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px 8px; background: #f8fafc; padding: 8px; border-radius: 8px; font-size: 12.5px; margin-bottom: 8px; }
+  .att-history-box { max-height: 150px; overflow-y: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 5px 8px; font-size: 12px; }
+  .att-history-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px dashed #e2e8f0; }
+  .download-choice-bar { display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 10px; padding: 8px; margin-bottom: 10px; }
+  .download-choice-bar.show { display: block; }
+  .toast-msg { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 9px 16px; border-radius: 10px; font-size: 13px; font-weight: 800; z-index: 200; display: none; }
+</style>
+</head>
+<body>
+  <header class="top-header">
+    <div class="school-brand">
+      <div class="school-logo">स</div>
+      <div class="school-title">सर्वोदय मध्य विद्यालय, सोहसराय</div>
+    </div>
+    <div id="headerDateBadge" style="font-size:12.5px;font-weight:900;color:#1e3a8a;"></div>
+  </header>
+
+  <div class="admin-wrap">
+    <div class="admin-banner">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <div style="font-size:18px;font-weight:900;">एडमिन डैशबोर्ड</div>
+        <label class="date-picker-badge">
+          <span>📅</span>
+          <span id="adminSelectedDateLabel"></span>
+          <span>▾</span>
+          <input type="date" id="adminDatePicker" onchange="onAdminDateChange(this.value)">
+        </label>
+      </div>
+      <div class="stats-row">
+        <div><div class="stat-box-label" style="color:#16a34a;">उपस्थित</div><div id="statPresent" class="stat-box-val" style="color:#16a34a;">0</div></div>
+        <div><div class="stat-box-label" style="color:#dc2626;">अनुपस्थित</div><div id="statAbsent" class="stat-box-val" style="color:#dc2626;">0</div></div>
+        <div><div class="stat-box-label" style="color:#1e3a8a;">कुल छात्र</div><div id="statTotal" class="stat-box-val" style="color:#1e3a8a;">0</div></div>
+      </div>
+    </div>
+
+    <div class="card-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+        <div class="section-label" style="margin-bottom:0;" id="dateOverviewHeading"></div>
+        <div style="display:flex;gap:6px;">
+          <button type="button" class="btn-edit-sm" onclick="resetToTodayDate()">आज</button>
+          <button type="button" class="btn-success-sm" onclick="openDateAttendanceModal()">📋 सूची</button>
+        </div>
+      </div>
+      <div id="classWiseMiniBreakdown" class="class-breakdown-grid"></div>
+      <div id="datePresentListPreview" class="roll-badges-scroll"></div>
+    </div>
+
+    <button type="button" class="start-scan-big-btn" onclick="goBackToLiveScanner()">[▶] हाज़िरी शुरू करें (लाइव AI स्कैनर)</button>
+
+    <div class="admin-actions-grid">
+      <div class="action-tile" onclick="openAddStudentModal()"><div style="font-size:20px;">👤+</div><div>नया छात्र जोड़ें</div></div>
+      <div class="action-tile" onclick="openStudentListModal()"><div style="font-size:20px;">📋</div><div>छात्र सूची</div></div>
+      <div class="action-tile" onclick="openReportsModal()"><div style="font-size:20px;">📊</div><div>मासिक रिपोर्ट्स</div></div>
+      <div class="action-tile" onclick="openHolidayModal()"><div style="font-size:20px;">🏖️</div><div>छुट्टी मार्क करें</div></div>
+      <div class="action-tile" onclick="openMultiDeviceModal()" style="background:#eff6ff;"><div style="font-size:20px;">🤝</div><div>मल्टी-मोबाइल शेयर</div></div>
+      <div class="action-tile" onclick="openChangePinModal()"><div style="font-size:20px;">🔑</div><div>पासवर्ड व सत्र</div></div>
+    </div>
+
+    <div class="card-section" style="background:#eff6ff;">
+      <div class="section-label" style="color:#1e3a8a;">💾 मास्टर डेटा बैकअप एवं रिस्टोर</div>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn-primary" style="padding:10px;font-size:13px;flex:1;" onclick="exportMasterBackupJson()">📥 मास्टर बैकअप सेव</button>
+        <div class="btn-primary" style="padding:10px;font-size:13px;flex:1;position:relative;overflow:hidden;text-align:center;">
+          <span>📤 रिस्टोर (Restore)</span>
+          <input type="file" accept=".html,.json" style="position:absolute;inset:0;opacity:0;" onchange="restoreAppData(event)">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 0: DATE ATTENDANCE POPUP -->
+  <div id="dateAttendanceModal" class="sub-modal">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div><div class="modal-title" id="dateModalTitle">उपस्थिति सूची</div><div id="dateModalSub" style="font-size:11.5px;color:#cbd5e1;"></div></div>
+        <button type="button" class="close-btn" onclick="closeModal('dateAttendanceModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <button type="button" class="class-pill active" id="tabBtnPresent" onclick="switchDateModalTab('present')">✔ उपस्थित</button>
+          <button type="button" class="class-pill" id="tabBtnAbsent" onclick="switchDateModalTab('absent')">✗ अनुपस्थित</button>
+        </div>
+        <input type="text" id="dateModalSearch" placeholder="नाम या रोल नंबर खोजें..." style="margin-bottom:10px;" oninput="renderDateAttendanceModalList()">
+        <div id="dateModalListContainer" style="max-height:55vh;overflow-y:auto;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 1: ADD / EDIT STUDENT -->
+  <div id="addStudentModal" class="sub-modal">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title" id="addEditModalTitle">नया छात्र जोड़ें</div>
+        <button type="button" class="close-btn" onclick="closeModal('addStudentModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <input type="hidden" id="editStudentId" value="">
+        <div class="form-row-2">
+          <div class="form-group"><label class="field-lbl">कक्षा *</label><select id="stuClass"><option value="6वीं">6वीं</option><option value="7वीं">7वीं</option><option value="8वीं">8वीं</option></select></div>
+          <div class="form-group"><label class="field-lbl">रोल नंबर *</label><input type="number" id="stuRoll" placeholder="07"></div>
+        </div>
+        <div class="form-group"><label class="field-lbl">छात्र का पूरा नाम *</label><input type="text" id="stuName" placeholder="राहुल कुमार"></div>
+        <div class="form-row-2">
+          <div class="form-group"><label class="field-lbl">लिंग (M / F) *</label><select id="stuGender"><option value="M">M</option><option value="F">F</option></select></div>
+          <div class="form-group"><label class="field-lbl">कोटि (Category) *</label><select id="stuCategory"><option value="EBC">EBC</option><option value="OBC">OBC</option><option value="SC">SC</option><option value="ST">ST</option><option value="GEN">GEN</option></select></div>
+        </div>
+        <div class="form-group"><label class="field-lbl">आधार नं. (12 अंक अनिवार्य) *</label><input type="tel" id="stuAadhaar" maxlength="12" inputmode="numeric" placeholder="12 अंकों की संख्या"></div>
+        <div class="form-row-2">
+          <div class="form-group"><label class="field-lbl">पिता का नाम *</label><input type="text" id="stuFather"></div>
+          <div class="form-group"><label class="field-lbl">माता का नाम *</label><input type="text" id="stuMother"></div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group"><label class="field-lbl">जन्म तिथि (DOB)</label><input type="date" id="stuDob"></div>
+          <div class="form-group"><label class="field-lbl">मोबाइल (10 अंक)*</label><input type="tel" id="stuMobile" maxlength="10" inputmode="numeric"></div>
+        </div>
+        <div class="form-row-2">
+          <div class="form-group"><label class="field-lbl">नामांकन संख्या</label><input type="text" id="stuAdmNo"></div>
+          <div class="form-group"><label class="field-lbl">नामांकन तिथि *</label><input type="date" id="stuAdmDate"></div>
+        </div>
+        <div class="form-group"><label class="field-lbl">पूरा पता</label><input type="text" id="stuAddress"></div>
+        <div class="form-group" style="background:#f0fdf4;padding:10px;border-radius:10px;border:1.5px dashed #16a34a;">
+          <label class="field-lbl" style="color:#15803d;">📸 छात्र की फोटो (1 से 5)</label>
+          <div style="display:flex;gap:8px;margin-top:4px;">
+            <div class="btn-success-sm"><span>📷 फोटो चुनें</span><input type="file" accept="image/*" multiple style="position:absolute;inset:0;opacity:0;" onchange="handleStudentPhotoUpload(event)"></div>
+            <button type="button" class="btn-danger" onclick="clearTempPhotos()">साफ़ करें</button>
+          </div>
+          <div id="stuPhotoThumbs" class="photo-thumbs"></div>
+        </div>
+        <button type="button" class="btn-primary" onclick="saveStudentRecord()">✔ सेव करें</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2: STUDENT LIST -->
+  <div id="studentListModal" class="sub-modal">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title" id="studentCountSub">पंजीकृत छात्र सूची</div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" class="btn-success-sm" onclick="toggleAllStudentsDownloadBar()">⬇️ डाउनलोड</button>
+          <button type="button" class="close-btn" onclick="closeModal('studentListModal')">✕</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <div id="allStudentsDownloadBar" class="download-choice-bar">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <select id="exportSingleClassSelect" style="width:125px;background:#fff;"><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select>
+            <div style="display:flex;gap:6px;">
+              <button type="button" class="btn-success-sm" onclick="exportAllStudentsFullCSV()">📊 Excel</button>
+              <button type="button" class="btn-edit-sm" style="background:#1e3a8a;color:#fff;" onclick="exportAllStudentsFullPDF()">📄 PDF (कॉम्पैक्ट)</button>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:10px;">
+          <input type="text" id="listSearchInput" placeholder="नाम, रोल या मोबाइल खोजें..." oninput="renderStudentList()">
+          <select id="listClassFilter" style="width:100px;" onchange="syncExportClassAndRender()"><option value="6वीं">6वीं</option><option value="7वीं">7वीं</option><option value="8वीं">8वीं</option><option value="सभी">सभी</option></select>
+        </div>
+        <div id="studentListContainer"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 2B: FULL DETAILS POPUP -->
+  <div id="studentFullDetailsModal" class="sub-modal" style="z-index:80;">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div><div class="modal-title" id="fullDetailTitle">छात्र विवरण</div><div id="fullDetailSub" style="font-size:11.5px;color:#cbd5e1;"></div></div>
+        <div id="fullDetailTopExportBtns" style="display:flex;gap:6px;align-items:center;"></div>
+      </div>
+      <div class="modal-body" id="fullDetailModalBody"></div>
+    </div>
+  </div>
+
+  <!-- MODAL 3: REPORTS & REGISTER CHART -->
+  <div id="reportsModal" class="sub-modal">
+    <div class="modal-sheet">
+      <div class="modal-header">
+        <div class="modal-title">मासिक रजिस्टर चार्ट एवं रिपोर्ट्स</div>
+        <button type="button" class="close-btn" onclick="closeModal('reportsModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="card-section" style="border:2px solid #16a34a;background:#f0fdf4;">
+          <div class="section-label" style="color:#15803d;">📋 1. मासिक उपस्थिति रजिस्टर चार्ट (स्कूल रजिस्टर)</div>
+          <div class="form-row-2">
+            <div class="form-group"><label class="field-lbl">कक्षा चुनें</label><select id="regChartClassSelect" style="background:#fff;"><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select></div>
+            <div class="form-group"><label class="field-lbl">माह चुनें</label><input type="month" id="regChartMonthInput" value="2026-10" style="background:#fff;"></div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="btn-primary" style="background:#1e3a8a;" onclick="exportMonthlyRegisterChartPDF()">📄 रजिस्टर चार्ट (PDF)</button>
+            <button type="button" class="btn-primary" style="background:#15803d;" onclick="exportMonthlyRegisterChartExcel()">📥 रजिस्टर (Excel)</button>
+          </div>
+        </div>
+        <div class="card-section" style="margin-bottom:0;">
+          <div class="section-label">📊 2. समेकित उपस्थिति एवं प्रोफाइल रिपोर्ट</div>
+          <div class="form-group"><label class="field-lbl">कक्षा चुनें</label><select id="repClassSelect"><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select></div>
+          <div class="form-row-2">
+            <div class="form-group"><label class="field-lbl">कब से</label><input type="month" id="repFromMonth" value="2026-04"></div>
+            <div class="form-group"><label class="field-lbl">कब तक</label><input type="month" id="repToMonth" value="2026-10"></div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button type="button" class="btn-primary" style="background:#15803d;" onclick="exportClassCSV()">📥 Excel</button>
+            <button type="button" class="btn-primary" style="background:#b91c1c;" onclick="exportClassPDF()">📄 PDF प्रिंट</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 4: PIN & PROMOTION -->
+  <div id="changePinModal" class="sub-modal">
+    <div class="modal-sheet">
+      <div class="modal-header"><div class="modal-title">🔑 पासवर्ड व सत्र सेटिंग्स</div><button type="button" class="close-btn" onclick="closeModal('changePinModal')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-group"><label class="field-lbl">वर्तमान 6-अंकों का पिन</label><input type="password" id="oldPinInput" maxlength="6" inputmode="numeric"></div>
+        <div class="form-group"><label class="field-lbl">नया 6-अंकों का पिन</label><input type="password" id="newPinInput" maxlength="6" inputmode="numeric"></div>
+        <div class="form-group"><label class="field-lbl">नया पिन दोबारा दर्ज करें</label><input type="password" id="confirmPinInput" maxlength="6" inputmode="numeric"></div>
+        <button type="button" class="btn-primary" onclick="saveNewAdminPin()">✔ नया पासवर्ड सेव करें</button>
+        <div style="margin-top:20px;padding-top:12px;border-top:1px dashed #cbd5e1;display:flex;justify-content:space-between;align-items:center;">
+          <div style="font-size:13px;font-weight:900;">🎓 वार्षिक क्लास प्रोमोशन</div>
+          <button type="button" class="btn-danger" onclick="startPromotionStep(1)">प्रोमोट करें ▸</button>
+        </div>
+        <div id="promoWizardBox" style="display:none;margin-top:10px;background:#fef2f2;border:1px solid #f87171;border-radius:10px;padding:10px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 5: HOLIDAY -->
+  <div id="holidayModal" class="sub-modal">
+    <div class="modal-sheet">
+      <div class="modal-header"><div class="modal-title">🏖️ छुट्टी प्रबंधन</div><button type="button" class="close-btn" onclick="closeModal('holidayModal')">✕</button></div>
+      <div class="modal-body">
+        <div class="form-row-2">
+          <div class="form-group"><label class="field-lbl">छुट्टी की तारीख *</label><input type="date" id="holidayDateInput"></div>
+          <div class="form-group"><label class="field-lbl">किसके लिए छुट्टी है? *</label><select id="holidayClassInput"><option value="सभी">पूरा स्कूल (सभी)</option><option value="6वीं">केवल कक्षा 6वीं</option><option value="7वीं">केवल कक्षा 7वीं</option><option value="8वीं">केवल कक्षा 8वीं</option></select></div>
+        </div>
+        <div class="form-group"><label class="field-lbl">छुट्टी का कारण / नाम</label><input type="text" id="holidayReasonInput" placeholder="जैसे: छठ पूजा, शीतकालीन अवकाश"></div>
+        <button type="button" class="btn-primary" style="background:#15803d;margin-bottom:12px;" onclick="markDateAsHoliday()">🏝️ छुट्टी मार्क करें</button>
+        <div id="holidayListContainer" style="max-height:170px;overflow-y:auto;background:#f8fafc;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:12.5px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL 6: MULTI MOBILE -->
+  <div id="multiDeviceModal" class="sub-modal">
+    <div class="modal-sheet">
+      <div class="modal-header"><div class="modal-title">🤝 मल्टी-मोबाइल शेयरिंग</div><button type="button" class="close-btn" onclick="closeModal('multiDeviceModal')">✕</button></div>
+      <div class="modal-body">
+        <div class="card-section" style="background:#f0fdf4;">
+          <div class="section-label" style="color:#15803d;">1. सीमित स्कैनर पैक बनाएं</div>
+          <div class="form-group"><select id="scannerPackClassSelect"><option value="सभी">सभी कक्षाएं</option><option value="6वीं">केवल कक्षा 6वीं</option><option value="7वीं">केवल कक्षा 7वीं</option><option value="8वीं">केवल कक्षा 8वीं</option></select></div>
+          <button type="button" class="btn-primary" style="background:#16a34a;" onclick="exportLimitedScannerPack()">📤 स्कैनर पैक शेयर करें</button>
+        </div>
+        <div class="card-section" style="background:#eff6ff;margin-bottom:0;">
+          <div class="section-label" style="color:#1e3a8a;">2. दूसरे मोबाइल की हाज़िरी मर्ज करें</div>
+          <div class="btn-primary" style="position:relative;overflow:hidden;text-align:center;">
+            <span>🔄 हाज़िरी फ़ाइल मर्ज करें</span>
+            <input type="file" accept=".json" style="position:absolute;inset:0;opacity:0;" onchange="mergeExternalAttendanceFile(event)">
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toastBox" class="toast-msg"></div>
+
+<script>
+  var students = [];
+  var attendance = {};
+  var holidays = {};
+  var adminPin = '123456';
+  var isScannerOnlyPack = false;
+  var currentAdminClass = 'सभी';
+  var tempStudentPhotos = [];
+  var selectedAdminDateKey = '';
+  var currentDateModalTab = 'present';
+  var longPressTimer = null;
+  var longPressTriggered = false;
+  var dpPressTimer = null;
+
+  function sortStudentsByRollAsc(arr) {
+    return arr.slice().sort(function(a, b) {
+      var rDiff = Number(a.roll) - Number(b.roll);
+      if (rDiff !== 0) return rDiff;
+      return String(a.className).localeCompare(String(b.className));
+    });
+  }
+  function formatRollTwoDigits(r) {
+    var s = String(r || '').trim();
+    return s.length === 1 ? ('0' + s) : s;
+  }
+  function isExactDigits(str, len) {
+    if (!str || str.length !== len) return false;
+    for (var i = 0; i < str.length; i++) {
+      var c = str.charCodeAt(i);
+      if (c < 48 || c > 57) return false;
+    }
+    return true;
+  }
+  function getTodayShort() {
+    var d = new Date();
+    return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getFullYear()).slice(-2);
+  }
+  function getTodayIso() {
+    var d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  }
+  function isoToShortDateKey(isoStr) {
+    if (!isoStr || isoStr.indexOf('-') === -1) return getTodayShort();
+    var p = isoStr.split('-');
+    return p[2].padStart(2, '0') + '.' + p[1].padStart(2, '0') + '.' + p[0].slice(-2);
+  }
+  function shortDateKeyToIso(shortKey) {
+    if (!shortKey || shortKey.indexOf('.') === -1) return getTodayIso();
+    var p = shortKey.split('.');
+    var yyyy = p[2].length === 2 ? ('20' + p[2]) : p[2];
+    return yyyy + '-' + p[1].padStart(2, '0') + '-' + p[0].padStart(2, '0');
+  }
+  function shortKeyToFullYearDot(shortKey) {
+    if (!shortKey || shortKey.indexOf('.') === -1) return shortKey;
+    var p = shortKey.split('.');
+    var yyyy = p[2].length === 2 ? ('20' + p[2]) : p[2];
+    return p[0].padStart(2, '0') + '.' + p[1].padStart(2, '0') + '.' + yyyy;
+  }
+  function formatIsoToDot(isoStr) {
+    if (!isoStr) return '-';
+    if (isoStr.indexOf('-') !== -1) return isoStr.split('-').reverse().join('.');
+    return isoStr;
+  }
+  function formatDotToIso(dotStr) {
+    if (!dotStr || dotStr === '-') return '';
+    if (dotStr.indexOf('.') !== -1) {
+      var parts = dotStr.split('.');
+      if (parts.length === 3) {
+        var yyyy = parts[2].length === 2 ? ('20' + parts[2]) : parts[2];
+        return yyyy + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0');
+      }
+    }
+    return dotStr;
+  }
+
+  function isSundayOrHoliday(dateKey, targetClass) {
+    if (!dateKey) return false;
+    var iso = shortDateKeyToIso(dateKey);
+    var d = new Date(iso + 'T12:00:00');
+    if (!isNaN(d.getTime()) && d.getDay() === 0) return true;
+    if (!holidays || !holidays[dateKey]) return false;
+    var entry = holidays[dateKey];
+    if (typeof entry === 'string') return true;
+    if (typeof entry === 'object') {
+      if (entry['सभी']) return true;
+      if (targetClass && targetClass !== 'सभी' && entry[targetClass]) return true;
+    }
+    return false;
+  }
+
+  function getHolidayReasonForRegister(dateKey, targetClass) {
+    if (!dateKey) return null;
+    if (holidays && holidays[dateKey]) {
+      var entry = holidays[dateKey];
+      if (typeof entry === 'string') return 'छुट्टी - ' + entry;
+      if (typeof entry === 'object') {
+        if (targetClass && entry[targetClass]) return 'छुट्टी - ' + entry[targetClass];
+        if (entry['सभी']) return 'छुट्टी - ' + entry['सभी'];
+      }
+    }
+    var iso = shortDateKeyToIso(dateKey);
+    var d = new Date(iso + 'T12:00:00');
+    if (!isNaN(d.getTime()) && d.getDay() === 0) return 'रविवार अवकाश';
+    return null;
+  }
+
+  function showToast(msg) {
+    var t = document.getElementById('toastBox');
+    t.textContent = msg;
+    t.style.display = 'block';
+    clearTimeout(window._tTimer);
+    window._tTimer = setTimeout(function() { t.style.display = 'none'; }, 2400);
+  }
+
+  function loadState() {
+    try {
+      if (window.AndroidBridge) {
+        var raw = window.AndroidBridge.loadNativePayload();
+        var parsed = JSON.parse(raw);
+        students = parsed.students || [];
+        attendance = parsed.attendance || {};
+        holidays = parsed.holidays || {};
+        adminPin = parsed.adminPin || '123456';
+        isScannerOnlyPack = !!parsed.isScannerOnlyPack;
+      }
+    } catch(e) {}
+  }
+
+  function saveState() {
+    var payload = {
+      students: students,
+      attendance: attendance,
+      holidays: holidays,
+      adminPin: adminPin,
+      isScannerOnlyPack: isScannerOnlyPack
+    };
+    try {
+      if (window.AndroidBridge) {
+        window.AndroidBridge.saveNativePayload(JSON.stringify(payload));
+      }
+    } catch(e) {}
+    updateDashboardStats();
+  }
+
+  function goBackToLiveScanner() {
+    if (window.AndroidBridge) window.AndroidBridge.closeAdminAndOpenScanner();
+  }
+
+  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+  function getActiveDateKey() {
+    if (!selectedAdminDateKey) selectedAdminDateKey = getTodayShort();
+    return selectedAdminDateKey;
+  }
+  function onAdminDateChange(isoVal) {
+    if (!isoVal) return;
+    selectedAdminDateKey = isoToShortDateKey(isoVal);
+    updateDashboardStats();
+    if (document.getElementById('studentListModal').classList.contains('open')) renderStudentList();
+  }
+  function resetToTodayDate() {
+    selectedAdminDateKey = getTodayShort();
+    document.getElementById('adminDatePicker').value = getTodayIso();
+    updateDashboardStats();
+  }
+
+  function handleClassCardPressStart(clsName) {
+    longPressTriggered = false;
+    clearTimeout(longPressTimer);
+    longPressTimer = setTimeout(function() {
+      longPressTriggered = true;
+      currentAdminClass = clsName;
+      updateDashboardStats();
+      openDateAttendanceModal();
+    }, 500);
+  }
+  function handleClassCardPressEnd(clsName) {
+    clearTimeout(longPressTimer);
+    if (!longPressTriggered) {
+      currentAdminClass = clsName;
+      updateDashboardStats();
+    }
+  }
+
+  function updateDashboardStats() {
+    var activeDate = getActiveDateKey();
+    document.getElementById('headerDateBadge').textContent = shortKeyToFullYearDot(getTodayShort());
+    document.getElementById('adminSelectedDateLabel').textContent = 'तारीख: ' + activeDate;
+    document.getElementById('adminDatePicker').value = shortDateKeyToIso(activeDate);
+
+    var isHol = isSundayOrHoliday(activeDate, currentAdminClass);
+    var filtered = (currentAdminClass === 'सभी') ? students : students.filter(function(s) { return s.className === currentAdminClass; });
+    var presentIds = attendance[activeDate] || [];
+    var presentStudents = filtered.filter(function(s) { return presentIds.indexOf(s.id) !== -1; });
+    var absentCount = 0;
+    filtered.forEach(function(s) {
+      if (presentIds.indexOf(s.id) === -1 && !isSundayOrHoliday(activeDate, s.className)) absentCount++;
+    });
+
+    document.getElementById('statPresent').textContent = presentStudents.length;
+    document.getElementById('statAbsent').textContent = absentCount;
+    document.getElementById('statTotal').textContent = filtered.length;
+    document.getElementById('dateOverviewHeading').textContent = '📅 ' + activeDate + ' (' + currentAdminClass + ')' + (isHol ? ' [🏖️ अवकाश]' : '');
+
+    var classesList = ['सभी', '6वीं', '7वीं', '8वीं'];
+    document.getElementById('classWiseMiniBreakdown').innerHTML = classesList.map(function(cName) {
+      var cTotal = (cName === 'सभी') ? students : students.filter(function(s) { return s.className === cName; });
+      var cPres = cTotal.filter(function(s) { return presentIds.indexOf(s.id) !== -1; }).length;
+      var activeCls = (currentAdminClass === cName) ? 'class-mini-stat selected-cls' : 'class-mini-stat';
+      var cHol = isSundayOrHoliday(activeDate, cName);
+      var titleLbl = (cName === 'सभी') ? 'सभी (All)' : ('कक्षा ' + cName);
+      return '<div class="' + activeCls + '" onmousedown="handleClassCardPressStart(\'' + cName + '\')" onmouseup="handleClassCardPressEnd(\'' + cName + '\')" ontouchstart="handleClassCardPressStart(\'' + cName + '\')" ontouchend="handleClassCardPressEnd(\'' + cName + '\')">' +
+        '<div>' + titleLbl + (cHol && cName !== 'सभी' ? ' 🏖️' : '') + '</div>' +
+        '<div style="color:#15803d;font-size:13px;margin-top:2px;">' + cPres + '/' + cTotal.length + '</div></div>';
+    }).join('');
+
+    var previewEl = document.getElementById('datePresentListPreview');
+    if (isHol) {
+      previewEl.innerHTML = '<span style="color:#b45309;font-weight:800;font-size:12px;">🏖️ अवकाश दिवस</span>';
+    } else {
+      previewEl.innerHTML = sortStudentsByRollAsc(presentStudents).map(function(s) {
+        return '<span class="roll-num-circle">' + formatRollTwoDigits(s.roll) + '</span>';
+      }).join('');
+    }
+  }
+
+  function openDateAttendanceModal() {
+    currentDateModalTab = 'present';
+    document.getElementById('dateModalSearch').value = '';
+    switchDateModalTab('present');
+    document.getElementById('dateAttendanceModal').classList.add('open');
+  }
+  function switchDateModalTab(tab) {
+    currentDateModalTab = tab;
+    document.getElementById('tabBtnPresent').className = (tab === 'present') ? 'class-pill active' : 'class-pill';
+    document.getElementById('tabBtnAbsent').className = (tab === 'absent') ? 'class-pill active' : 'class-pill';
+    renderDateAttendanceModalList();
+  }
+  function renderDateAttendanceModalList() {
+    var activeDate = getActiveDateKey();
+    var q = (document.getElementById('dateModalSearch').value || '').trim().toLowerCase();
+    var filteredClass = sortStudentsByRollAsc((currentAdminClass === 'सभी') ? students : students.filter(function(s) { return s.className === currentAdminClass; }));
+    var presentIds = attendance[activeDate] || [];
+    var pList = filteredClass.filter(function(s) { return presentIds.indexOf(s.id) !== -1; });
+    var aList = filteredClass.filter(function(s) { return presentIds.indexOf(s.id) === -1; });
+
+    document.getElementById('dateModalTitle').textContent = '📅 ' + activeDate + ' (' + currentAdminClass + ')';
+    document.getElementById('dateModalSub').textContent = 'उपस्थित: ' + pList.length + ' | अनुपस्थित: ' + aList.length;
+    var targetList = (currentDateModalTab === 'present') ? pList : aList;
+    if (q) targetList = targetList.filter(function(s) { return s.name.toLowerCase().indexOf(q) !== -1 || String(s.roll).indexOf(q) !== -1; });
+
+    document.getElementById('dateModalListContainer').innerHTML = targetList.map(function(s) {
+      var isP = (currentDateModalTab === 'present');
+      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;border-bottom:1px solid #e2e8f0;">' +
+        '<div style="display:flex;align-items:center;gap:10px;"><span class="roll-num-circle">' + formatRollTwoDigits(s.roll) + '</span><div><div style="font-weight:900;">' + s.name + '</div><div style="font-size:11.5px;color:#475569;">कक्षा: ' + s.className + '</div></div></div>' +
+        (isP ? '<span class="btn-locked-sm">🔒 उपस्थित</span>' : '<button type="button" class="btn-success-sm" onclick="markManualPresentOnly(\'' + s.id + '\');renderDateAttendanceModalList();">✔ उपस्थित करें</button>') +
+      '</div>';
+    }).join('');
+  }
