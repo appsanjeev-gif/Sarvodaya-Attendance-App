@@ -105,6 +105,14 @@ class MainActivity : AppCompatActivity() {
         tvResultSubNote = findViewById(R.id.tvResultSubNote)
 
         tvHeaderDate.text = AppStorage.getTodayFullDot()
+        findViewById<View>(R.id.laserScanLine)?.let { laser ->
+            android.animation.ObjectAnimator.ofFloat(laser, "translationY", 0f, 190f).apply {
+                duration = 1400
+                repeatMode = android.animation.ValueAnimator.REVERSE
+                repeatCount = android.animation.ValueAnimator.INFINITE
+                start()
+            }
+        }
         refreshScannerModeUI()
 
         findViewById<Button>(R.id.btnManualScanTrigger).setOnClickListener {
