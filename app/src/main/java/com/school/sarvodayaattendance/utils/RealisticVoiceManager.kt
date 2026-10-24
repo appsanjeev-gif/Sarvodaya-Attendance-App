@@ -1,12 +1,17 @@
 package com.school.sarvodayaattendance.utils
 
 import android.content.Context
-import android.content.Intent
-import android.media.AudioManager
-import android.media.ToneGenerator
+import android.media.AudioAttributes
+import android.media.MediaPlayer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
+import java.io.File
+import java.io.FileOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
 import java.util.Locale
+import java.util.concurrent.Executors
 import kotlin.random.Random
 
 class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
@@ -14,132 +19,128 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private var tts: TextToSpeech? = null
     private var isReady = false
     var isVoiceEnabled = true
-    private val hindiVoices = mutableListOf<Voice>()
-    private val englishVoices = mutableListOf<Voice>()
-    private var toneGen: ToneGenerator? = null
+    private val netExecutor = Executors.newSingleThreadExecutor()
+    private var mediaPlayer: MediaPlayer? = null
+
+    private val successTemplates = listOf(
+        "नमस्कार %s, बहुत बढ़िया! आपकी आज की उपस्थिति दर्ज हो चुकी है।",
+        "स्वागत है %s! आपकी हाज़िरी सफलतापूर्वक लग गई है।",
+        "शाबाश %s! आज विद्यालय में आपका स्वागत है, उपस्थिति दर्ज हो गई।",
+        "धन्यवाद %s, आपकी उपस्थिति समय पर दर्ज कर ली गई है।"
+    )
+
+    private val warningTemplates = listOf(
+        "ध्यान दें %s, आपकी आज की उपस्थिति पहले ही दर्ज हो चुकी है।",
+        "%s, आपकी हाज़िरी आज पहले ही लग चुकी है, दोबारा आवश्यकता नहीं है।"
+    )
+
+    private val errorTemplates = listOf(
+        "क्षमा करें, चेहरा स्पष्ट रूप से पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।",
+        "चेहरा मिलान नहीं हुआ, कृपया रोशनी में आकर दोबारा प्रयास करें।"
+    )
 
     init {
-        try {
-            toneGen = ToneGenerator(AudioManager.STREAM_MUSIC, 90)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        tts = TextToSpeech(context.applicationContext, this, "com.google.android.tts")
+        tts = TextToSpeech(context, this)
     }
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            isReady = true
-            refreshAvailableVoices()
-        }
-    }
+            val hindiLocale = Locale("hi", "IN")
+            tts?.language = hindiLocale
 
-    fun refreshAvailableVoices() {
-        val engine = tts ?: return
-        try {
-            val allVoices = engine.voices ?: return
-            hindiVoices.clear()
-            englishVoices.clear()
-            for (v in allVoices) {
-                val lang = v.locale.language.lowercase()
-                val country = v.locale.country.uppercase()
-                if (lang == "hi") {
-                    hindiVoices.add(v)
-                } else if (lang == "en" && country == "IN") {
-                    englishVoices.add(v)
+            // अमिताभ जी जैसी भारी और गंभीर (Deep Baritone Male) आवाज़ के लिए पिच और स्पीड सेटिंग
+            tts?.setPitch(0.76f)
+            tts?.setSpeechRate(0.92f)
+
+            try {
+                val voices: Set<Voice>? = tts?.voices
+                val bestMaleVoice = voices?.firstOrNull { v ->
+                    v.locale.language == "hi" && (v.name.contains("male", true) || v.name.contains("hid", true) || v.name.contains("hie", true) || v.name.contains("network", true))
+                } ?: voices?.firstOrNull { v ->
+                    v.locale.language == "hi" && !v.isNetworkConnectionRequired
                 }
+                if (bestMaleVoice != null) {
+                    tts?.voice = bestMaleVoice
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-            val res = engine.isLanguageAvailable(Locale("hi", "IN"))
-            if (res == TextToSpeech.LANG_MISSING_DATA) {
-                promptInstallHighQualityVoices()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    fun promptInstallHighQualityVoices() {
-        try {
-            val intent = Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            context.startActivity(intent)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-    }
-
-    fun playBeep(type: String) {
-        try {
-            when (type) {
-                "success" -> toneGen?.startTone(ToneGenerator.TONE_PROP_ACK, 180)
-                "warning" -> toneGen?.startTone(ToneGenerator.TONE_PROP_BEEP2, 220)
-                else -> toneGen?.startTone(ToneGenerator.TONE_PROP_NACK, 280)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
+            isReady = true
         }
     }
 
     fun speakGreeting(type: String, studentName: String) {
-        playBeep(type)
-        if (!isVoiceEnabled || !isReady) return
-        val engine = tts ?: return
+        if (!isVoiceEnabled) return
+        val cleanName = studentName.trim()
+        val message = when (type) {
+            "success" -> String.format(successTemplates[Random.nextInt(successTemplates.size)], cleanName)
+            "warning" -> String.format(warningTemplates[Random.nextInt(warningTemplates.size)], cleanName)
+            else -> errorTemplates[Random.nextInt(errorTemplates.size)]
+        }
+        speakHindi(message)
+    }
 
-        val useEnglish = Random.nextDouble() < 0.35
-        val text = when (type) {
-            "success" -> {
-                if (useEnglish) {
-                    listOf(
-                        "Well done $studentName, attendance marked!",
-                        "Welcome $studentName, have a great day!",
-                        "Good job $studentName, you are present today!"
-                    ).random()
-                } else {
-                    listOf(
-                        "शाबाश $studentName, आपकी उपस्थिति दर्ज हो गई!",
-                        "स्वागत है $studentName, आज का दिन शुभ हो!",
-                        "बहुत बढ़िया $studentName, हाज़िरी लग गई!",
-                        "सुप्रभात $studentName, आप उपस्थित हैं!"
-                    ).random()
-                }
-            }
-            "warning" -> {
-                if (useEnglish) {
-                    "Attention $studentName, attendance is already marked!"
-                } else {
-                    "$studentName, आपकी हाज़िरी आज पहले ही लग चुकी है!"
-                }
-            }
-            else -> {
-                if (useEnglish) {
-                    "Face not recognized, please look at the camera."
-                } else {
-                    "चेहरा मैच नहीं हुआ, कृपया कैमरे की ओर देखें।"
-                }
+    fun speakHindi(text: String) {
+        if (!isVoiceEnabled || text.isBlank()) return
+
+        // पहले ऑनलाइन हाई-क्वालिटी नेचुरल AI आवाज़ चलाने का प्रयास करें, इंटरनेट न होने पर तुरंत डीप-बैरीटोन ऑफलाइन इंजन चलाएं
+        netExecutor.execute {
+            val playedOnline = tryPlayOnlineNaturalVoice(text)
+            if (!playedOnline && isReady) {
+                tts?.setPitch(0.76f)
+                tts?.setSpeechRate(0.92f)
+                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SARVODAYA_VOICE_ID")
             }
         }
+    }
 
-        try {
-            if (useEnglish && englishVoices.isNotEmpty()) {
-                engine.voice = englishVoices.random()
-            } else if (!useEnglish && hindiVoices.isNotEmpty()) {
-                engine.voice = hindiVoices.random()
-            } else {
-                engine.language = if (useEnglish) Locale("en", "IN") else Locale("hi", "IN")
+    private fun tryPlayOnlineNaturalVoice(text: String): Boolean {
+        return try {
+            val encoded = URLEncoder.encode(text, "UTF-8")
+            val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=tw-ob&ttsspeed=0.92"
+            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 1800
+                readTimeout = 2200
+                setRequestProperty("User-Agent", "Mozilla/5.0")
             }
-            engine.setPitch(Random.nextDouble(0.96, 1.06).toFloat())
-            engine.setSpeechRate(0.98f)
-            engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "UTTER_${System.currentTimeMillis()}")
+            if (conn.responseCode == 200) {
+                val tempFile = File(context.cacheDir, "ai_voice_prompt.mp3")
+                conn.inputStream.use { input ->
+                    FileOutputStream(tempFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                mediaPlayer?.release()
+                mediaPlayer = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE)
+                            .build()
+                    )
+                    setDataSource(tempFile.absolutePath)
+                    prepare()
+                    // Android PlaybackParams से आवाज़ को थोड़ा गहरा (Deep Baritone) और प्रभावशाली बनाएं
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        playbackParams = playbackParams.setPitch(0.84f).setSpeed(0.96f)
+                    }
+                    start()
+                }
+                true
+            } else {
+                false
+            }
         } catch (e: Exception) {
-            e.printStackTrace()
+            false
         }
     }
 
     fun shutdown() {
         try {
+            mediaPlayer?.release()
+            mediaPlayer = null
             tts?.stop()
             tts?.shutdown()
-            toneGen?.release()
         } catch (e: Exception) {
             e.printStackTrace()
         }
