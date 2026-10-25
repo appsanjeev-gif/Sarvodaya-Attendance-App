@@ -1,6 +1,8 @@
 package com.school.sarvodayaattendance
 
 import android.Manifest
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
@@ -86,8 +88,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        voiceManager = RealisticVoiceManager(this)
+        // 192-Point TFLite Neural Engine को तुरंत चालू करें
         FaceMatcherEngine.initEngine(this)
+
+        voiceManager = RealisticVoiceManager(this)
         payload = AppStorage.loadData(this)
 
         previewView = findViewById(R.id.previewView)
@@ -106,14 +110,17 @@ class MainActivity : AppCompatActivity() {
         tvResultSubNote = findViewById(R.id.tvResultSubNote)
 
         tvHeaderDate.text = AppStorage.getTodayFullDot()
+
+        // फुल-स्क्रीन लेज़र स्कैन एनिमेशन चालू करें
         findViewById<View>(R.id.laserScanLine)?.let { laser ->
-            android.animation.ObjectAnimator.ofFloat(laser, "translationY", 0f, 190f).apply {
+            ObjectAnimator.ofFloat(laser, "translationY", 0f, 190f).apply {
                 duration = 1400
-                repeatMode = android.animation.ValueAnimator.REVERSE
-                repeatCount = android.animation.ValueAnimator.INFINITE
+                repeatMode = ValueAnimator.REVERSE
+                repeatCount = ValueAnimator.INFINITE
                 start()
             }
         }
+
         refreshScannerModeUI()
 
         findViewById<Button>(R.id.btnManualScanTrigger).setOnClickListener {
@@ -176,6 +183,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        FaceMatcherEngine.initEngine(this)
         payload = AppStorage.loadData(this)
         FaceMatcherEngine.clearCache()
         FaceMatcherEngine.warmUpCache(payload.students)
