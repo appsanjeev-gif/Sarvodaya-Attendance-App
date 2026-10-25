@@ -1,56 +1,58 @@
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
-    namespace = "com.school.sarvodayaattendance"
-    compileSdk = 34
+    namespace 'com.school.sarvodayaattendance'
+    compileSdk 34
 
     defaultConfig {
-        applicationId = "com.school.sarvodayaattendance"
-        minSdk = 24
-        targetSdk = 34
-        versionCode = 16
-        versionName = "16.0"
+        applicationId "com.school.sarvodayaattendance"
+        minSdk 24
+        targetSdk 34
+        versionCode 16
+        versionName "16.0-AI"
+    }
+
+    // AI मॉडल (.tflite) को कंप्रेस होने से बचाएं ताकि वह तेज़ चले
+    aaptOptions {
+        noCompress "tflite"
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
-
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
-
     kotlinOptions {
-        jvmTarget = "11"
+        jvmTarget = '17'
     }
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
-    implementation("androidx.activity:activity-ktx:1.8.2")
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'com.google.android.material:material:1.11.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
 
-    // CameraX & Guava
-    implementation("androidx.camera:camera-core:1.3.1")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
-    implementation("com.google.guava:guava:31.1-android")
+    def camerax_version = "1.3.1"
+    implementation "androidx.camera:camera-core:${camerax_version}"
+    implementation "androidx.camera:camera-camera2:${camerax_version}"
+    implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+    implementation "androidx.camera:camera-view:${camerax_version}"
 
-    // Google ML Kit Face Detection
-    implementation("com.google.mlkit:face-detection:16.1.6")
-    implementation("com.google.android.gms:play-services-tasks:18.1.0")
+    // Google ML Kit (चेहरा ढूँढने के लिए)
+    implementation 'com.google.mlkit:face-detection:16.1.6'
+    implementation 'com.google.android.gms:play-services-tasks:18.1.0'
 
-    // Gson JSON Parser
-    implementation("com.google.code.gson:gson:2.10.1")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+    // TensorFlow Lite (मोबाइल फेस-लॉक जैसा असली Deep Learning Face Recognition करने के लिए)
+    implementation 'org.tensorflow:tensorflow-lite:2.14.0'
+
+    implementation 'com.google.code.gson:gson:2.10.1'
 }
