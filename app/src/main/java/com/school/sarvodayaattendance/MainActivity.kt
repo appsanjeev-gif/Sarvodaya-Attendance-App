@@ -87,6 +87,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         voiceManager = RealisticVoiceManager(this)
+        FaceMatcherEngine.initEngine(this)
         payload = AppStorage.loadData(this)
 
         previewView = findViewById(R.id.previewView)
