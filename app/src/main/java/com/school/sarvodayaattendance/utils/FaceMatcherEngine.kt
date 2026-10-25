@@ -15,14 +15,12 @@ import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.ConcurrentHashMap
-import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.sqrt
 
 object FaceMatcherEngine {
 
-    // तेज़ और सटीक लाइव कैमरा डिटेक्शन के लिए
     private val detectorOptions = FaceDetectorOptions.Builder()
         .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
         .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
@@ -33,11 +31,10 @@ object FaceMatcherEngine {
     val detector = FaceDetection.getClient(detectorOptions)
 
     private var tfliteInterpreter: Interpreter? = null
-    private var isTfliteWorking = false
     private var modelInputSize = 112
     private var modelOutputSize = 192
 
-    // RAM Cache: Student ID -> List of Biometric Embeddings
+    // RAM Cache: Student ID -> List of 192-Point Neural Embeddings
     private val signatureCache = ConcurrentHashMap<String, List<FloatArray>>()
 
     @Synchronized
@@ -45,28 +42,24 @@ object FaceMatcherEngine {
         if (tfliteInterpreter != null) return
         try {
             val afd = context.assets.openFd("mobile_face_net.tflite")
-            if (afd.declaredLength > 100_000L) {
-                val inputStream = FileInputStream(afd.fileDescriptor)
-                val fileChannel = inputStream.channel
-                val mappedByteBuffer: MappedByteBuffer = fileChannel.map(
-                    FileChannel.MapMode.READ_ONLY,
-                    afd.startOffset,
-                    afd.declaredLength
-                )
-                val options = Interpreter.Options().apply { setNumThreads(4) }
-                val interpreter = Interpreter(mappedByteBuffer, options)
+            val inputStream = FileInputStream(afd.fileDescriptor)
+            val fileChannel = inputStream.channel
+            val mappedByteBuffer: MappedByteBuffer = fileChannel.map(
+                FileChannel.MapMode.READ_ONLY,
+                afd.startOffset,
+                afd.declaredLength
+            )
+            val options = Interpreter.Options().apply { setNumThreads(4) }
+            val interpreter = Interpreter(mappedByteBuffer, options)
 
-                val inShape = interpreter.getInputTensor(0).shape()
-                val outShape = interpreter.getOutputTensor(0).shape()
-                if (inShape.size >= 3) modelInputSize = inShape[1]
-                if (outShape.size >= 2) modelOutputSize = outShape[1]
+            val inShape = interpreter.getInputTensor(0).shape()   // [1, 112, 112, 3]
+            val outShape = interpreter.getOutputTensor(0).shape() // [1, 192]
+            if (inShape.size >= 3) modelInputSize = inShape[1]
+            if (outShape.size >= 2) modelOutputSize = outShape[1]
 
-                tfliteInterpreter = interpreter
-                isTfliteWorking = true
-            }
+            tfliteInterpreter = interpreter
         } catch (e: Exception) {
-            isTfliteWorking = false
-            tfliteInterpreter = null
+            e.printStackTrace()
         }
     }
 
@@ -74,16 +67,15 @@ object FaceMatcherEngine {
         signatureCache.clear()
     }
 
-    // बिना किसी थ्रेड लॉक के तुरंत कैश तैयार करें ताकि पहली बार में ही चेहरा मैच हो
     fun warmUpCache(students: List<Student>) {
+        if (tfliteInterpreter == null) return
         try {
             for (stu in students) {
                 if (!signatureCache.containsKey(stu.id) && stu.photos.isNotEmpty()) {
                     val vectors = mutableListOf<FloatArray>()
                     for (b64 in stu.photos) {
                         decodeBase64Bitmap(b64)?.let { bmp ->
-                            val centerFace = cropStoredPhotoSmart(bmp)
-                            val vec = extractHybridBiometricVector(centerFace)
+                            val vec = extractPureNeuralEmbedding(bmp)
                             if (vec.isNotEmpty()) {
                                 vectors.add(vec)
                             }
@@ -109,195 +101,90 @@ object FaceMatcherEngine {
         }
     }
 
-    // लाइव कैमरे से चेहरे के मुख्य हिस्से (Core Face) को क्रॉप करें
     fun cropFaceBitmap(source: Bitmap, box: Rect): Bitmap {
         val cx = box.exactCenterX()
         val cy = box.exactCenterY()
-        val halfW = box.width() * 0.44f
-        val halfH = box.height() * 0.46f
+        val halfSize = max(box.width(), box.height()) * 0.46f
 
-        val left = max(0, (cx - halfW).toInt())
-        val top = max(0, (cy - halfH).toInt())
-        val right = min(source.width, (cx + halfW).toInt())
-        val bottom = min(source.height, (cy + halfH).toInt())
+        val left = max(0, (cx - halfSize).toInt())
+        val top = max(0, (cy - halfSize).toInt())
+        val right = min(source.width, (cx + halfSize).toInt())
+        val bottom = min(source.height, (cy + halfSize).toInt())
 
         val w = max(1, right - left)
         val h = max(1, bottom - top)
         return Bitmap.createBitmap(source, left, top, w, h)
     }
 
-    // सेव की गई फोटो को लाइव क्रॉप के बराबर अनुपात में लाएं
-    private fun cropStoredPhotoSmart(bmp: Bitmap): Bitmap {
-        val w = bmp.width
-        val h = bmp.height
-        val marginX = (w * 0.08f).toInt()
-        val marginY = (h * 0.08f).toInt()
-        val cropW = max(1, w - marginX * 2)
-        val cropH = max(1, h - marginY * 2)
-        return Bitmap.createBitmap(bmp, marginX, marginY, cropW, cropH)
+    /**
+     * 100% Pure MobileFaceNet 192-Point Deep Neural Embedding Extractor (No 2D Fallback)
+     */
+    @Synchronized
+    private fun extractPureNeuralEmbedding(faceBmp: Bitmap): FloatArray {
+        val interpreter = tfliteInterpreter ?: return FloatArray(0)
+        return try {
+            val scaled = Bitmap.createScaledBitmap(faceBmp, modelInputSize, modelInputSize, true)
+            val imgData = ByteBuffer.allocateDirect(1 * modelInputSize * modelInputSize * 3 * 4)
+            imgData.order(ByteOrder.nativeOrder())
+            imgData.rewind()
+
+            val intValues = IntArray(modelInputSize * modelInputSize)
+            scaled.getPixels(intValues, 0, modelInputSize, 0, 0, modelInputSize, modelInputSize)
+
+            for (pixelValue in intValues) {
+                val r = ((pixelValue shr 16) and 0xFF)
+                val g = ((pixelValue shr 8) and 0xFF)
+                val b = (pixelValue and 0xFF)
+                // Standard MobileFaceNet Tensor Normalization: (val - 127.5f) / 128.0f
+                imgData.putFloat((r - 127.5f) / 128.0f)
+                imgData.putFloat((g - 127.5f) / 128.0f)
+                imgData.putFloat((b - 127.5f) / 128.0f)
+            }
+
+            val outputArray = Array(1) { FloatArray(modelOutputSize) }
+            interpreter.run(imgData, outputArray)
+            val rawEmbedding = outputArray[0]
+
+            // L2 Normalization for exact Cosine Similarity & Euclidean Distance
+            var normSq = 0f
+            for (v in rawEmbedding) normSq += v * v
+            if (normSq < 1e-6f) return FloatArray(0)
+
+            val invNorm = 1f / sqrt(normSq)
+            for (i in rawEmbedding.indices) {
+                rawEmbedding[i] *= invNorm
+            }
+            rawEmbedding
+        } catch (e: Exception) {
+            e.printStackTrace()
+            FloatArray(0)
+        }
     }
 
     /**
-     * Hybrid Biometric Extractor:
-     * 1. यदि TFLite (MobileFaceNet) सक्रिय है और वैध नॉन-ज़ीरो वेक्टर देता है, तो उसका उपयोग करें।
-     * 2. साथ ही 256-D Zero-Centered Multi-Scale Structural & Chromatic Identity Vector बनाएं जो कभी फेल नहीं होता।
+     * Pure 192-Point Neural Cosine Similarity Comparison:
+     * - असली छात्र (Same Person): Cosine Similarity (dot) >= 0.58 होता है -> Score <= 16.8f (Pass)
+     * - मित्र या दूसरा व्यक्ति (Different Person): Cosine Similarity < 0.55 होता है -> Score = 50.0f (Strict Reject)
      */
-    @Synchronized
-    private fun extractHybridBiometricVector(faceBmp: Bitmap): FloatArray {
-        val interpreter = tfliteInterpreter
-        if (isTfliteWorking && interpreter != null) {
-            try {
-                val scaled = Bitmap.createScaledBitmap(faceBmp, modelInputSize, modelInputSize, true)
-                val imgData = ByteBuffer.allocateDirect(1 * modelInputSize * modelInputSize * 3 * 4)
-                imgData.order(ByteOrder.nativeOrder())
-                imgData.rewind()
-
-                val intValues = IntArray(modelInputSize * modelInputSize)
-                scaled.getPixels(intValues, 0, modelInputSize, 0, 0, modelInputSize, modelInputSize)
-
-                for (pixelValue in intValues) {
-                    val r = ((pixelValue shr 16) and 0xFF)
-                    val g = ((pixelValue shr 8) and 0xFF)
-                    val b = (pixelValue and 0xFF)
-                    imgData.putFloat((r - 127.5f) / 128.0f)
-                    imgData.putFloat((g - 127.5f) / 128.0f)
-                    imgData.putFloat((b - 127.5f) / 128.0f)
-                }
-
-                val outputArray = Array(1) { FloatArray(modelOutputSize) }
-                interpreter.run(imgData, outputArray)
-                val raw = outputArray[0]
-
-                var norm = 0f
-                for (v in raw) norm += v * v
-                if (norm > 1e-4f) {
-                    val invNorm = 1f / sqrt(norm)
-                    for (i in raw.indices) raw[i] *= invNorm
-                    return raw
-                }
-            } catch (e: Exception) {
-                isTfliteWorking = false
-            }
-        }
-
-        // High-Precision Fallback: 256-D Zero-Centered Structural Identity Vector
-        return build256DPrecisionIdentityVector(faceBmp)
-    }
-
-    private fun build256DPrecisionIdentityVector(faceBmp: Bitmap): FloatArray {
-        val size = 40
-        val scaled = Bitmap.createScaledBitmap(faceBmp, size, size, true)
-        val pixels = IntArray(size * size)
-        scaled.getPixels(pixels, 0, size, 0, 0, size, size)
-
-        val gray = FloatArray(size * size)
-        var mean = 0f
-        for (i in pixels.indices) {
-            val p = pixels[i]
-            val r = (p shr 16) and 0xFF
-            val g = (p shr 8) and 0xFF
-            val b = p and 0xFF
-            val lum = 0.299f * r + 0.587f * g + 0.114f * b
-            gray[i] = lum
-            mean += lum
-        }
-        mean /= gray.size
-
-        var variance = 0f
-        for (v in gray) {
-            val d = v - mean
-            variance += d * d
-        }
-        val std = max(5.0f, sqrt(variance / gray.size))
-
-        // 10x10 Grid (each 4x4 pixels) -> 100 Structural Luminance + 100 Signed Gradient + 56 Symmetry/Ratio = 256-D
-        val vec = FloatArray(256)
-        var idx = 0
-
-        // 1. 100-D Zero-Mean Normalized Facial Structure (आँख, भौंह, नाक और होंठ की सटीक स्थिति)
-        for (gy in 0 until 10) {
-            for (gx in 0 until 10) {
-                var cellSum = 0f
-                for (y in (gy * 4) until ((gy + 1) * 4)) {
-                    for (x in (gx * 4) until ((gx + 1) * 4)) {
-                        cellSum += (gray[y * size + x] - mean) / std
-                    }
-                }
-                val isCenterFace = (gy in 1..8 && gx in 1..8)
-                vec[idx++] = (cellSum / 16f) * (if (isCenterFace) 1.3f else 0.5f)
-            }
-        }
-
-        // 2. 100-D Signed Directional Gradients (dx & dy combined)
-        for (gy in 0 until 10) {
-            for (gx in 0 until 10) {
-                var grad = 0f
-                for (y in (gy * 4) until ((gy + 1) * 4)) {
-                    for (x in (gx * 4) until ((gx + 1) * 4)) {
-                        val pIdx = y * size + x
-                        if (x < size - 1 && y < size - 1) {
-                            grad += ((gray[pIdx + 1] - gray[pIdx]) + (gray[pIdx + size] - gray[pIdx])) / std
-                        }
-                    }
-                }
-                vec[idx++] = (grad / 16f) * 1.2f
-            }
-        }
-
-        // 3. 56-D Horizontal & Vertical Biometric Profile Ratios (Eye-to-Nose-to-Mouth Curve)
-        for (row in 6 until 34) {
-            var rowVal = 0f
-            for (col in 8 until 32) {
-                rowVal += (gray[row * size + col] - mean) / std
-            }
-            if (idx < 256) vec[idx++] = (rowVal / 24f) * 1.4f
-        }
-        while (idx < 256) {
-            vec[idx++] = 0f
-        }
-
-        // L2 Normalize
-        var normSq = 0f
-        for (v in vec) normSq += v * v
-        val invNorm = 1f / max(1e-6f, sqrt(normSq))
-        for (i in vec.indices) vec[i] *= invNorm
-
-        return vec
-    }
-
-    private fun computeMatchDistance(v1: FloatArray, v2: FloatArray): Float {
-        if (v1.isEmpty() || v1.size != v2.size) return 999f
+    private fun computeNeuralDistance(v1: FloatArray, v2: FloatArray): Float {
+        if (v1.isEmpty() || v2.isEmpty() || v1.size != v2.size) return 999f
         var dot = 0f
-        var l1 = 0f
         for (i in v1.indices) {
             dot += v1[i] * v2[i]
-            l1 += abs(v1[i] - v2[i])
         }
-
-        return if (v1.size != 256) {
-            // TFLite MobileFaceNet Mode:
-            // Same person dot >= 0.52 -> Score <= 17.5f (Pass in MainActivity which checks <= 19.0f)
-            // Different person dot < 0.50 -> Score > 22.0f (Reject)
-            if (dot < 0.50f) 35.0f else (1.0f - dot) * 35.0f
-        } else {
-            // 256-D Zero-Centered Structural Mode:
-            // Same person dot >= 0.58 -> Score <= 18.0f (Pass)
-            // Friend / Different person dot < 0.55 -> Score > 24.0f (Reject)
-            if (dot < 0.56f) {
-                35.0f
-            } else {
-                (1.0f - dot) * 40.0f
-            }
+        // यदि 192-पॉइंट न्यूरल समानता 0.58 (58%) से कम है, तो यह दूसरा व्यक्ति है — तुरंत रिजेक्ट करें
+        if (dot < 0.58f) {
+            return 50.0f
         }
+        return (1.0f - dot) * 40.0f
     }
 
     fun findBestMatch(liveFaceBitmap: Bitmap, students: List<Student>): Pair<Student?, Float> {
+        if (tfliteInterpreter == null) return Pair(null, 999f)
         warmUpCache(students)
 
-        // लाइव चेहरे के हल्के से मूवमेंट को संभालने के लिए 2 स्केल (Normal + Tight Inner Face) चेक करें
-        val liveVec1 = extractHybridBiometricVector(liveFaceBitmap)
-        val tightCrop = cropStoredPhotoSmart(liveFaceBitmap)
-        val liveVec2 = extractHybridBiometricVector(tightCrop)
+        val liveEmbedding = extractPureNeuralEmbedding(liveFaceBitmap)
+        if (liveEmbedding.isEmpty()) return Pair(null, 999f)
 
         var bestStudent: Student? = null
         var lowestScore = 999f
@@ -307,9 +194,7 @@ object FaceMatcherEngine {
             val storedList = signatureCache[stu.id] ?: continue
             var stuBest = 999f
             for (refVec in storedList) {
-                val s1 = computeMatchDistance(liveVec1, refVec)
-                val s2 = computeMatchDistance(liveVec2, refVec)
-                val score = min(s1, s2)
+                val score = computeNeuralDistance(liveEmbedding, refVec)
                 if (score < stuBest) {
                     stuBest = score
                 }
@@ -323,13 +208,12 @@ object FaceMatcherEngine {
             }
         }
 
-        // यदि 1 से अधिक छात्र हैं, तो पहले और दूसरे के बीच अंतर (Distinctiveness) होना चाहिए
-        val marginOk = (students.size <= 1) || ((secondBestScore - lowestScore) >= 1.2f)
+        val marginOk = (students.size <= 1) || ((secondBestScore - lowestScore) >= 1.4f)
 
-        return if (bestStudent != null && lowestScore <= 18.5f && marginOk) {
+        return if (bestStudent != null && lowestScore <= 16.8f && marginOk) {
             Pair(bestStudent, lowestScore)
         } else {
-            Pair(bestStudent, max(25.0f, lowestScore))
+            Pair(bestStudent, max(30.0f, lowestScore))
         }
     }
 }
