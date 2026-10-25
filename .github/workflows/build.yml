@@ -19,16 +19,25 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Setup Gradle 8.5
+      - name: Download MobileFaceNet TFLite AI Model
+        run: |
+          mkdir -p app/src/main/assets
+          curl -L "https://github.com/sirius-ai/MobileFaceNet_TF/raw/master/arch/pretrained_model/mobilefacenet.tflite" -o app/src/main/assets/mobile_face_net.tflite || true
+          if [ ! -s app/src/main/assets/mobile_face_net.tflite ]; then
+            curl -L "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/assets/mobilefacenet.tflite" -o app/src/main/assets/mobile_face_net.tflite
+          fi
+          ls -lh app/src/main/assets/mobile_face_net.tflite
+
+      - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.5'
 
       - name: Build Debug APK
-        run: gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload Ready APK
         uses: actions/upload-artifact@v4
         with:
-          name: Sarvodaya-Attendance-Native-APK
+          name: Sarvodaya-Attendance-APK
           path: app/build/outputs/apk/debug/app-debug.apk
