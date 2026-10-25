@@ -19,13 +19,11 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Download MobileFaceNet TFLite AI Model
+      - name: Download MobileFaceNet 192-Point TFLite AI Model
         run: |
           mkdir -p app/src/main/assets
-          curl -L "https://github.com/sirius-ai/MobileFaceNet_TF/raw/master/arch/pretrained_model/mobilefacenet.tflite" -o app/src/main/assets/mobile_face_net.tflite || true
-          if [ ! -s app/src/main/assets/mobile_face_net.tflite ]; then
-            curl -L "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/assets/mobilefacenet.tflite" -o app/src/main/assets/mobile_face_net.tflite
-          fi
+          curl -fL "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/assets/mobilefacenet.tflite" -o app/src/main/assets/mobile_face_net.tflite || \
+          curl -fL "https://github.com/sirius-ai/MobileFaceNet_TF/raw/master/arch/pretrained_model/mobilefacenet.tflite" -o app/src/main/assets/mobile_face_net.tflite
           ls -lh app/src/main/assets/mobile_face_net.tflite
 
       - name: Setup Gradle
