@@ -257,7 +257,7 @@ class AdminActivity : AppCompatActivity() {
             .setCancelable(false)
             .create()
 
-        var kycLens = CameraSelector.LENS_FACING_FRONT
+        var kycLens = CameraSelector.LENS_FACING_BACK
         var isDialogActive = true
         var approvalProgress = 0
         var isChecking = false
