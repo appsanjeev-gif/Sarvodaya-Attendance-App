@@ -71,6 +71,11 @@ class MainActivity : AppCompatActivity() {
     private var isProcessingFrame = false
     private var lastScanTimestamp = 0L
 
+    // ✅ लगातार एक ही छात्र के खड़े रहने की गिनती (Streak Counter)
+    private var lastSpokenStudentId: String? = null
+    private var sameStudentScanStreak: Int = 0
+    private var emptyFrameCount: Int = 0
+
     private val uiHandler = Handler(Looper.getMainLooper())
     private var hideCardRunnable: Runnable? = null
 
@@ -90,7 +95,6 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // WhatsApp और अन्य ऐप्स पर बिना रुकावट डॉक्यूमेंट फ़ाइल शेयर करने के लिए
         StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
 
         setContentView(R.layout.activity_main)
@@ -156,7 +160,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnVoiceIcon.setOnClickListener {
-            // 🔊 बटन को 2 सेकंड दबाए रखने (Long Press) पर सीधे ऐप में नई Gemini API Key डालने की सुविधा
+            voiceManager.isVoiceEnabled = !voiceManager.isVoiceEnabled
+            btnVoiceIcon.text = if (voiceManager.isVoiceEnabled) "🔊" else "🔇"
+            btnVoiceIcon.backgroundTintList = ColorStateList.valueOf(
+                Color.parseColor(if (voiceManager.isVoiceEnabled) "#16A34A" else "#334155")
+            )
+        }
+
+        // 🔊 बटन को 2 सेकंड दबाए रखने (Long Press) पर नई Gemini API Key डालने की सुविधा
         btnVoiceIcon.setOnLongClickListener {
             val keyInput = EditText(this).apply {
                 setText(voiceManager.getApiKey())
@@ -178,12 +189,6 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("रद्द", null)
                 .show()
             true
-        }
-            voiceManager.isVoiceEnabled = !voiceManager.isVoiceEnabled
-            btnVoiceIcon.text = if (voiceManager.isVoiceEnabled) "🔊" else "🔇"
-            btnVoiceIcon.backgroundTintList = ColorStateList.valueOf(
-                Color.parseColor(if (voiceManager.isVoiceEnabled) "#16A34A" else "#334155")
-            )
         }
 
         btnAdminLock.setOnClickListener {
@@ -254,7 +259,7 @@ class MainActivity : AppCompatActivity() {
     private fun performLiveFrameCheck(isManualTap: Boolean) {
         if (isProcessingFrame) return
         val now = System.currentTimeMillis()
-        if (!isManualTap && (now - lastScanTimestamp < 2200)) return
+        if (!isManualTap && (now - lastScanTimestamp < 1600)) return
 
         if (payload.students.isEmpty()) {
             if (isManualTap) {
@@ -270,11 +275,27 @@ class MainActivity : AppCompatActivity() {
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
                 if (faces.isNotEmpty()) {
+                    emptyFrameCount = 0
                     val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
                     val croppedFace = FaceMatcherEngine.cropFaceBitmap(frameBmp, primaryFace.boundingBox)
                     val (matchedStudent, score) = FaceMatcherEngine.findBestMatch(croppedFace, payload.students)
 
                     if (matchedStudent != null && score <= 19.0f) {
+                        // ✅ स्मार्ट ओवरलैप सुरक्षा:
+                        // यदि अभी आवाज़ चल रही है और कैमरे के सामने वही छात्र खड़ा है (और मैनुअल बटन नहीं दबाया गया है),
+                        // तो वाक्य पूरा होने दें — बीच में आवाज़ को न काटें!
+                        // (लेकिन यदि कोई दूसरा नया छात्र सामने आया है, तो तुरंत उसकी हाज़िरी लगाएं!)
+                        if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
+                            isProcessingFrame = false
+                            return@addOnSuccessListener
+                        }
+
+                        // उसी छात्र के लिए दो स्कैन के बीच कम से कम 4.2 सेकंड का अंतर रखें ताकि वह आराम से हट सके
+                        if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (now - lastScanTimestamp < 4200)) {
+                            isProcessingFrame = false
+                            return@addOnSuccessListener
+                        }
+
                         lastScanTimestamp = System.currentTimeMillis()
                         handleMatchedStudent(matchedStudent)
                     } else if (isManualTap) {
@@ -282,8 +303,16 @@ class MainActivity : AppCompatActivity() {
                         showResultBanner("error", null, "चेहरा मैच नहीं हुआ!", 2000)
                         voiceManager.speakGreeting("error", "")
                     }
-                } else if (isManualTap) {
-                    showResultBanner("error", null, "कैमरे में चेहरा साफ़ नहीं दिखा!", 2000)
+                } else {
+                    // यदि कैमरे के सामने से बच्चा हट गया (लगातार 5 खाली फ्रेम यानी ~3 सेकंड), तो स्ट्रीक रीसेट कर दें
+                    emptyFrameCount++
+                    if (emptyFrameCount >= 5) {
+                        lastSpokenStudentId = null
+                        sameStudentScanStreak = 0
+                    }
+                    if (isManualTap) {
+                        showResultBanner("error", null, "कैमरे में चेहरा साफ़ नहीं दिखा!", 2000)
+                    }
                 }
                 isProcessingFrame = false
             }
@@ -299,6 +328,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // चेक करें कि क्या यह वही छात्र है जो लगातार कैमरे के सामने खड़ा है
+        if (lastSpokenStudentId == stu.id) {
+            sameStudentScanStreak++
+        } else {
+            lastSpokenStudentId = stu.id
+            sameStudentScanStreak = 1
+        }
+
         val list = payload.attendance.getOrPut(todayKey) { mutableListOf() }
         if (!list.contains(stu.id)) {
             list.add(stu.id)
@@ -306,8 +343,14 @@ class MainActivity : AppCompatActivity() {
             showResultBanner("success", stu, "✔ हाज़िरी दर्ज हुई", 4000)
             voiceManager.speakGreeting("success", stu.name)
         } else {
-            showResultBanner("warning", stu, "⚠️ आज की हाज़िरी पहले से दर्ज है!", 3000)
-            voiceManager.speakGreeting("warning", stu.name)
+            // ✅ यदि छात्र की हाज़िरी लग चुकी है और वह 3 या अधिक बार स्कैन होने पर भी नहीं हट रहा है:
+            if (sameStudentScanStreak >= 3) {
+                showResultBanner("warning", stu, "🏃 चल हट भी जा अब ${stu.name}, दूसरे को मौका दो!", 4200)
+                voiceManager.speakGreeting("move_away", stu.name)
+            } else {
+                showResultBanner("warning", stu, "⚠️ आज की हाज़िरी पहले से दर्ज है!", 3500)
+                voiceManager.speakGreeting("warning", stu.name)
+            }
         }
     }
 
@@ -384,7 +427,6 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // ✅ अब यह चैट टेक्स्ट के बजाय WhatsApp-Compatible (.txt) डॉक्यूमेंट फ़ाइल बनाकर भेजेगा!
     private fun shareTodayAttendanceJson() {
         val todayKey = AppStorage.getTodayShortKey()
         val presentIds = payload.attendance[todayKey] ?: emptyList()
@@ -399,7 +441,6 @@ class MainActivity : AppCompatActivity() {
         )
         val json = Gson().toJson(exportMap)
         try {
-            // WhatsApp .txt डॉक्यूमेंट को 100% सपोर्ट करता है
             val fileName = "Today_Attendance_${todayKey.replace(".", "_")}.txt"
             val outFile = File(externalCacheDir ?: cacheDir, fileName)
             FileOutputStream(outFile).use { fos ->
