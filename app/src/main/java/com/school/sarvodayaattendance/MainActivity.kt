@@ -156,6 +156,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnVoiceIcon.setOnClickListener {
+            // 🔊 बटन को 2 सेकंड दबाए रखने (Long Press) पर सीधे ऐप में नई Gemini API Key डालने की सुविधा
+        btnVoiceIcon.setOnLongClickListener {
+            val keyInput = EditText(this).apply {
+                setText(voiceManager.getApiKey())
+                hint = "यहाँ नई Google AI Studio API Key पेस्ट करें"
+                setPadding(40, 30, 40, 30)
+            }
+            AlertDialog.Builder(this)
+                .setTitle("🎙️ AI Studio Voice API Key")
+                .setMessage("GitHub पर Key लीक होने से बचाने के लिए अपनी नई API Key सीधे यहाँ पेस्ट करें:")
+                .setView(keyInput)
+                .setPositiveButton("सेव और टेस्ट करें") { _, _ ->
+                    val newKey = keyInput.text.toString().trim()
+                    if (newKey.isNotEmpty()) {
+                        voiceManager.saveCustomApiKey(newKey)
+                        Toast.makeText(this, "✔ नई Key सेव हो गई! आवाज़ टेस्ट की जा रही है...", Toast.LENGTH_SHORT).show()
+                        voiceManager.speakHindi("नमस्कार, सर्वोदय विद्यालय के एआई वॉइस सिस्टम में आपका स्वागत है।")
+                    }
+                }
+                .setNegativeButton("रद्द", null)
+                .show()
+            true
+        }
             voiceManager.isVoiceEnabled = !voiceManager.isVoiceEnabled
             btnVoiceIcon.text = if (voiceManager.isVoiceEnabled) "🔊" else "🔇"
             btnVoiceIcon.backgroundTintList = ColorStateList.valueOf(
