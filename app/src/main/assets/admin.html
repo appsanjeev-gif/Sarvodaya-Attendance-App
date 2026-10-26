@@ -52,7 +52,6 @@
   .student-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
   .student-avatar-wrap { position: relative; width: 52px; height: 52px; }
   .student-avatar-img { width: 52px; height: 52px; border-radius: 50%; object-fit: cover; border: 2px solid #16a34a; }
-  /* बिना फोटो वाले छात्रों के लिए पूरा लाल गोला (Red Pending DP) */
   .pending-red-dp { width: 52px; height: 52px; border-radius: 50%; background: #dc2626; color: #ffffff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 900; font-size: 13px; border: 2.5px solid #fecaca; box-shadow: 0 0 8px rgba(220,38,38,0.45); position: relative; }
   .roll-mini-badge { position: absolute; bottom: -2px; right: -2px; background: #1e3a8a; color: #fff; font-size: 10.5px; font-weight: 900; padding: 1px 5px; border-radius: 999px; border: 1px solid #fff; }
   .att-summary-bar { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 8px; margin-bottom: 6px; }
@@ -144,7 +143,7 @@
     </div>
   </div>
 
-  <!-- MODAL 1: ADD / EDIT STUDENT (Jio/Aadhaar Live KYC Only + Save Without Photo) -->
+  <!-- MODAL 1: ADD / EDIT STUDENT -->
   <div id="addStudentModal" class="sub-modal">
     <div class="modal-sheet">
       <div class="modal-header">
@@ -177,7 +176,6 @@
         </div>
         <div class="form-group"><label class="field-lbl">पूरा पता</label><input type="text" id="stuAddress"></div>
 
-        <!-- Live KYC Camera Verification Section (No Gallery Upload) -->
         <div class="form-group" style="background:#f0fdf4;padding:10px;border-radius:10px;border:1.5px dashed #16a34a;">
           <label class="field-lbl" style="color:#15803d;">🟢 लाइव बायोमेट्रिक KYC फोटो (वैकल्पिक - बाद में भी जोड़ सकते हैं)</label>
           <div style="font-size:11.5px;color:#475569;margin-bottom:6px;">फोटो केवल लाइव कैमरे के सर्कल में चेहरा वेरीफाई होने पर ही जुड़ेगी। बिना फोटो के भी प्रोफाइल सेव कर सकते हैं (सूची में 🔴 दिखेगा)।</div>
@@ -311,7 +309,7 @@
     </div>
   </div>
 
-  <!-- MODAL 6: MULTI MOBILE -->
+  <!-- MODAL 6: MULTI MOBILE (Supports .txt & .json seamlessly) -->
   <div id="multiDeviceModal" class="sub-modal">
     <div class="modal-sheet">
       <div class="modal-header"><div class="modal-title">🤝 मल्टी-मोबाइल शेयरिंग</div><button type="button" class="close-btn" onclick="closeModal('multiDeviceModal')">✕</button></div>
@@ -323,10 +321,7 @@
         </div>
         <div class="card-section" style="background:#eff6ff;margin-bottom:0;">
           <div class="section-label" style="color:#1e3a8a;">2. दूसरे मोबाइल की हाज़िरी मर्ज करें</div>
-          <div class="btn-primary" style="position:relative;overflow:hidden;text-align:center;">
-            <span>🔄 हाज़िरी फ़ाइल मर्ज करें</span>
-            <input type="file" accept="*/*" style="position:absolute;inset:0;opacity:0;" onchange="mergeExternalAttendanceFile(event)">
-          </div>
+          <button type="button" class="btn-primary" onclick="triggerNativeMerge()">🔄 हाज़िरी फ़ाइल मर्ज करें</button>
         </div>
       </div>
     </div>
@@ -481,6 +476,31 @@
   function triggerNativeRestore() {
     if (window.AndroidBridge && window.AndroidBridge.openNativeRestorePicker) {
       window.AndroidBridge.openNativeRestorePicker();
+    }
+  }
+
+  function triggerNativeMerge() {
+    if (window.AndroidBridge && window.AndroidBridge.openNativeMergePicker) {
+      window.AndroidBridge.openNativeMergePicker();
+    }
+  }
+
+  function onNativeAttendanceMergeContent(rawStr) {
+    try {
+      var d = JSON.parse(rawStr);
+      if (d.dateKey && Array.isArray(d.presentStudentIds)) {
+        if (!attendance[d.dateKey]) attendance[d.dateKey] = [];
+        d.presentStudentIds.forEach(function(id) {
+          if (attendance[d.dateKey].indexOf(id) === -1) attendance[d.dateKey].push(id);
+        });
+        saveState();
+        closeModal('multiDeviceModal');
+        showToast('✔ हाज़िरी सफलतापूर्वक मर्ज हो गई! (' + d.presentStudentIds.length + ' छात्र)');
+      } else {
+        showToast('❌ अमान्य हाज़िरी फ़ाइल!');
+      }
+    } catch(err) {
+      showToast('❌ फ़ाइल पढ़ने में त्रुटि!');
     }
   }
 
@@ -643,7 +663,6 @@
     document.getElementById('addStudentModal').classList.add('open');
   }
 
-  // Native Live KYC Camera Call
   function startLiveKycCapture() {
     if (tempStudentPhotos.length >= 5) {
       showToast('अधिकतम 5 फोटो जुड़ चुकी हैं!');
@@ -654,7 +673,6 @@
     }
   }
 
-  // Called by Native Android once face is 100% verified in circle
   function onLiveKycPhotoApproved(base64Img) {
     if (base64Img && tempStudentPhotos.length < 5) {
       tempStudentPhotos.push(base64Img);
@@ -845,7 +863,6 @@
       var sixDays = getLastSixDaysStatusForStudent(s.id);
       var dpEvents = 'onmousedown="handleDpPressStart(\'' + s.id + '\')" onmouseup="handleDpPressEnd()" ontouchstart="handleDpPressStart(\'' + s.id + '\')" ontouchend="handleDpPressEnd()" oncontextmenu="event.preventDefault();openStudentFullDetailsModal(\'' + s.id + '\')"';
 
-      // यदि फोटो नहीं है, तो पूरा लाल गोला (🔴) दिखाएं
       var avatarHtml = hasPhoto
         ? '<div class="student-avatar-wrap" ' + dpEvents + '><img src="' + s.photos[0] + '" class="student-avatar-img"><span class="roll-mini-badge">' + formatRollTwoDigits(s.roll) + '</span></div>'
         : '<div class="pending-red-dp" ' + dpEvents + ' title="फोटो पेंडिंग है"><span>🔴</span><span style="font-size:10px;">' + formatRollTwoDigits(s.roll) + '</span></div>';
@@ -945,7 +962,6 @@
     shareOrSaveTextFile('Student_' + s.roll + '.csv', csv, 'text/csv');
   }
 
-  // छात्र के व्यक्तिगत PDF प्रिंट में अलग-अलग बॉक्स में पूरा विवरण (Full Boxed Profile + Attendance History)
   function downloadStudentAttendancePDF(stuId) {
     var s = students.find(function(x) { return x.id === stuId; });
     if (!s) return;
@@ -1165,7 +1181,6 @@
 
   function openMultiDeviceModal() { document.getElementById('multiDeviceModal').classList.add('open'); }
 
-  // Native Large File Export for All Classes Scanner Pack
   function exportLimitedScannerPack() {
     var cls = document.getElementById('scannerPackClassSelect').value;
     if (window.AndroidBridge && window.AndroidBridge.exportScannerPackNative) {
@@ -1173,30 +1188,8 @@
     }
   }
 
-  function mergeExternalAttendanceFile(event) {
-    var file = event.target.files && event.target.files[0];
-    if (!file) return;
-    var r = new FileReader();
-    r.onload = function(e) {
-      try {
-        var d = JSON.parse(e.target.result);
-        if (d.dateKey && Array.isArray(d.presentStudentIds)) {
-          if (!attendance[d.dateKey]) attendance[d.dateKey] = [];
-          d.presentStudentIds.forEach(function(id) { if (attendance[d.dateKey].indexOf(id) === -1) attendance[d.dateKey].push(id); });
-          saveState();
-          closeModal('multiDeviceModal');
-          showToast('✔ हाज़िरी मर्ज हो गई!');
-        }
-      } catch(err) { showToast('❌ फ़ाइल त्रुटि!'); }
-    };
-    r.readAsText(file);
-  }
-
-  // Native Master Backup Save & Share
   function exportMasterBackupJson() {
-    if (window.AndroidBridge && window.AndroidBridge.exportMasterBackupBackup) {
-      window.AndroidBridge.exportMasterBackupNative();
-    } else if (window.AndroidBridge && window.AndroidBridge.exportMasterBackupNative) {
+    if (window.AndroidBridge && window.AndroidBridge.exportMasterBackupNative) {
       window.AndroidBridge.exportMasterBackupNative();
     }
   }
