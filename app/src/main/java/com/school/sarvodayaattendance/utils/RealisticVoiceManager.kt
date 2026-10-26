@@ -22,16 +22,29 @@ import kotlin.random.Random
 
 class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
 
-    // GitHub Secret Scanner से बचाने के लिए API Key को टुकड़ों में रखा गया है (ऐप इसे खुद जोड़ लेगा)
+    // GitHub Secret Scanner से सुरक्षित रखने के लिए विभाजित API Key
     private val keyPart1 = "AQ.Ab8RN6JboShANCf"
     private val keyPart2 = "JrUUGoKliLkRUeWbYZ"
     private val keyPart3 = "38ZEo9InfG-hroP9Q"
     private val GEMINI_API_KEY: String
         get() = keyPart1 + keyPart2 + keyPart3
 
-    // Google AI Studio Playground के बेस्ट पुरुष वॉइस विकल्प:
-    // "Charon" (सबसे गंभीर और भारी आवाज़), "Fenrir" (दमदार आवाज़), "Puck" (ऊर्जावान और स्पष्ट)
-    private val AI_STUDIO_VOICE_NAME = "Charon"
+    // Google AI Studio Playground के दोनों चुने हुए वॉइस प्रोफाइल्स (Random Selection के लिए)
+    private data class AiVoiceProfile(
+        val name: String,
+        val stylePrompt: String
+    )
+
+    private val aiVoiceProfiles = listOf(
+        AiVoiceProfile(
+            name = "Sadachbia", // Male: Lively, Lower pitch
+            stylePrompt = "एक जीवंत, उत्साहपूर्ण और थोड़ी गहरी (Lively, lower pitch) पुरुष भारतीय हिंदी आवाज़ में स्पष्ट रूप से बोलें:"
+        ),
+        AiVoiceProfile(
+            name = "Autonoe",   // Female: Bright, Middle pitch
+            stylePrompt = "एक मधुर, उज्ज्वल और स्पष्ट मध्यम पिच (Bright, middle pitch) महिला भारतीय हिंदी आवाज़ में बोलें:"
+        )
+    )
 
     private var tts: TextToSpeech? = null
     private var isOfflineTtsReady = false
@@ -71,8 +84,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = Locale("hi", "IN")
-            tts?.setPitch(0.78f)
-            tts?.setSpeechRate(0.92f)
+            tts?.setPitch(0.90f)
+            tts?.setSpeechRate(0.95f)
             isOfflineTtsReady = true
         }
     }
@@ -81,14 +94,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         if (!isVoiceEnabled) return
         val cleanName = studentName.trim()
         val message = when (type) {
-            "success" -> {
-                val idx = kotlin.math.abs(cleanName.hashCode()) % successTemplates.size
-                String.format(successTemplates[idx], cleanName)
-            }
-            "warning" -> {
-                val idx = kotlin.math.abs(cleanName.hashCode()) % warningTemplates.size
-                String.format(warningTemplates[idx], cleanName)
-            }
+            "success" -> String.format(successTemplates[Random.nextInt(successTemplates.size)], cleanName)
+            "warning" -> String.format(warningTemplates[Random.nextInt(warningTemplates.size)], cleanName)
             else -> errorTemplates[Random.nextInt(errorTemplates.size)]
         }
         speakHindi(message)
@@ -98,7 +105,11 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         if (!isVoiceEnabled || text.isBlank()) return
 
         voiceExecutor.execute {
-            val cacheHash = md5Hash("${AI_STUDIO_VOICE_NAME}_$text")
+            // हर बार रैंडम तौर पर Sadachbia (M) या Autonoe (F) में से किसी एक को चुनें
+            val chosenVoice = aiVoiceProfiles[Random.nextInt(aiVoiceProfiles.size)]
+
+            // 1. पहले देखें कि क्या इस आवाज़ (Sadachbia/Autonoe) के साथ यह वाक्य मेमोरी में सेव है
+            val cacheHash = md5Hash("${chosenVoice.name}_$text")
             val cachedPcmFile = File(voiceCacheDir, "$cacheHash.pcm")
 
             if (cachedPcmFile.exists() && cachedPcmFile.length() > 1000) {
@@ -106,8 +117,9 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 if (playRawPcm24kHz(pcmBytes)) return@execute
             }
 
+            // 2. Google AI Studio से चुनी गई रैंडम आवाज़ (Sadachbia या Autonoe) में ऑडियो मंगाएं
             if (GEMINI_API_KEY.isNotBlank()) {
-                val pcmBytes = fetchGoogleAiStudioTtsPcm(text)
+                val pcmBytes = fetchGoogleAiStudioTtsPcm(text, chosenVoice)
                 if (pcmBytes != null && pcmBytes.size > 1000) {
                     try {
                         FileOutputStream(cachedPcmFile).use { it.write(pcmBytes) }
@@ -116,15 +128,18 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 }
             }
 
-            if (tryPlayOnlineNeuralMp3(text)) return@execute
+            // 3. नेटवर्क धीमा होने पर ऑनलाइन बैकअप (इसमें भी रैंडम Male/Female पिच रहेगा)
+            if (tryPlayOnlineNeuralMp3(text, chosenVoice.name == "Sadachbia")) return@execute
 
+            // 4. पूरी तरह ऑफलाइन होने पर मोबाइल TTS बैकअप
             if (isOfflineTtsReady) {
+                tts?.setPitch(if (chosenVoice.name == "Sadachbia") 0.82f else 1.05f)
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SARVODAYA_FALLBACK")
             }
         }
     }
 
-    private fun fetchGoogleAiStudioTtsPcm(hindiText: String): ByteArray? {
+    private fun fetchGoogleAiStudioTtsPcm(hindiText: String, profile: AiVoiceProfile): ByteArray? {
         return try {
             val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${GEMINI_API_KEY.trim()}"
             val url = URL(endpoint)
@@ -139,7 +154,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             val payloadJson = JSONObject().apply {
                 put("contents", JSONArray().put(
                     JSONObject().put("parts", JSONArray().put(
-                        JSONObject().put("text", "गंभीर, प्रभावशाली और बिल्कुल स्पष्ट भारतीय हिंदी आवाज़ में बोलें: $hindiText")
+                        JSONObject().put("text", "${profile.stylePrompt} $hindiText")
                     ))
                 ))
                 put("generationConfig", JSONObject().apply {
@@ -147,7 +162,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                     put("speechConfig", JSONObject().apply {
                         put("voiceConfig", JSONObject().apply {
                             put("prebuiltVoiceConfig", JSONObject().apply {
-                                put("voiceName", AI_STUDIO_VOICE_NAME)
+                                put("voiceName", profile.name)
                             })
                         })
                     })
@@ -221,10 +236,10 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         }
     }
 
-    private fun tryPlayOnlineNeuralMp3(text: String): Boolean {
+    private fun tryPlayOnlineNeuralMp3(text: String, isLowerPitchMale: Boolean): Boolean {
         return try {
             val encoded = URLEncoder.encode(text, "UTF-8")
-            val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=gtx&ttsspeed=0.92"
+            val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=gtx&ttsspeed=0.95"
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 2500
                 readTimeout = 3500
@@ -249,7 +264,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                         setDataSource(fis.fd)
                         prepare()
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                            playbackParams = playbackParams.setPitch(0.86f).setSpeed(0.96f)
+                            val targetPitch = if (isLowerPitchMale) 0.85f else 1.04f
+                            playbackParams = playbackParams.setPitch(targetPitch).setSpeed(0.98f)
                         }
                         start()
                     }
