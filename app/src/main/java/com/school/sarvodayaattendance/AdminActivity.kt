@@ -12,7 +12,6 @@ import android.print.PrintAttributes
 import android.print.PrintManager
 import android.util.Base64
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -53,9 +52,9 @@ class AdminActivity : AppCompatActivity() {
     private val gson = Gson()
 
     private var pendingSaveContent: String = ""
-    private var pendingSaveFileName: String = "Backup.json"
+    private var pendingSaveFileName: String = "Backup.txt"
 
-    // 1. Native Restore Picker for HTML/JSON backup files
+    // 1. Native Restore Picker
     private val nativeRestoreLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -85,7 +84,31 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
-    // 2. Native Save File Picker (फोन में सीधे फाइल सेव करने के लिए)
+    // 2. Native Merge Daily Attendance Picker (दूसरे मोबाइल की हाज़िरी मर्ज करने के लिए)
+    private val nativeMergeAttendanceLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            try {
+                val sb = StringBuilder()
+                contentResolver.openInputStream(uri)?.use { stream ->
+                    BufferedReader(InputStreamReader(stream)).use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            sb.append(line)
+                        }
+                    }
+                }
+                val rawJson = sb.toString().trim()
+                val escaped = gson.toJson(rawJson)
+                webView.evaluateJavascript("onNativeAttendanceMergeContent($escaped)", null)
+            } catch (e: Exception) {
+                Toast.makeText(this, "❌ हाज़िरी फ़ाइल पढ़ने में त्रुटि!", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // 3. Native Save File Picker (फोन के Downloads में सीधे सेव करने के लिए)
     private val createDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -126,9 +149,7 @@ class AdminActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // बड़ी फाइलों (200KB+ सभी कक्षाओं का पैक व मास्टर बैकअप) को बिना क्रैश WhatsApp पर शेयर करने की अनुमति
-        val builder = StrictMode.VmPolicy.Builder()
-        StrictMode.setVmPolicy(builder.build())
+        StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
 
         webView = WebView(this)
         setContentView(webView)
@@ -175,7 +196,6 @@ class AdminActivity : AppCompatActivity() {
         webView.loadUrl("file:///android_asset/admin.html")
     }
 
-    // Native Live KYC Circular Camera Dialog (Google ML Kit Verifier के साथ)
     private fun showNativeLiveKycDialog() {
         val dialogLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -375,6 +395,13 @@ class AdminActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun openNativeMergePicker() {
+            runOnUiThread {
+                nativeMergeAttendanceLauncher.launch("*/*")
+            }
+        }
+
+        @JavascriptInterface
         fun openLiveKycCamera() {
             runOnUiThread {
                 showNativeLiveKycDialog()
@@ -393,7 +420,7 @@ class AdminActivity : AppCompatActivity() {
             }
         }
 
-        // मास्टर बैकअप को सीधे फोन में सेव करने या शेयर करने का नेटिव ब्रिज
+        // ✅ मास्टर बैकअप को WhatsApp-Compatible (.txt) फॉर्मेट में सेव या शेयर करें
         @JavascriptInterface
         fun exportMasterBackupNative() {
             runOnUiThread {
@@ -401,15 +428,16 @@ class AdminActivity : AppCompatActivity() {
                     val payload = AppStorage.loadData(this@AdminActivity)
                     payload.isScannerOnlyPack = false
                     val jsonStr = gson.toJson(payload)
-                    val fileName = "Sarvodaya_Master_Backup_${AppStorage.getTodayShortKey()}.json"
-                    showSaveOrShareDialog(fileName, jsonStr, "application/json")
+                    val dateClean = AppStorage.getTodayShortKey().replace(".", "_")
+                    val fileName = "Sarvodaya_Master_Backup_$dateClean.txt"
+                    showSaveOrShareDialog("💾 मास्टर बैकअप तैयार है", fileName, jsonStr, "text/plain")
                 } catch (e: Exception) {
                     Toast.makeText(this@AdminActivity, "बैकअप त्रुटि!", Toast.LENGTH_SHORT).show()
                 }
             }
         }
 
-        // सभी कक्षाओं या चुनी गई कक्षा का स्कैनर पैक बड़ी फाइल के रूप में सीधे WhatsApp पर शेयर करने का ब्रिज
+        // ✅ स्कैनर पैक को भी WhatsApp-Compatible (.txt) फॉर्मेट में सेव या शेयर करें (ताकि WhatsApp कभी ब्लॉक न करे)
         @JavascriptInterface
         fun exportScannerPackNative(targetClass: String) {
             runOnUiThread {
@@ -432,9 +460,16 @@ class AdminActivity : AppCompatActivity() {
                         "adminPin" to fullPayload.adminPin
                     )
                     val jsonStr = gson.toJson(packObj)
-                    val cleanCls = if (targetClass == "सभी") "All_Classes" else targetClass
-                    val fileName = "Scanner_Pack_${cleanCls}_${AppStorage.getTodayShortKey()}.json"
-                    shareLargeFileDirectly(fileName, jsonStr, "application/json")
+                    val cleanCls = when (targetClass) {
+                        "सभी" -> "All_Classes"
+                        "6वीं" -> "Class_6"
+                        "7वीं" -> "Class_7"
+                        "8वीं" -> "Class_8"
+                        else -> "Class_Pack"
+                    }
+                    val dateClean = AppStorage.getTodayShortKey().replace(".", "_")
+                    val fileName = "Scanner_Pack_${cleanCls}_$dateClean.txt"
+                    showSaveOrShareDialog("📤 स्कैनर पैक तैयार है (${filteredStudents.size} छात्र)", fileName, jsonStr, "text/plain")
                 } catch (e: Exception) {
                     Toast.makeText(this@AdminActivity, "शेयर त्रुटि!", Toast.LENGTH_SHORT).show()
                 }
@@ -470,16 +505,21 @@ class AdminActivity : AppCompatActivity() {
         @JavascriptInterface
         fun shareFileContent(fileName: String, content: String, mimeType: String) {
             runOnUiThread {
-                shareLargeFileDirectly(fileName, content, mimeType)
+                val safeMime = if (mimeType.contains("json")) "text/plain" else mimeType
+                val safeName = if (fileName.endsWith(".json")) fileName.replace(".json", ".txt") else fileName
+                shareLargeFileDirectly(safeName, content, safeMime)
             }
         }
     }
 
-    private fun showSaveOrShareDialog(fileName: String, content: String, mimeType: String) {
+    private fun showSaveOrShareDialog(title: String, fileName: String, content: String, mimeType: String) {
         AlertDialog.Builder(this)
-            .setTitle("💾 मास्टर बैकअप तैयार है")
-            .setMessage("फ़ाइल: $fileName\nआप इसे कहाँ सुरक्षित करना चाहते हैं?")
-            .setPositiveButton("📥 फोन में सेव करें") { _, _ ->
+            .setTitle(title)
+            .setMessage("फ़ाइल: $fileName\nआप इसे कैसे भेजना या सेव करना चाहते हैं?")
+            .setPositiveButton("📤 WhatsApp / शेयर करें") { _, _ ->
+                shareLargeFileDirectly(fileName, content, mimeType)
+            }
+            .setNeutralButton("📥 फोन में सेव करें") { _, _ ->
                 pendingSaveFileName = fileName
                 pendingSaveContent = content
                 val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
@@ -488,9 +528,6 @@ class AdminActivity : AppCompatActivity() {
                     putExtra(Intent.EXTRA_TITLE, fileName)
                 }
                 createDocumentLauncher.launch(intent)
-            }
-            .setNeutralButton("📤 WhatsApp / शेयर करें") { _, _ ->
-                shareLargeFileDirectly(fileName, content, mimeType)
             }
             .setNegativeButton("रद्द", null)
             .show()
@@ -506,7 +543,6 @@ class AdminActivity : AppCompatActivity() {
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = mimeType
                 putExtra(Intent.EXTRA_STREAM, fileUri)
-                putExtra(Intent.EXTRA_SUBJECT, fileName)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(Intent.createChooser(sendIntent, fileName))
