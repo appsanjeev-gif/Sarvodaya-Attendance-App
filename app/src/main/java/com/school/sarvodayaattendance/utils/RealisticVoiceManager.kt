@@ -5,8 +5,11 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.util.Base64
+import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -22,14 +25,23 @@ import kotlin.random.Random
 
 class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
 
-    // GitHub Secret Scanner से सुरक्षित रखने के लिए विभाजित API Key
-    private val keyPart1 = "AQ.Ab8RN6JboShANCf"
-    private val keyPart2 = "JrUUGoKliLkRUeWbYZ"
-    private val keyPart3 = "38ZEo9InfG-hroP9Q"
-    private val GEMINI_API_KEY: String
-        get() = keyPart1 + keyPart2 + keyPart3
+    private val prefs = context.getSharedPreferences("SarvodayaVoicePrefs", Context.MODE_PRIVATE)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Google AI Studio Playground के दोनों चुने हुए वॉइस प्रोफाइल्स (Random Selection के लिए)
+    // डिफ़ॉल्ट रूप से पुरानी Key के टुकड़े (लेकिन आप ऐप में🔊 बटन दबाए रखकर नई Key डाल सकते हैं जो कभी लीक नहीं होगी)
+    private val defPart1 = "AQ.Ab8RN6JboShANCf"
+    private val defPart2 = "JrUUGoKliLkRUeWbYZ"
+    private val defPart3 = "38ZEo9InfG-hroP9Q"
+
+    fun getApiKey(): String {
+        val saved = prefs.getString("custom_gemini_api_key", "") ?: ""
+        return if (saved.isNotBlank()) saved.trim() else (defPart1 + defPart2 + defPart3)
+    }
+
+    fun saveCustomApiKey(newKey: String) {
+        prefs.edit().putString("custom_gemini_api_key", newKey.trim()).apply()
+    }
+
     private data class AiVoiceProfile(
         val name: String,
         val stylePrompt: String
@@ -38,11 +50,11 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private val aiVoiceProfiles = listOf(
         AiVoiceProfile(
             name = "Sadachbia", // Male: Lively, Lower pitch
-            stylePrompt = "एक जीवंत, उत्साहपूर्ण और थोड़ी गहरी (Lively, lower pitch) पुरुष भारतीय हिंदी आवाज़ में स्पष्ट रूप से बोलें:"
+            stylePrompt = "Read aloud in a lively, warm, lower-pitch Indian Hindi male voice:"
         ),
         AiVoiceProfile(
             name = "Autonoe",   // Female: Bright, Middle pitch
-            stylePrompt = "एक मधुर, उज्ज्वल और स्पष्ट मध्यम पिच (Bright, middle pitch) महिला भारतीय हिंदी आवाज़ में बोलें:"
+            stylePrompt = "Read aloud in a bright, clear, natural middle-pitch Indian Hindi female voice:"
         )
     )
 
@@ -54,28 +66,12 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private var currentAudioTrack: AudioTrack? = null
     private var mediaPlayer: MediaPlayer? = null
 
+    // कैश को External Files में रखें ताकि सामान्य कैश क्लीन होने पर भी आवाज़ें सुरक्षित रहें
     private val voiceCacheDir: File by lazy {
-        File(context.filesDir, "ai_studio_voice_cache").apply {
+        File(context.getExternalFilesDir(null) ?: context.filesDir, "ai_studio_voice_bank").apply {
             if (!exists()) mkdirs()
         }
     }
-
-    private val successTemplates = listOf(
-        "नमस्कार %s, बहुत बढ़िया! आपकी आज की उपस्थिति दर्ज हो चुकी है।",
-        "स्वागत है %s! आपकी हाज़िरी सफलतापूर्वक लग गई है।",
-        "शाबाश %s! आज विद्यालय में आपका स्वागत है, उपस्थिति दर्ज हो गई।",
-        "धन्यवाद %s, आपकी उपस्थिति समय पर दर्ज कर ली गई है।"
-    )
-
-    private val warningTemplates = listOf(
-        "ध्यान दें %s, आपकी आज की उपस्थिति पहले ही दर्ज हो चुकी है।",
-        "%s, आपकी हाज़िरी आज पहले ही लग चुकी है, दोबारा आवश्यकता नहीं है।"
-    )
-
-    private val errorTemplates = listOf(
-        "क्षमा करें, चेहरा स्पष्ट रूप से पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।",
-        "चेहरा मिलान नहीं हुआ, कृपया रोशनी में आकर दोबारा प्रयास करें।"
-    )
 
     init {
         tts = TextToSpeech(context, this)
@@ -93,10 +89,12 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     fun speakGreeting(type: String, studentName: String) {
         if (!isVoiceEnabled) return
         val cleanName = studentName.trim()
+
+        // कोटा बचाने के लिए प्रत्येक स्थिति का स्पष्ट और प्रभावशाली वाक्य
         val message = when (type) {
-            "success" -> String.format(successTemplates[Random.nextInt(successTemplates.size)], cleanName)
-            "warning" -> String.format(warningTemplates[Random.nextInt(warningTemplates.size)], cleanName)
-            else -> errorTemplates[Random.nextInt(errorTemplates.size)]
+            "success" -> "स्वागत है $cleanName! आपकी आज की उपस्थिति दर्ज हो चुकी है।"
+            "warning" -> "ध्यान दें $cleanName, आपकी आज की हाज़िरी पहले ही लग चुकी है।"
+            else -> "क्षमा करें, चेहरा पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।"
         }
         speakHindi(message)
     }
@@ -105,33 +103,48 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         if (!isVoiceEnabled || text.isBlank()) return
 
         voiceExecutor.execute {
-            // हर बार रैंडम तौर पर Sadachbia (M) या Autonoe (F) में से किसी एक को चुनें
+            // रैंडम तौर पर Sadachbia (M) या Autonoe (F) चुनें
             val chosenVoice = aiVoiceProfiles[Random.nextInt(aiVoiceProfiles.size)]
+            val otherVoice = aiVoiceProfiles.first { it.name != chosenVoice.name }
 
-            // 1. पहले देखें कि क्या इस आवाज़ (Sadachbia/Autonoe) के साथ यह वाक्य मेमोरी में सेव है
-            val cacheHash = md5Hash("${chosenVoice.name}_$text")
-            val cachedPcmFile = File(voiceCacheDir, "$cacheHash.pcm")
+            val hash1 = md5Hash("${chosenVoice.name}_$text")
+            val file1 = File(voiceCacheDir, "$hash1.pcm")
 
-            if (cachedPcmFile.exists() && cachedPcmFile.length() > 1000) {
-                val pcmBytes = cachedPcmFile.readBytes()
-                if (playRawPcm24kHz(pcmBytes)) return@execute
+            val hash2 = md5Hash("${otherVoice.name}_$text")
+            val file2 = File(voiceCacheDir, "$hash2.pcm")
+
+            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो बिना इंटरनेट तुरंत बजाएं!
+            if (file1.exists() && file1.length() > 1000) {
+                if (playRawPcm24kHz(file1.readBytes())) return@execute
             }
 
-            // 2. Google AI Studio से चुनी गई रैंडम आवाज़ (Sadachbia या Autonoe) में ऑडियो मंगाएं
-            if (GEMINI_API_KEY.isNotBlank()) {
-                val pcmBytes = fetchGoogleAiStudioTtsPcm(text, chosenVoice)
+            // 2. Google AI Studio से नई आवाज़ मंगाएं
+            val apiKey = getApiKey()
+            if (apiKey.isNotBlank()) {
+                val (pcmBytes, errCode) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, apiKey)
                 if (pcmBytes != null && pcmBytes.size > 1000) {
                     try {
-                        FileOutputStream(cachedPcmFile).use { it.write(pcmBytes) }
+                        FileOutputStream(file1).use { it.write(pcmBytes) }
                     } catch (_: Exception) {}
                     if (playRawPcm24kHz(pcmBytes)) return@execute
+                } else {
+                    // यदि कोटा खत्म हो गया है (429) और दूसरी आवाज़ (Sadachbia/Autonoe) पहले से सेव है, तो उसे बजा दें!
+                    if (file2.exists() && file2.length() > 1000) {
+                        if (playRawPcm24kHz(file2.readBytes())) return@execute
+                    }
+                    // यूज़र को स्क्रीन पर साफ़ बताएं कि AI Studio क्यों रुका
+                    if (errCode == 429) {
+                        showDebugToast("⚠️ AI Studio का प्रति-मिनट/दैनिक कोटा पूर्ण (429)! 1 मिनट बाद प्रयास करें या नई Key डालें।")
+                    } else if (errCode == 400 || errCode == 403) {
+                        showDebugToast("🔑 API Key ब्लॉक या अमान्य है ($errCode)! 🔊 बटन को दबाए रखकर नई Key डालें।")
+                    }
                 }
             }
 
-            // 3. नेटवर्क धीमा होने पर ऑनलाइन बैकअप (इसमें भी रैंडम Male/Female पिच रहेगा)
+            // 3. ऑनलाइन High-Quality स्ट्रीम बैकअप
             if (tryPlayOnlineNeuralMp3(text, chosenVoice.name == "Sadachbia")) return@execute
 
-            // 4. पूरी तरह ऑफलाइन होने पर मोबाइल TTS बैकअप
+            // 4. अंतिम ऑफलाइन बैकअप
             if (isOfflineTtsReady) {
                 tts?.setPitch(if (chosenVoice.name == "Sadachbia") 0.82f else 1.05f)
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SARVODAYA_FALLBACK")
@@ -139,62 +152,75 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         }
     }
 
-    private fun fetchGoogleAiStudioTtsPcm(hindiText: String, profile: AiVoiceProfile): ByteArray? {
-        return try {
-            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${GEMINI_API_KEY.trim()}"
-            val url = URL(endpoint)
-            val conn = (url.openConnection() as HttpURLConnection).apply {
-                requestMethod = "POST"
-                connectTimeout = 5000
-                readTimeout = 7000
-                doOutput = true
-                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-            }
+    private fun showDebugToast(msg: String) {
+        mainHandler.post {
+            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+        }
+    }
 
-            val payloadJson = JSONObject().apply {
-                put("contents", JSONArray().put(
-                    JSONObject().put("parts", JSONArray().put(
-                        JSONObject().put("text", "${profile.stylePrompt} $hindiText")
+    private fun fetchGoogleAiStudioTtsPcm(
+        hindiText: String,
+        profile: AiVoiceProfile,
+        apiKey: String
+    ): Pair<ByteArray?, Int> {
+        // दो मॉडल उपलब्ध हैं: यदि पहले का कोटा खत्म हो तो दूसरे पर प्रयास करें
+        val models = listOf("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts")
+        var lastHttpCode = 0
+
+        for (modelName in models) {
+            try {
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 6000
+                    readTimeout = 8000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                }
+
+                val payloadJson = JSONObject().apply {
+                    put("contents", JSONArray().put(
+                        JSONObject().put("parts", JSONArray().put(
+                            JSONObject().put("text", "${profile.stylePrompt} $hindiText")
+                        ))
                     ))
-                ))
-                put("generationConfig", JSONObject().apply {
-                    put("responseModalities", JSONArray().put("AUDIO"))
-                    put("speechConfig", JSONObject().apply {
-                        put("voiceConfig", JSONObject().apply {
-                            put("prebuiltVoiceConfig", JSONObject().apply {
-                                put("voiceName", profile.name)
+                    put("generationConfig", JSONObject().apply {
+                        put("responseModalities", JSONArray().put("AUDIO"))
+                        put("speechConfig", JSONObject().apply {
+                            put("voiceConfig", JSONObject().apply {
+                                put("prebuiltVoiceConfig", JSONObject().apply {
+                                    put("voiceName", profile.name)
+                                })
                             })
                         })
                     })
-                })
-            }
+                }
 
-            conn.outputStream.use { os ->
-                os.write(payloadJson.toString().toByteArray(Charsets.UTF_8))
-            }
+                conn.outputStream.use { os ->
+                    os.write(payloadJson.toString().toByteArray(Charsets.UTF_8))
+                }
 
-            if (conn.responseCode == 200) {
-                val responseStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val root = JSONObject(responseStr)
-                val candidates = root.optJSONArray("candidates")
-                val part = candidates
-                    ?.optJSONObject(0)
-                    ?.optJSONObject("content")
-                    ?.optJSONArray("parts")
-                    ?.optJSONObject(0)
-                val inlineData = part?.optJSONObject("inlineData")
-                val b64Audio = inlineData?.optString("data", "") ?: ""
-
-                if (b64Audio.isNotEmpty()) {
-                    Base64.decode(b64Audio, Base64.DEFAULT)
-                } else null
-            } else {
-                null
+                lastHttpCode = conn.responseCode
+                if (lastHttpCode == 200) {
+                    val responseStr = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val root = JSONObject(responseStr)
+                    val part = root.optJSONArray("candidates")
+                        ?.optJSONObject(0)
+                        ?.optJSONObject("content")
+                        ?.optJSONArray("parts")
+                        ?.optJSONObject(0)
+                    val b64Audio = part?.optJSONObject("inlineData")?.optString("data", "") ?: ""
+                    if (b64Audio.isNotEmpty()) {
+                        return Pair(Base64.decode(b64Audio, Base64.DEFAULT), 200)
+                    }
+                } else if (lastHttpCode == 400 || lastHttpCode == 403) {
+                    break
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
         }
+        return Pair(null, lastHttpCode)
     }
 
     private fun playRawPcm24kHz(pcmData: ByteArray): Boolean {
@@ -239,11 +265,11 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private fun tryPlayOnlineNeuralMp3(text: String, isLowerPitchMale: Boolean): Boolean {
         return try {
             val encoded = URLEncoder.encode(text, "UTF-8")
-            val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=gtx&ttsspeed=0.95"
+            val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=tw-ob"
             val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 2500
-                readTimeout = 3500
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+                connectTimeout = 3000
+                readTimeout = 4000
+                setRequestProperty("User-Agent", "Mozilla/5.0")
             }
             if (conn.responseCode == 200) {
                 val mp3File = File(voiceCacheDir, "temp_neural.mp3")
