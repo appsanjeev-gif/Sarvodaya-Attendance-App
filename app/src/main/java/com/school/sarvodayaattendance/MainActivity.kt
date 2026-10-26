@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.StrictMode
 import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
@@ -40,6 +41,8 @@ import com.school.sarvodayaattendance.data.Student
 import com.school.sarvodayaattendance.utils.FaceMatcherEngine
 import com.school.sarvodayaattendance.utils.RealisticVoiceManager
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileOutputStream
 import java.io.InputStreamReader
 
 class MainActivity : AppCompatActivity() {
@@ -86,9 +89,12 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // WhatsApp और अन्य ऐप्स पर बिना रुकावट डॉक्यूमेंट फ़ाइल शेयर करने के लिए
+        StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
+
         setContentView(R.layout.activity_main)
 
-        // 192-Point TFLite Neural Engine को तुरंत चालू करें
         FaceMatcherEngine.initEngine(this)
 
         voiceManager = RealisticVoiceManager(this)
@@ -111,7 +117,6 @@ class MainActivity : AppCompatActivity() {
 
         tvHeaderDate.text = AppStorage.getTodayFullDot()
 
-        // फुल-स्क्रीन लेज़र स्कैन एनिमेशन चालू करें
         findViewById<View>(R.id.laserScanLine)?.let { laser ->
             ObjectAnimator.ofFloat(laser, "translationY", 0f, 190f).apply {
                 duration = 1400
@@ -356,6 +361,7 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    // ✅ अब यह चैट टेक्स्ट के बजाय WhatsApp-Compatible (.txt) डॉक्यूमेंट फ़ाइल बनाकर भेजेगा!
     private fun shareTodayAttendanceJson() {
         val todayKey = AppStorage.getTodayShortKey()
         val presentIds = payload.attendance[todayKey] ?: emptyList()
@@ -369,12 +375,23 @@ class MainActivity : AppCompatActivity() {
             "presentStudentIds" to presentIds
         )
         val json = Gson().toJson(exportMap)
-        val sendIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "Today_Attendance_$todayKey.json")
-            putExtra(Intent.EXTRA_TEXT, json)
+        try {
+            // WhatsApp .txt डॉक्यूमेंट को 100% सपोर्ट करता है
+            val fileName = "Today_Attendance_${todayKey.replace(".", "_")}.txt"
+            val outFile = File(externalCacheDir ?: cacheDir, fileName)
+            FileOutputStream(outFile).use { fos ->
+                fos.write(json.toByteArray(Charsets.UTF_8))
+            }
+            val fileUri = Uri.fromFile(outFile)
+            val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_STREAM, fileUri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(sendIntent, "आज की हाज़िरी फ़ाइल भेजें"))
+        } catch (e: Exception) {
+            Toast.makeText(this, "❌ फ़ाइल बनाने में त्रुटि!", Toast.LENGTH_SHORT).show()
         }
-        startActivity(Intent.createChooser(sendIntent, "आज की हाज़िरी भेजें"))
     }
 
     private fun importBackupFromUri(uri: Uri) {
