@@ -8,6 +8,7 @@ import android.media.MediaPlayer
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import android.util.Base64
 import android.widget.Toast
 import org.json.JSONArray
@@ -28,7 +29,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private val prefs = context.getSharedPreferences("SarvodayaVoicePrefs", Context.MODE_PRIVATE)
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // डिफ़ॉल्ट रूप से पुरानी Key के टुकड़े (लेकिन आप ऐप में🔊 बटन दबाए रखकर नई Key डाल सकते हैं जो कभी लीक नहीं होगी)
     private val defPart1 = "AQ.Ab8RN6JboShANCf"
     private val defPart2 = "JrUUGoKliLkRUeWbYZ"
     private val defPart3 = "38ZEo9InfG-hroP9Q"
@@ -62,11 +62,16 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private var isOfflineTtsReady = false
     var isVoiceEnabled = true
 
+    // ✅ ओवरलैप रोकने के लिए Live Speaking Lock (यह बताता है कि अभी आवाज़ चल रही है या नहीं)
+    @Volatile
+    var isCurrentlySpeaking: Boolean = false
+        private set
+
+    private var unlockRunnable: Runnable? = null
     private val voiceExecutor = Executors.newSingleThreadExecutor()
     private var currentAudioTrack: AudioTrack? = null
     private var mediaPlayer: MediaPlayer? = null
 
-    // कैश को External Files में रखें ताकि सामान्य कैश क्लीन होने पर भी आवाज़ें सुरक्षित रहें
     private val voiceCacheDir: File by lazy {
         File(context.getExternalFilesDir(null) ?: context.filesDir, "ai_studio_voice_bank").apply {
             if (!exists()) mkdirs()
@@ -82,18 +87,38 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             tts?.language = Locale("hi", "IN")
             tts?.setPitch(0.90f)
             tts?.setSpeechRate(0.95f)
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {
+                    isCurrentlySpeaking = true
+                }
+                override fun onDone(utteranceId: String?) {
+                    isCurrentlySpeaking = false
+                }
+                override fun onError(utteranceId: String?) {
+                    isCurrentlySpeaking = false
+                }
+            })
             isOfflineTtsReady = true
         }
+    }
+
+    private fun scheduleSpeakingUnlock(durationMs: Long) {
+        isCurrentlySpeaking = true
+        unlockRunnable?.let { mainHandler.removeCallbacks(it) }
+        val r = Runnable { isCurrentlySpeaking = false }
+        unlockRunnable = r
+        mainHandler.postDelayed(r, durationMs)
     }
 
     fun speakGreeting(type: String, studentName: String) {
         if (!isVoiceEnabled) return
         val cleanName = studentName.trim()
 
-        // कोटा बचाने के लिए प्रत्येक स्थिति का स्पष्ट और प्रभावशाली वाक्य
         val message = when (type) {
             "success" -> "स्वागत है $cleanName! आपकी आज की उपस्थिति दर्ज हो चुकी है।"
             "warning" -> "ध्यान दें $cleanName, आपकी आज की हाज़िरी पहले ही लग चुकी है।"
+            // ✅ 3 बार स्कैन होने के बाद भी न हटने पर नया मजेदार डायलॉग:
+            "move_away" -> "चल हट भी जा अब $cleanName, दूसरे को भी अटेंडेंस बनाने का मौका दो।"
             else -> "क्षमा करें, चेहरा पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।"
         }
         speakHindi(message)
@@ -102,8 +127,10 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     fun speakHindi(text: String) {
         if (!isVoiceEnabled || text.isBlank()) return
 
+        // नेटवर्क से ऑडियो आने के दौरान भी ओवरलैप लॉक चालू रखें
+        scheduleSpeakingUnlock(6000L)
+
         voiceExecutor.execute {
-            // रैंडम तौर पर Sadachbia (M) या Autonoe (F) चुनें
             val chosenVoice = aiVoiceProfiles[Random.nextInt(aiVoiceProfiles.size)]
             val otherVoice = aiVoiceProfiles.first { it.name != chosenVoice.name }
 
@@ -113,7 +140,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             val hash2 = md5Hash("${otherVoice.name}_$text")
             val file2 = File(voiceCacheDir, "$hash2.pcm")
 
-            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो बिना इंटरनेट तुरंत बजाएं!
+            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो तुरंत बजाएं
             if (file1.exists() && file1.length() > 1000) {
                 if (playRawPcm24kHz(file1.readBytes())) return@execute
             }
@@ -128,13 +155,11 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                     } catch (_: Exception) {}
                     if (playRawPcm24kHz(pcmBytes)) return@execute
                 } else {
-                    // यदि कोटा खत्म हो गया है (429) और दूसरी आवाज़ (Sadachbia/Autonoe) पहले से सेव है, तो उसे बजा दें!
                     if (file2.exists() && file2.length() > 1000) {
                         if (playRawPcm24kHz(file2.readBytes())) return@execute
                     }
-                    // यूज़र को स्क्रीन पर साफ़ बताएं कि AI Studio क्यों रुका
                     if (errCode == 429) {
-                        showDebugToast("⚠️ AI Studio का प्रति-मिनट/दैनिक कोटा पूर्ण (429)! 1 मिनट बाद प्रयास करें या नई Key डालें।")
+                        showDebugToast("⚠️ AI Studio का प्रति-मिनट कोटा पूर्ण (429)! 1 मिनट बाद प्रयास करें।")
                     } else if (errCode == 400 || errCode == 403) {
                         showDebugToast("🔑 API Key ब्लॉक या अमान्य है ($errCode)! 🔊 बटन को दबाए रखकर नई Key डालें।")
                     }
@@ -146,8 +171,11 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
             // 4. अंतिम ऑफलाइन बैकअप
             if (isOfflineTtsReady) {
+                scheduleSpeakingUnlock(4200L)
                 tts?.setPitch(if (chosenVoice.name == "Sadachbia") 0.82f else 1.05f)
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SARVODAYA_FALLBACK")
+            } else {
+                isCurrentlySpeaking = false
             }
         }
     }
@@ -163,7 +191,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         profile: AiVoiceProfile,
         apiKey: String
     ): Pair<ByteArray?, Int> {
-        // दो मॉडल उपलब्ध हैं: यदि पहले का कोटा खत्म हो तो दूसरे पर प्रयास करें
         val models = listOf("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts")
         var lastHttpCode = 0
 
@@ -252,12 +279,17 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .build()
 
+            // ऑडियो की सटीक लंबाई (मिलीसेकंड में) निकालकर उतने समय तक ओवरलैप लॉक रखें (+450ms बफर)
+            val exactDurationMs = (pcmData.size * 1000L) / (sampleRate * 2)
+            scheduleSpeakingUnlock(exactDurationMs + 450L)
+
             track.write(pcmData, 0, pcmData.size)
             track.play()
             currentAudioTrack = track
             true
         } catch (e: Exception) {
             e.printStackTrace()
+            isCurrentlySpeaking = false
             false
         }
     }
@@ -293,6 +325,11 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                             val targetPitch = if (isLowerPitchMale) 0.85f else 1.04f
                             playbackParams = playbackParams.setPitch(targetPitch).setSpeed(0.98f)
                         }
+                        val dur = duration.toLong().coerceAtLeast(3000L)
+                        scheduleSpeakingUnlock(dur + 400L)
+                        setOnCompletionListener {
+                            isCurrentlySpeaking = false
+                        }
                         start()
                     }
                 }
@@ -327,6 +364,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     }
 
     fun shutdown() {
+        isCurrentlySpeaking = false
         stopCurrentAudio()
         try {
             tts?.stop()
