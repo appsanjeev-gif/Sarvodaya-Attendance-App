@@ -333,7 +333,7 @@ class MainActivity : AppCompatActivity() {
         } else {
             if (sameStudentScanStreak >= 3) {
                 val firstName = stu.name.trim().substringBefore(" ")
-                showResultBanner("warning", stu, "🏃 चल हट भी जा अब $firstName!", 4200)
+                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName!", 4200)
                 voiceManager.speakGreeting("move_away", stu.name)
             } else {
                 showResultBanner("warning", stu, "⚠️ पहले से दर्ज है", 3500)
