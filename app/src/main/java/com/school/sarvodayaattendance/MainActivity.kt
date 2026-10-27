@@ -102,6 +102,7 @@ class MainActivity : AppCompatActivity() {
         FaceMatcherEngine.initEngine(this)
 
         voiceManager = RealisticVoiceManager(this)
+        uiHandler.postDelayed({ voiceManager.speakStartupWelcome() }, 600)
         payload = AppStorage.loadData(this)
 
         previewView = findViewById(R.id.previewView)
@@ -345,7 +346,8 @@ class MainActivity : AppCompatActivity() {
         } else {
             // ✅ यदि छात्र की हाज़िरी लग चुकी है और वह 3 या अधिक बार स्कैन होने पर भी नहीं हट रहा है:
             if (sameStudentScanStreak >= 3) {
-                showResultBanner("warning", stu, "🏃 चल हट भी जा अब ${stu.name}, दूसरे को मौका दो!", 4200)
+                val firstName = stu.name.trim().substringBefore(" ")
+showResultBanner("warning", stu, "🏃 चल हट भी जा अब $firstName, दूसरे को मौका दो!", 4200)
                 voiceManager.speakGreeting("move_away", stu.name)
             } else {
                 showResultBanner("warning", stu, "⚠️ आज की हाज़िरी पहले से दर्ज है!", 3500)
