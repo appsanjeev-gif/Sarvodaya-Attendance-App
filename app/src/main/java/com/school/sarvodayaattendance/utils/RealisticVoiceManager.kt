@@ -136,7 +136,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         val message = when (type) {
             "success" -> "स्वागत है $cleanName! आपकी आज की उपस्थिति दर्ज हो चुकी है।"
             "warning" -> "ध्यान दें $cleanName, आपकी आज की हाज़िरी पहले ही लग चुकी है।"
-            "move_away" -> "चल हट भी जा अब $firstName, दूसरे को भी अटेंडेंस बनाने का मौका दो।"
+            "move_away" -> "अरे वाह $firstName, आज यहीं खड़े रहने का इरादा है क्या? चलो अब पीछे वाले दोस्त को आगे आने दो!"
             else -> "क्षमा करें, चेहरा पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।"
         }
         speakHindi(message, boostFactor = 1.35f)
