@@ -5,6 +5,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.media.MediaPlayer
+import android.media.audiofx.LoudnessEnhancer
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -19,6 +20,8 @@ import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.Executors
@@ -58,11 +61,17 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         )
     )
 
+    // ✅ आपके द्वारा चुने गए स्वागत वाक्य (विकल्प 2, 3 और 5 - रैंडम मोड)
+    private val startupWelcomeMessages = listOf(
+        "सुप्रभात! सर्वोदय मध्य विद्यालय, सोहसराय में आपका हार्दिक स्वागत है। स्मार्ट उपस्थिति प्रणाली अब तैयार है।",
+        "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट कैंपस में आपका स्वागत है। आइए, आज की उपस्थिति शुरू करें।",
+        "नमस्कार! शिक्षा के मंदिर सर्वोदय मध्य विद्यालय, सोहसराय में आपका स्वागत है। कृपया कैमरे के सामने आकर अपनी उपस्थिति दर्ज कराएं।"
+    )
+
     private var tts: TextToSpeech? = null
     private var isOfflineTtsReady = false
     var isVoiceEnabled = true
 
-    // ✅ ओवरलैप रोकने के लिए Live Speaking Lock (यह बताता है कि अभी आवाज़ चल रही है या नहीं)
     @Volatile
     var isCurrentlySpeaking: Boolean = false
         private set
@@ -70,6 +79,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private var unlockRunnable: Runnable? = null
     private val voiceExecutor = Executors.newSingleThreadExecutor()
     private var currentAudioTrack: AudioTrack? = null
+    private var loudnessEnhancer: LoudnessEnhancer? = null
     private var mediaPlayer: MediaPlayer? = null
 
     private val voiceCacheDir: File by lazy {
@@ -110,24 +120,31 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         mainHandler.postDelayed(r, durationMs)
     }
 
+    // ✅ ऐप स्टार्ट होने पर हर बार तेज़ आवाज़ में रैंडम स्वागत वाक्य बोलने का फंक्शन
+    fun speakStartupWelcome() {
+        if (!isVoiceEnabled) return
+        val welcomeLine = startupWelcomeMessages[Random.nextInt(startupWelcomeMessages.size)]
+        speakHindi(welcomeLine, boostFactor = 1.55f)
+    }
+
     fun speakGreeting(type: String, studentName: String) {
         if (!isVoiceEnabled) return
         val cleanName = studentName.trim()
+        // ✅ हास्यास्पद वाक्य के लिए केवल फर्स्ट नेम (First Name) निकालें
+        val firstName = cleanName.substringBefore(" ").ifBlank { cleanName }
 
         val message = when (type) {
             "success" -> "स्वागत है $cleanName! आपकी आज की उपस्थिति दर्ज हो चुकी है।"
             "warning" -> "ध्यान दें $cleanName, आपकी आज की हाज़िरी पहले ही लग चुकी है।"
-            // ✅ 3 बार स्कैन होने के बाद भी न हटने पर नया मजेदार डायलॉग:
-            "move_away" -> "चल हट भी जा अब $cleanName, दूसरे को भी अटेंडेंस बनाने का मौका दो।"
+            "move_away" -> "चल हट भी जा अब $firstName, दूसरे को भी अटेंडेंस बनाने का मौका दो।"
             else -> "क्षमा करें, चेहरा पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।"
         }
-        speakHindi(message)
+        speakHindi(message, boostFactor = 1.35f)
     }
 
-    fun speakHindi(text: String) {
+    fun speakHindi(text: String, boostFactor: Float = 1.35f) {
         if (!isVoiceEnabled || text.isBlank()) return
 
-        // नेटवर्क से ऑडियो आने के दौरान भी ओवरलैप लॉक चालू रखें
         scheduleSpeakingUnlock(6000L)
 
         voiceExecutor.execute {
@@ -140,9 +157,9 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             val hash2 = md5Hash("${otherVoice.name}_$text")
             val file2 = File(voiceCacheDir, "$hash2.pcm")
 
-            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो तुरंत बजाएं
+            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो तुरंत तेज़ आवाज़ में बजाएं
             if (file1.exists() && file1.length() > 1000) {
-                if (playRawPcm24kHz(file1.readBytes())) return@execute
+                if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return@execute
             }
 
             // 2. Google AI Studio से नई आवाज़ मंगाएं
@@ -153,10 +170,10 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                     try {
                         FileOutputStream(file1).use { it.write(pcmBytes) }
                     } catch (_: Exception) {}
-                    if (playRawPcm24kHz(pcmBytes)) return@execute
+                    if (playRawPcm24kHz(pcmBytes, boostFactor)) return@execute
                 } else {
                     if (file2.exists() && file2.length() > 1000) {
-                        if (playRawPcm24kHz(file2.readBytes())) return@execute
+                        if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return@execute
                     }
                     if (errCode == 429) {
                         showDebugToast("⚠️ AI Studio का प्रति-मिनट कोटा पूर्ण (429)! 1 मिनट बाद प्रयास करें।")
@@ -171,7 +188,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
             // 4. अंतिम ऑफलाइन बैकअप
             if (isOfflineTtsReady) {
-                scheduleSpeakingUnlock(4200L)
+                scheduleSpeakingUnlock(4500L)
                 tts?.setPitch(if (chosenVoice.name == "Sadachbia") 0.82f else 1.05f)
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SARVODAYA_FALLBACK")
             } else {
@@ -250,16 +267,32 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         return Pair(null, lastHttpCode)
     }
 
-    private fun playRawPcm24kHz(pcmData: ByteArray): Boolean {
+    // ✅ ऑडियो सैंपल्स को डिजिटली बूस्ट (Amplify) करें ताकि आवाज़ साफ़ और तेज़ आए
+    private fun amplifyPcmSamples(rawPcm: ByteArray, gain: Float): ByteArray {
+        if (gain <= 1.0f || rawPcm.size < 2) return rawPcm
+        val out = ByteArray(rawPcm.size)
+        val inBuf = ByteBuffer.wrap(rawPcm).order(ByteOrder.LITTLE_ENDIAN)
+        val outBuf = ByteBuffer.wrap(out).order(ByteOrder.LITTLE_ENDIAN)
+
+        while (inBuf.remaining() >= 2) {
+            val sample = inBuf.short.toInt()
+            val boosted = (sample * gain).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+            outBuf.putShort(boosted.toShort())
+        }
+        return out
+    }
+
+    private fun playRawPcm24kHz(pcmData: ByteArray, boostFactor: Float): Boolean {
         return try {
             stopCurrentAudio()
+            val boostedData = amplifyPcmSamples(pcmData, boostFactor)
             val sampleRate = 24000
             val minBufSize = AudioTrack.getMinBufferSize(
                 sampleRate,
                 AudioFormat.CHANNEL_OUT_MONO,
                 AudioFormat.ENCODING_PCM_16BIT
             )
-            val bufferSize = kotlin.math.max(minBufSize, pcmData.size)
+            val bufferSize = kotlin.math.max(minBufSize, boostedData.size)
 
             val track = AudioTrack.Builder()
                 .setAudioAttributes(
@@ -279,11 +312,20 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 .setTransferMode(AudioTrack.MODE_STATIC)
                 .build()
 
-            // ऑडियो की सटीक लंबाई (मिलीसेकंड में) निकालकर उतने समय तक ओवरलैप लॉक रखें (+450ms बफर)
-            val exactDurationMs = (pcmData.size * 1000L) / (sampleRate * 2)
+            track.setVolume(AudioTrack.getMaxVolume())
+
+            // हार्डवेयर LoudnessEnhancer (+600mB यानी +6dB अतिरिक्त आवाज़ बूस्ट)
+            try {
+                loudnessEnhancer = LoudnessEnhancer(track.audioSessionId).apply {
+                    setTargetGain(600)
+                    enabled = true
+                }
+            } catch (_: Exception) {}
+
+            val exactDurationMs = (boostedData.size * 1000L) / (sampleRate * 2)
             scheduleSpeakingUnlock(exactDurationMs + 450L)
 
-            track.write(pcmData, 0, pcmData.size)
+            track.write(boostedData, 0, boostedData.size)
             track.play()
             currentAudioTrack = track
             true
@@ -321,6 +363,13 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                         )
                         setDataSource(fis.fd)
                         prepare()
+                        setVolume(1.0f, 1.0f)
+                        try {
+                            loudnessEnhancer = LoudnessEnhancer(audioSessionId).apply {
+                                setTargetGain(600)
+                                enabled = true
+                            }
+                        } catch (_: Exception) {}
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
                             val targetPitch = if (isLowerPitchMale) 0.85f else 1.04f
                             playbackParams = playbackParams.setPitch(targetPitch).setSpeed(0.98f)
@@ -341,6 +390,11 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     }
 
     private fun stopCurrentAudio() {
+        try {
+            loudnessEnhancer?.release()
+            loudnessEnhancer = null
+        } catch (_: Exception) {}
+
         try {
             currentAudioTrack?.let {
                 if (it.playState == AudioTrack.PLAYSTATE_PLAYING) it.stop()
