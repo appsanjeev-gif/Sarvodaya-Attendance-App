@@ -2,12 +2,12 @@ package com.school.sarvodayaattendance
 
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.os.StrictMode
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.util.Base64
@@ -34,6 +34,7 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
 import com.school.sarvodayaattendance.data.AppStorage
@@ -52,9 +53,7 @@ class AdminActivity : AppCompatActivity() {
     private val gson = Gson()
 
     private var pendingSaveContent: String = ""
-    private var pendingSaveFileName: String = "Backup.txt"
 
-    // 1. Native Restore Picker
     private val nativeRestoreLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -73,18 +72,17 @@ class AdminActivity : AppCompatActivity() {
                 if (ok) {
                     FaceMatcherEngine.clearCache()
                     val count = AppStorage.loadData(this).students.size
-                    Toast.makeText(this, "✔ डेटा रिस्टोर हो गया! (कुल छात्र: $count)", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this, "✔ रिस्टोर पूर्ण ($count छात्र)", Toast.LENGTH_SHORT).show()
                     webView.reload()
                 } else {
-                    Toast.makeText(this, "❌ अमान्य बैकअप फ़ाइल!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "❌ अमान्य फ़ाइल", Toast.LENGTH_SHORT).show()
                 }
             } catch (e: Exception) {
-                Toast.makeText(this, "❌ फ़ाइल पढ़ने में त्रुटि!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // 2. Native Merge Daily Attendance Picker (दूसरे मोबाइल की हाज़िरी मर्ज करने के लिए)
     private val nativeMergeAttendanceLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
@@ -103,12 +101,11 @@ class AdminActivity : AppCompatActivity() {
                 val escaped = gson.toJson(rawJson)
                 webView.evaluateJavascript("onNativeAttendanceMergeContent($escaped)", null)
             } catch (e: Exception) {
-                Toast.makeText(this, "❌ हाज़िरी फ़ाइल पढ़ने में त्रुटि!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // 3. Native Save File Picker (फोन के Downloads में सीधे सेव करने के लिए)
     private val createDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -120,9 +117,9 @@ class AdminActivity : AppCompatActivity() {
                         writer.write(pendingSaveContent)
                     }
                 }
-                Toast.makeText(this, "✔ फ़ाइल फोन में सफलतापूर्वक सेव हो गई!", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "✔ फ़ाइल सेव हो गई", Toast.LENGTH_SHORT).show()
             } catch (e: Exception) {
-                Toast.makeText(this, "❌ सेव करने में त्रुटि!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -148,8 +145,6 @@ class AdminActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
 
         webView = WebView(this)
         setContentView(webView)
@@ -205,18 +200,18 @@ class AdminActivity : AppCompatActivity() {
         }
 
         val titleTv = TextView(this).apply {
-            text = "📸 लाइव बायोमेट्रिक KYC वेरिफिकेशन"
-            textSize = 17f
+            text = "📸 लाइव KYC"
+            textSize = 19f
             setTextColor(0xFFFFFFFF.toInt())
             gravity = Gravity.CENTER
         }
 
         val subTv = TextView(this).apply {
-            text = "चेहरे को गोले के बीच में सीधा रखें..."
-            textSize = 13.5f
+            text = "चेहरा गोले में रखें"
+            textSize = 15f
             setTextColor(0xFF38BDF8.toInt())
             gravity = Gravity.CENTER
-            setPadding(0, 10, 0, 20)
+            setPadding(0, 8, 0, 18)
         }
 
         val circleContainer = FrameLayout(this).apply {
@@ -249,17 +244,19 @@ class AdminActivity : AppCompatActivity() {
         val btnRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, 28, 0, 0)
+            setPadding(0, 26, 0, 0)
         }
 
         val switchCamBtn = Button(this).apply {
-            text = "🔄 कैमरा बदलें"
+            text = "🔄 कैमरा"
+            textSize = 15f
             setBackgroundColor(0xFF334155.toInt())
             setTextColor(0xFFFFFFFF.toInt())
         }
 
         val cancelBtn = Button(this).apply {
-            text = "✕ बंद करें"
+            text = "✕ बंद"
+            textSize = 15f
             setBackgroundColor(0xFFDC2626.toInt())
             setTextColor(0xFFFFFFFF.toInt())
         }
@@ -274,7 +271,7 @@ class AdminActivity : AppCompatActivity() {
 
         val kycDialog = AlertDialog.Builder(this)
             .setView(dialogLayout)
-            .setCancelable(false)
+            .setCancelable(true)
             .create()
 
         var kycLens = CameraSelector.LENS_FACING_BACK
@@ -334,7 +331,7 @@ class AdminActivity : AppCompatActivity() {
                                 if (yaw <= 16f && tilt <= 16f && wRatio >= 0.25f) {
                                     approvalProgress += 35
                                     progressRing.progress = approvalProgress.coerceAtMost(100)
-                                    subTv.text = "🟢 बहुत बढ़िया! स्थिर रहें (${progressRing.progress}%)"
+                                    subTv.text = "🟢 स्थिर रहें (${progressRing.progress}%)"
                                     subTv.setTextColor(0xFF4ADE80.toInt())
 
                                     if (approvalProgress >= 100) {
@@ -347,19 +344,19 @@ class AdminActivity : AppCompatActivity() {
 
                                         kycDialog.dismiss()
                                         webView.evaluateJavascript("onLiveKycPhotoApproved('$b64')", null)
-                                        Toast.makeText(this@AdminActivity, "✔ बायोमेट्रिक फोटो अप्रूव हो गई!", Toast.LENGTH_SHORT).show()
+                                        Toast.makeText(this@AdminActivity, "✔ फोटो जुड़ गई", Toast.LENGTH_SHORT).show()
                                         return@addOnSuccessListener
                                     }
                                 } else {
                                     approvalProgress = 0
                                     progressRing.progress = 0
-                                    subTv.text = "⚠️ चेहरा गोले के बीच में बिल्कुल सीधा रखें!"
+                                    subTv.text = "⚠️ सीधा देखें"
                                     subTv.setTextColor(0xFFFACC15.toInt())
                                 }
                             } else {
                                 approvalProgress = 0
                                 progressRing.progress = 0
-                                subTv.text = "🔍 कैमरे के सामने केवल छात्र का चेहरा लाएं..."
+                                subTv.text = "🔍 चेहरा सामने लाएं"
                                 subTv.setTextColor(0xFFF87171.toInt())
                             }
                             isChecking = false
@@ -420,7 +417,7 @@ class AdminActivity : AppCompatActivity() {
             }
         }
 
-        // ✅ मास्टर बैकअप को WhatsApp-Compatible (.txt) फॉर्मेट में सेव या शेयर करें
+        // ✅ मास्टर बैकअप: सीधे शेयर करें (Direct Share)
         @JavascriptInterface
         fun exportMasterBackupNative() {
             runOnUiThread {
@@ -429,15 +426,37 @@ class AdminActivity : AppCompatActivity() {
                     payload.isScannerOnlyPack = false
                     val jsonStr = gson.toJson(payload)
                     val dateClean = AppStorage.getTodayShortKey().replace(".", "_")
-                    val fileName = "Sarvodaya_Master_Backup_$dateClean.txt"
-                    showSaveOrShareDialog("💾 मास्टर बैकअप तैयार है", fileName, jsonStr, "text/plain")
+                    val fileName = "Master_Backup_$dateClean.txt"
+                    shareFileViaProviderDirectly(fileName, jsonStr, "text/plain")
                 } catch (e: Exception) {
-                    Toast.makeText(this@AdminActivity, "बैकअप त्रुटि!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@AdminActivity, "त्रुटि", Toast.LENGTH_SHORT).show()
                 }
             }
         }
 
-        // ✅ स्कैनर पैक को भी WhatsApp-Compatible (.txt) फॉर्मेट में सेव या शेयर करें (ताकि WhatsApp कभी ब्लॉक न करे)
+        // ✅ मास्टर बैकअप: सीधे फोन में सेव करें
+        @JavascriptInterface
+        fun saveMasterBackupToPhoneNative() {
+            runOnUiThread {
+                try {
+                    val payload = AppStorage.loadData(this@AdminActivity)
+                    payload.isScannerOnlyPack = false
+                    pendingSaveContent = gson.toJson(payload)
+                    val dateClean = AppStorage.getTodayShortKey().replace(".", "_")
+                    val fileName = "Master_Backup_$dateClean.txt"
+                    val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "text/plain"
+                        putExtra(Intent.EXTRA_TITLE, fileName)
+                    }
+                    createDocumentLauncher.launch(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(this@AdminActivity, "त्रुटि", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        // ✅ स्कैनर पैक: बिना बीच के पॉपअप बॉक्स के सीधे WhatsApp / Telegram / Drive पर Direct Share!
         @JavascriptInterface
         fun exportScannerPackNative(targetClass: String) {
             runOnUiThread {
@@ -449,7 +468,7 @@ class AdminActivity : AppCompatActivity() {
                         fullPayload.students.filter { it.className == targetClass }.toMutableList()
                     }
                     if (filteredStudents.isEmpty()) {
-                        Toast.makeText(this@AdminActivity, "⚠️ इस कक्षा में कोई छात्र नहीं है!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@AdminActivity, "⚠️ कोई छात्र नहीं है", Toast.LENGTH_SHORT).show()
                         return@runOnUiThread
                     }
                     val packObj = mapOf(
@@ -461,17 +480,17 @@ class AdminActivity : AppCompatActivity() {
                     )
                     val jsonStr = gson.toJson(packObj)
                     val cleanCls = when (targetClass) {
-                        "सभी" -> "All_Classes"
-                        "6वीं" -> "Class_6"
-                        "7वीं" -> "Class_7"
-                        "8वीं" -> "Class_8"
-                        else -> "Class_Pack"
+                        "सभी" -> "All"
+                        "6वीं" -> "Class6"
+                        "7वीं" -> "Class7"
+                        "8वीं" -> "Class8"
+                        else -> "Pack"
                     }
                     val dateClean = AppStorage.getTodayShortKey().replace(".", "_")
                     val fileName = "Scanner_Pack_${cleanCls}_$dateClean.txt"
-                    showSaveOrShareDialog("📤 स्कैनर पैक तैयार है (${filteredStudents.size} छात्र)", fileName, jsonStr, "text/plain")
+                    shareFileViaProviderDirectly(fileName, jsonStr, "text/plain")
                 } catch (e: Exception) {
-                    Toast.makeText(this@AdminActivity, "शेयर त्रुटि!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@AdminActivity, "शेयर त्रुटि", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -497,7 +516,7 @@ class AdminActivity : AppCompatActivity() {
                     }
                     printWebView.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
                 } catch (e: Exception) {
-                    Toast.makeText(this@AdminActivity, "प्रिंट त्रुटि!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@AdminActivity, "प्रिंट त्रुटि", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -507,48 +526,33 @@ class AdminActivity : AppCompatActivity() {
             runOnUiThread {
                 val safeMime = if (mimeType.contains("json")) "text/plain" else mimeType
                 val safeName = if (fileName.endsWith(".json")) fileName.replace(".json", ".txt") else fileName
-                shareLargeFileDirectly(safeName, content, safeMime)
+                shareFileViaProviderDirectly(safeName, content, safeMime)
             }
         }
     }
 
-    private fun showSaveOrShareDialog(title: String, fileName: String, content: String, mimeType: String) {
-        AlertDialog.Builder(this)
-            .setTitle(title)
-            .setMessage("फ़ाइल: $fileName\nआप इसे कैसे भेजना या सेव करना चाहते हैं?")
-            .setPositiveButton("📤 WhatsApp / शेयर करें") { _, _ ->
-                shareLargeFileDirectly(fileName, content, mimeType)
-            }
-            .setNeutralButton("📥 फोन में सेव करें") { _, _ ->
-                pendingSaveFileName = fileName
-                pendingSaveContent = content
-                val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = mimeType
-                    putExtra(Intent.EXTRA_TITLE, fileName)
-                }
-                createDocumentLauncher.launch(intent)
-            }
-            .setNegativeButton("रद्द", null)
-            .show()
-    }
-
-    private fun shareLargeFileDirectly(fileName: String, content: String, mimeType: String) {
+    // ✅ FileProvider + ClipData के साथ 100% Direct Share (WhatsApp, Telegram, Google Drive सब जगह काम करेगा)
+    private fun shareFileViaProviderDirectly(fileName: String, content: String, mimeType: String) {
         try {
-            val outFile = File(externalCacheDir ?: cacheDir, fileName)
+            val outFile = File(cacheDir, fileName)
             FileOutputStream(outFile).use { fos ->
                 fos.write(content.toByteArray(Charsets.UTF_8))
             }
-            val fileUri = Uri.fromFile(outFile)
+            val contentUri = FileProvider.getUriForFile(
+                this,
+                "${applicationContext.packageName}.fileprovider",
+                outFile
+            )
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = mimeType
-                putExtra(Intent.EXTRA_STREAM, fileUri)
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                clipData = ClipData.newRawUri(fileName, contentUri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
             startActivity(Intent.createChooser(sendIntent, fileName))
         } catch (e: Exception) {
             e.printStackTrace()
-            Toast.makeText(this, "❌ फ़ाइल शेयर करने में त्रुटि!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "❌ शेयर त्रुटि", Toast.LENGTH_SHORT).show()
         }
     }
 
