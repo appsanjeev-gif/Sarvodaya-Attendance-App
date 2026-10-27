@@ -3,21 +3,27 @@ package com.school.sarvodayaattendance
 import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.content.ClipData
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.os.StrictMode
 import android.text.Editable
 import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
+import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
+import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -33,6 +39,7 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
 import com.school.sarvodayaattendance.data.AppStorage
@@ -71,7 +78,6 @@ class MainActivity : AppCompatActivity() {
     private var isProcessingFrame = false
     private var lastScanTimestamp = 0L
 
-    // ✅ लगातार एक ही छात्र के खड़े रहने की गिनती (Streak Counter)
     private var lastSpokenStudentId: String? = null
     private var sameStudentScanStreak: Int = 0
     private var emptyFrameCount: Int = 0
@@ -94,15 +100,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        StrictMode.setVmPolicy(StrictMode.VmPolicy.Builder().build())
-
         setContentView(R.layout.activity_main)
 
         FaceMatcherEngine.initEngine(this)
 
         voiceManager = RealisticVoiceManager(this)
         uiHandler.postDelayed({ voiceManager.speakStartupWelcome() }, 600)
+
         payload = AppStorage.loadData(this)
 
         previewView = findViewById(R.id.previewView)
@@ -143,7 +147,6 @@ class MainActivity : AppCompatActivity() {
             btnTorchIcon.backgroundTintList = ColorStateList.valueOf(
                 Color.parseColor(if (isTorchOn) "#16A34A" else "#334155")
             )
-            Toast.makeText(this, if (isTorchOn) "🔦 टॉर्च चालू" else "🔦 टॉर्च बंद", Toast.LENGTH_SHORT).show()
         }
 
         btnSwitchCamIcon.setOnClickListener {
@@ -153,11 +156,6 @@ class MainActivity : AppCompatActivity() {
                 CameraSelector.LENS_FACING_FRONT
             }
             startCamera()
-            Toast.makeText(
-                this,
-                if (lensFacing == CameraSelector.LENS_FACING_FRONT) "🔄 फ्रंट कैमरा" else "🔄 बैक कैमरा",
-                Toast.LENGTH_SHORT
-            ).show()
         }
 
         btnVoiceIcon.setOnClickListener {
@@ -168,40 +166,37 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // 🔊 बटन को 2 सेकंड दबाए रखने (Long Press) पर नई Gemini API Key डालने की सुविधा
+        // 🔊 बटन Long Press पर बिना किसी फालतू टेक्स्ट के साफ-सुथरा API Key इनपुट बॉक्स
         btnVoiceIcon.setOnLongClickListener {
             val keyInput = EditText(this).apply {
                 setText(voiceManager.getApiKey())
-                hint = "यहाँ नई Google AI Studio API Key पेस्ट करें"
-                setPadding(40, 30, 40, 30)
+                hint = "API Key"
+                textSize = 16f
+                setPadding(40, 35, 40, 35)
             }
             AlertDialog.Builder(this)
-                .setTitle("🎙️ AI Studio Voice API Key")
-                .setMessage("GitHub पर Key लीक होने से बचाने के लिए अपनी नई API Key सीधे यहाँ पेस्ट करें:")
+                .setTitle("🎙️ AI Voice Key")
                 .setView(keyInput)
-                .setPositiveButton("सेव और टेस्ट करें") { _, _ ->
+                .setPositiveButton("सेव") { _, _ ->
                     val newKey = keyInput.text.toString().trim()
                     if (newKey.isNotEmpty()) {
                         voiceManager.saveCustomApiKey(newKey)
-                        Toast.makeText(this, "✔ नई Key सेव हो गई! आवाज़ टेस्ट की जा रही है...", Toast.LENGTH_SHORT).show()
-                        voiceManager.speakHindi("नमस्कार, सर्वोदय विद्यालय के एआई वॉइस सिस्टम में आपका स्वागत है।")
+                        Toast.makeText(this, "✔ सेव हो गया", Toast.LENGTH_SHORT).show()
+                        voiceManager.speakStartupWelcome()
                     }
                 }
-                .setNegativeButton("रद्द", null)
                 .show()
             true
         }
 
         btnAdminLock.setOnClickListener {
-            if (payload.isScannerOnlyPack) {
-                Toast.makeText(this, "🔒 यह सीमित स्कैनर पैक है!", Toast.LENGTH_SHORT).show()
-            } else {
-                showPinDialog()
+            if (!payload.isScannerOnlyPack) {
+                showRoyalPinDialog()
             }
         }
 
         findViewById<Button>(R.id.btnShareTodayAtt).setOnClickListener {
-            shareTodayAttendanceJson()
+            shareTodayAttendanceDirect()
         }
 
         findViewById<Button>(R.id.btnLoadPack).setOnClickListener {
@@ -282,16 +277,10 @@ class MainActivity : AppCompatActivity() {
                     val (matchedStudent, score) = FaceMatcherEngine.findBestMatch(croppedFace, payload.students)
 
                     if (matchedStudent != null && score <= 19.0f) {
-                        // ✅ स्मार्ट ओवरलैप सुरक्षा:
-                        // यदि अभी आवाज़ चल रही है और कैमरे के सामने वही छात्र खड़ा है (और मैनुअल बटन नहीं दबाया गया है),
-                        // तो वाक्य पूरा होने दें — बीच में आवाज़ को न काटें!
-                        // (लेकिन यदि कोई दूसरा नया छात्र सामने आया है, तो तुरंत उसकी हाज़िरी लगाएं!)
                         if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
                             isProcessingFrame = false
                             return@addOnSuccessListener
                         }
-
-                        // उसी छात्र के लिए दो स्कैन के बीच कम से कम 4.2 सेकंड का अंतर रखें ताकि वह आराम से हट सके
                         if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (now - lastScanTimestamp < 4200)) {
                             isProcessingFrame = false
                             return@addOnSuccessListener
@@ -305,14 +294,13 @@ class MainActivity : AppCompatActivity() {
                         voiceManager.speakGreeting("error", "")
                     }
                 } else {
-                    // यदि कैमरे के सामने से बच्चा हट गया (लगातार 5 खाली फ्रेम यानी ~3 सेकंड), तो स्ट्रीक रीसेट कर दें
                     emptyFrameCount++
                     if (emptyFrameCount >= 5) {
                         lastSpokenStudentId = null
                         sameStudentScanStreak = 0
                     }
                     if (isManualTap) {
-                        showResultBanner("error", null, "कैमरे में चेहरा साफ़ नहीं दिखा!", 2000)
+                        showResultBanner("error", null, "कैमरे में चेहरा नहीं दिखा!", 2000)
                     }
                 }
                 isProcessingFrame = false
@@ -325,11 +313,10 @@ class MainActivity : AppCompatActivity() {
     private fun handleMatchedStudent(stu: Student) {
         val todayKey = AppStorage.getTodayShortKey()
         if (AppStorage.isSundayOrHoliday(payload, todayKey, stu.className)) {
-            Toast.makeText(this, "⚠️ आज ${stu.className} के लिए अवकाश है!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "🏖️ अवकाश", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // चेक करें कि क्या यह वही छात्र है जो लगातार कैमरे के सामने खड़ा है
         if (lastSpokenStudentId == stu.id) {
             sameStudentScanStreak++
         } else {
@@ -341,16 +328,15 @@ class MainActivity : AppCompatActivity() {
         if (!list.contains(stu.id)) {
             list.add(stu.id)
             AppStorage.saveData(this, payload)
-            showResultBanner("success", stu, "✔ हाज़िरी दर्ज हुई", 4000)
+            showResultBanner("success", stu, "✔ उपस्थित दर्ज", 4000)
             voiceManager.speakGreeting("success", stu.name)
         } else {
-            // ✅ यदि छात्र की हाज़िरी लग चुकी है और वह 3 या अधिक बार स्कैन होने पर भी नहीं हट रहा है:
             if (sameStudentScanStreak >= 3) {
                 val firstName = stu.name.trim().substringBefore(" ")
-showResultBanner("warning", stu, "🏃 चल हट भी जा अब $firstName, दूसरे को मौका दो!", 4200)
+                showResultBanner("warning", stu, "🏃 चल हट भी जा अब $firstName!", 4200)
                 voiceManager.speakGreeting("move_away", stu.name)
             } else {
-                showResultBanner("warning", stu, "⚠️ आज की हाज़िरी पहले से दर्ज है!", 3500)
+                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है", 3500)
                 voiceManager.speakGreeting("warning", stu.name)
             }
         }
@@ -361,22 +347,22 @@ showResultBanner("warning", stu, "🏃 चल हट भी जा अब $first
         when (type) {
             "success" -> {
                 tvResultLogo.text = "✅"
-                tvResultName.text = "नाम: ${stu?.name ?: ""}"
-                tvResultMeta.text = "कक्षा: ${stu?.className ?: ""} | रोल नं: ${AppStorage.formatRoll(stu?.roll ?: "")}"
+                tvResultName.text = stu?.name ?: ""
+                tvResultMeta.text = "कक्षा: ${stu?.className ?: ""} | रोल: ${AppStorage.formatRoll(stu?.roll ?: "")}"
                 tvResultSubNote.setTextColor(Color.parseColor("#15803D"))
                 tvResultSubNote.text = note
             }
             "warning" -> {
                 tvResultLogo.text = "⚠️"
-                tvResultName.text = "नाम: ${stu?.name ?: ""}"
-                tvResultMeta.text = "कक्षा: ${stu?.className ?: ""} | रोल नं: ${AppStorage.formatRoll(stu?.roll ?: "")}"
+                tvResultName.text = stu?.name ?: ""
+                tvResultMeta.text = "कक्षा: ${stu?.className ?: ""} | रोल: ${AppStorage.formatRoll(stu?.roll ?: "")}"
                 tvResultSubNote.setTextColor(Color.parseColor("#B45309"))
                 tvResultSubNote.text = note
             }
             else -> {
                 tvResultLogo.text = "❌"
-                tvResultName.text = "चेहरा मैच नहीं हुआ!"
-                tvResultMeta.text = note
+                tvResultName.text = note
+                tvResultMeta.text = ""
                 tvResultSubNote.text = ""
             }
         }
@@ -389,27 +375,55 @@ showResultBanner("warning", stu, "🏃 चल हट भी जा अब $first
         uiHandler.postDelayed(hideCardRunnable!!, durationMs)
     }
 
-    private fun showPinDialog() {
+    // ✅ रॉयल 6-अंक पिन बॉक्स (बिना OK/Cancel बटन, बिना फालतू टेक्स्ट, ऑटो नंबर कीपैड के साथ)
+    private fun showRoyalPinDialog() {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(55, 50, 55, 55)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#0F172A"))
+                cornerRadius = 42f
+                setStroke(3, Color.parseColor("#38BDF8"))
+            }
+        }
+
+        val titleTv = TextView(this).apply {
+            text = "🔐 6 अंक पिन"
+            textSize = 20f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 30)
+        }
+
         val input = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
             filters = arrayOf(InputFilter.LengthFilter(6))
-            hint = "6-अंकों का पिन (डिफ़ॉल्ट: 123456)"
+            hint = "• • • • • •"
+            setHintTextColor(Color.parseColor("#64748B"))
+            setTextColor(Color.parseColor("#38BDF8"))
             textAlignment = View.TEXT_ALIGNMENT_CENTER
-            textSize = 20f
-            setPadding(45, 35, 45, 35)
-        }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("🔐 एडमिन सुरक्षा पिन")
-            .setView(input)
-            .setPositiveButton("खोलें") { _, _ ->
-                if (input.text.toString().trim() == payload.adminPin) {
-                    startActivity(Intent(this, AdminActivity::class.java))
-                } else {
-                    Toast.makeText(this, "❌ गलत पिन!", Toast.LENGTH_SHORT).show()
-                }
+            textSize = 28f
+            setTypeface(null, Typeface.BOLD)
+            setPadding(30, 24, 30, 24)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1E293B"))
+                cornerRadius = 24f
+                setStroke(2, Color.parseColor("#475569"))
             }
-            .setNegativeButton("रद्द", null)
+        }
+
+        container.addView(titleTv)
+        container.addView(input)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(container)
+            .setCancelable(true) // मोबाइल बैक बटन से कैंसिल होगा
             .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
 
         input.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
@@ -420,20 +434,27 @@ showResultBanner("warning", stu, "🏃 चल हट भी जा अब $first
                         dialog.dismiss()
                         startActivity(Intent(this@MainActivity, AdminActivity::class.java))
                     } else {
-                        Toast.makeText(this@MainActivity, "❌ गलत पिन!", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "❌ गलत पिन", Toast.LENGTH_SHORT).show()
                         s.clear()
                     }
                 }
             }
         })
+
         dialog.show()
+        input.requestFocus()
+        input.postDelayed({
+            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+            imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
+        }, 120)
     }
 
-    private fun shareTodayAttendanceJson() {
+    // ✅ Direct FileProvider Share (WhatsApp, Telegram, Drive सब जगह बिना सेव किए सीधे जाएगा)
+    private fun shareTodayAttendanceDirect() {
         val todayKey = AppStorage.getTodayShortKey()
         val presentIds = payload.attendance[todayKey] ?: emptyList()
         if (presentIds.isEmpty()) {
-            Toast.makeText(this, "⚠️ आज अभी तक किसी की हाज़िरी नहीं लगी है!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "⚠️ आज कोई उपस्थिति नहीं है", Toast.LENGTH_SHORT).show()
             return
         }
         val exportMap = mapOf(
@@ -443,20 +464,25 @@ showResultBanner("warning", stu, "🏃 चल हट भी जा अब $first
         )
         val json = Gson().toJson(exportMap)
         try {
-            val fileName = "Today_Attendance_${todayKey.replace(".", "_")}.txt"
-            val outFile = File(externalCacheDir ?: cacheDir, fileName)
+            val fileName = "Attendance_${todayKey.replace(".", "_")}.txt"
+            val outFile = File(cacheDir, fileName)
             FileOutputStream(outFile).use { fos ->
                 fos.write(json.toByteArray(Charsets.UTF_8))
             }
-            val fileUri = Uri.fromFile(outFile)
+            val contentUri = FileProvider.getUriForFile(
+                this,
+                "${applicationContext.packageName}.fileprovider",
+                outFile
+            )
             val sendIntent = Intent(Intent.ACTION_SEND).apply {
                 type = "text/plain"
-                putExtra(Intent.EXTRA_STREAM, fileUri)
+                putExtra(Intent.EXTRA_STREAM, contentUri)
+                clipData = ClipData.newRawUri(fileName, contentUri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             }
-            startActivity(Intent.createChooser(sendIntent, "आज की हाज़िरी फ़ाइल भेजें"))
+            startActivity(Intent.createChooser(sendIntent, "हाज़िरी भेजें"))
         } catch (e: Exception) {
-            Toast.makeText(this, "❌ फ़ाइल बनाने में त्रुटि!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "❌ शेयर त्रुटि", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -477,12 +503,12 @@ showResultBanner("warning", stu, "🏃 चल हट भी जा अब $first
                 FaceMatcherEngine.clearCache()
                 FaceMatcherEngine.warmUpCache(payload.students)
                 refreshScannerModeUI()
-                Toast.makeText(this, "✔ डेटा सफलतापूर्वक लोड हो गया! (${payload.students.size} छात्र)", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "✔ पैक लोड हो गया (${payload.students.size} छात्र)", Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, "❌ अमान्य फ़ाइल!", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "❌ अमान्य फ़ाइल", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
-            Toast.makeText(this, "❌ फ़ाइल पढ़ने में त्रुटि!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
         }
     }
 
