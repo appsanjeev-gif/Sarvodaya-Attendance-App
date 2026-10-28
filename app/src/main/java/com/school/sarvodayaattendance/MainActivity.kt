@@ -26,6 +26,8 @@ import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -51,18 +53,21 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
+import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var previewView: PreviewView
     private lateinit var tvHeaderDate: TextView
     private lateinit var tvLiveStatus: TextView
+    private lateinit var tvLiveTickerCount: TextView
     private lateinit var tvScannerOnlyBanner: TextView
     private lateinit var btnAdminLock: Button
     private lateinit var btnTorchIcon: Button
     private lateinit var btnSwitchCamIcon: Button
     private lateinit var btnVoiceIcon: Button
     private lateinit var resultCardBox: LinearLayout
+    private lateinit var ivResultStudentPhoto: ImageView
     private lateinit var tvResultLogo: TextView
     private lateinit var tvResultDate: TextView
     private lateinit var tvResultName: TextView
@@ -112,12 +117,14 @@ class MainActivity : AppCompatActivity() {
         previewView = findViewById(R.id.previewView)
         tvHeaderDate = findViewById(R.id.tvHeaderDate)
         tvLiveStatus = findViewById(R.id.tvLiveStatus)
+        tvLiveTickerCount = findViewById(R.id.tvLiveTickerCount)
         tvScannerOnlyBanner = findViewById(R.id.tvScannerOnlyBanner)
         btnAdminLock = findViewById(R.id.btnAdminLock)
         btnTorchIcon = findViewById(R.id.btnTorchIcon)
         btnSwitchCamIcon = findViewById(R.id.btnSwitchCamIcon)
         btnVoiceIcon = findViewById(R.id.btnVoiceIcon)
         resultCardBox = findViewById(R.id.resultCardBox)
+        ivResultStudentPhoto = findViewById(R.id.ivResultStudentPhoto)
         tvResultLogo = findViewById(R.id.tvResultLogo)
         tvResultDate = findViewById(R.id.tvResultDate)
         tvResultName = findViewById(R.id.tvResultName)
@@ -135,7 +142,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // ✅ स्कूल के लोगो (स.म.वि.) को छूने पर '🎖️ VIP निरीक्षण अधिकारी स्वागत' चालू होगा!
+        findViewById<FrameLayout>(R.id.logoVipTrigger)?.setOnClickListener {
+            triggerVipInspectionWelcome()
+        }
+
         refreshScannerModeUI()
+        updateLiveSchoolTicker()
 
         findViewById<Button>(R.id.btnManualScanTrigger).setOnClickListener {
             performLiveFrameCheck(true)
@@ -166,7 +179,6 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // 🔊 बटन Long Press पर बिना किसी फालतू टेक्स्ट के साफ-सुथरा API Key इनपुट बॉक्स
         btnVoiceIcon.setOnLongClickListener {
             val keyInput = EditText(this).apply {
                 setText(voiceManager.getApiKey())
@@ -217,12 +229,48 @@ class MainActivity : AppCompatActivity() {
         FaceMatcherEngine.clearCache()
         FaceMatcherEngine.warmUpCache(payload.students)
         refreshScannerModeUI()
+        updateLiveSchoolTicker()
         uiHandler.postDelayed(autoScanLoop, 800)
     }
 
     override fun onPause() {
         super.onPause()
         uiHandler.removeCallbacks(autoScanLoop)
+    }
+
+    // ✅ मुख्य स्क्रीन पर लाइव उपस्थिति टिकर (बिना पिन डाले लाइव संख्या और प्रतिशत)
+    private fun updateLiveSchoolTicker() {
+        val todayKey = AppStorage.getTodayShortKey()
+        val total = payload.students.size
+        val presentIds = payload.attendance[todayKey] ?: emptyList()
+        val present = payload.students.count { presentIds.contains(it.id) }
+        val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
+        tvLiveTickerCount.text = "📊 उपस्थित: $present/$total ($pct%)"
+    }
+
+    // ✅ 🎖️ निरीक्षण अधिकारी का शाही स्वागत कार्ड और लाइव वॉयस रिपोर्ट
+    private fun triggerVipInspectionWelcome() {
+        val todayKey = AppStorage.getTodayShortKey()
+        val total = payload.students.size
+        val presentIds = payload.attendance[todayKey] ?: emptyList()
+        val present = payload.students.count { presentIds.contains(it.id) }
+        val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
+
+        ivResultStudentPhoto.visibility = View.VISIBLE
+        ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
+        tvResultLogo.text = "🎖️"
+        tvResultDate.text = AppStorage.getTodayFullDot()
+        tvResultName.text = "माननीय निरीक्षण अधिकारी"
+        tvResultMeta.text = "हार्दिक अभिनंदन एवं स्वागत"
+        tvResultSubNote.setTextColor(Color.parseColor("#1E3A8A"))
+        tvResultSubNote.text = "आज की लाइव उपस्थिति: $present / $total ($pct%)"
+
+        resultCardBox.visibility = View.VISIBLE
+        hideCardRunnable?.let { uiHandler.removeCallbacks(it) }
+        hideCardRunnable = Runnable { resultCardBox.visibility = View.GONE }
+        uiHandler.postDelayed(hideCardRunnable!!, 7500)
+
+        voiceManager.speakVipInspectionWelcome(present, total)
     }
 
     private fun refreshScannerModeUI() {
@@ -328,6 +376,7 @@ class MainActivity : AppCompatActivity() {
         if (!list.contains(stu.id)) {
             list.add(stu.id)
             AppStorage.saveData(this, payload)
+            updateLiveSchoolTicker()
             showResultBanner("success", stu, "✔ उपस्थित दर्ज", 4000)
             voiceManager.speakGreeting("success", stu.name)
         } else {
@@ -342,8 +391,22 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ✅ स्कैन रिजल्ट कार्ड पर छात्र की रजिस्टर्ड फोटो (DP) भी दिखेगी
     private fun showResultBanner(type: String, stu: Student?, note: String, durationMs: Long) {
         tvResultDate.text = AppStorage.getTodayFullDot()
+
+        if (stu != null && stu.photos.isNotEmpty()) {
+            val bmp = FaceMatcherEngine.decodeBase64Bitmap(stu.photos[0])
+            if (bmp != null) {
+                ivResultStudentPhoto.setImageBitmap(bmp)
+                ivResultStudentPhoto.visibility = View.VISIBLE
+            } else {
+                ivResultStudentPhoto.visibility = View.GONE
+            }
+        } else {
+            ivResultStudentPhoto.visibility = View.GONE
+        }
+
         when (type) {
             "success" -> {
                 tvResultLogo.text = "✅"
@@ -375,7 +438,6 @@ class MainActivity : AppCompatActivity() {
         uiHandler.postDelayed(hideCardRunnable!!, durationMs)
     }
 
-    // ✅ रॉयल 6-अंक पिन बॉक्स (बिना OK/Cancel बटन, बिना फालतू टेक्स्ट, ऑटो नंबर कीपैड के साथ)
     private fun showRoyalPinDialog() {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -419,7 +481,7 @@ class MainActivity : AppCompatActivity() {
 
         val dialog = AlertDialog.Builder(this)
             .setView(container)
-            .setCancelable(true) // मोबाइल बैक बटन से कैंसिल होगा
+            .setCancelable(true)
             .create()
 
         dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
@@ -449,7 +511,6 @@ class MainActivity : AppCompatActivity() {
         }, 120)
     }
 
-    // ✅ Direct FileProvider Share (WhatsApp, Telegram, Drive सब जगह बिना सेव किए सीधे जाएगा)
     private fun shareTodayAttendanceDirect() {
         val todayKey = AppStorage.getTodayShortKey()
         val presentIds = payload.attendance[todayKey] ?: emptyList()
@@ -503,6 +564,7 @@ class MainActivity : AppCompatActivity() {
                 FaceMatcherEngine.clearCache()
                 FaceMatcherEngine.warmUpCache(payload.students)
                 refreshScannerModeUI()
+                updateLiveSchoolTicker()
                 Toast.makeText(this, "✔ पैक लोड हो गया (${payload.students.size} छात्र)", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(this, "❌ अमान्य फ़ाइल", Toast.LENGTH_SHORT).show()
