@@ -3,6 +3,7 @@ package com.school.sarvodayaattendance
 import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -21,6 +22,7 @@ import android.text.InputFilter
 import android.text.InputType
 import android.text.TextWatcher
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
@@ -84,8 +86,9 @@ class MainActivity : AppCompatActivity() {
     private var isProcessingFrame = false
     private var lastScanTimestamp = 0L
 
-    // ✅ VIP निरीक्षण मोड स्टेट
     private var isVipInspectionModeActive = false
+    private var hasSpokenVipForCurrentFace = false
+    private var vipHoldRunnable: Runnable? = null
 
     private var lastSpokenStudentId: String? = null
     private var sameStudentScanStreak: Int = 0
@@ -107,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -147,10 +151,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // ✅ स्कूल के लोगो पर 2 सेकंड लॉन्ग-प्रैस करने पर VIP निरीक्षण मोड ऑन/ऑफ होगा (चाँद जैसी चांदनी के साथ)
-        logoVipTrigger.setOnLongClickListener {
-            toggleVipInspectionMode()
-            true
+        logoVipTrigger.setOnTouchListener { _, event ->
+            when (event.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    vipHoldRunnable?.let { uiHandler.removeCallbacks(it) }
+                    vipHoldRunnable = Runnable {
+                        toggleVipInspectionModeSilent()
+                    }
+                    uiHandler.postDelayed(vipHoldRunnable!!, 2000L)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    vipHoldRunnable?.let { uiHandler.removeCallbacks(it) }
+                    true
+                }
+                else -> false
+            }
         }
 
         refreshScannerModeUI()
@@ -188,20 +204,19 @@ class MainActivity : AppCompatActivity() {
         btnVoiceIcon.setOnLongClickListener {
             val keyInput = EditText(this).apply {
                 setText(voiceManager.getApiKey())
-                hint = "API Key"
-                textSize = 16f
+                hint = "Key1, Key2, Key3..."
+                textSize = 15f
+                minLines = 3
+                maxLines = 8
                 setPadding(40, 35, 40, 35)
             }
             AlertDialog.Builder(this)
-                .setTitle("🎙️ AI Voice Key")
+                .setTitle("🎙️ Multi-API Keys (4-15)")
                 .setView(keyInput)
                 .setPositiveButton("सेव") { _, _ ->
-                    val newKey = keyInput.text.toString().trim()
-                    if (newKey.isNotEmpty()) {
-                        voiceManager.saveCustomApiKey(newKey)
-                        Toast.makeText(this, "✔ सेव हो गया", Toast.LENGTH_SHORT).show()
-                        voiceManager.speakStartupWelcome()
-                    }
+                    val newKeys = keyInput.text.toString().trim()
+                    voiceManager.saveCustomApiKey(newKeys)
+                    Toast.makeText(this, "✔ सेव हो गया", Toast.LENGTH_SHORT).show()
                 }
                 .show()
             true
@@ -253,41 +268,40 @@ class MainActivity : AppCompatActivity() {
         tvLiveTickerCount.text = "📊 उपस्थित: $present/$total ($pct%)"
     }
 
-    // ✅ VIP निरीक्षण मोड टॉगल (चाँद की चांदनी जैसा ग्लो इफ़ेक्ट + वॉयस रिपोर्ट)
-    private fun toggleVipInspectionMode() {
+    private fun toggleVipInspectionModeSilent() {
         isVipInspectionModeActive = !isVipInspectionModeActive
+        hasSpokenVipForCurrentFace = false
+
+        if (isVipInspectionModeActive) {
+            logoVipTrigger.setBackgroundResource(R.drawable.bg_vip_glow)
+        } else {
+            logoVipTrigger.background = null
+            resultCardBox.visibility = View.GONE
+        }
+    }
+
+    private fun speakAndShowVipWelcomeOnFaceDetected() {
         val todayKey = AppStorage.getTodayShortKey()
         val total = payload.students.size
         val presentIds = payload.attendance[todayKey] ?: emptyList()
         val present = payload.students.count { presentIds.contains(it.id) }
         val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
 
-        if (isVipInspectionModeActive) {
-            // चाँद के चारों तरफ चांदनी जैसा ग्लो बैकग्राउंड लगाएं
-            logoVipTrigger.setBackgroundResource(R.drawable.bg_vip_glow)
-            Toast.makeText(this, "🎖️ VIP निरीक्षण मोड सक्रिय", Toast.LENGTH_SHORT).show()
+        ivResultStudentPhoto.visibility = View.VISIBLE
+        ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
+        tvResultLogo.text = "✨"
+        tvResultDate.text = AppStorage.getTodayFullDot()
+        tvResultName.text = "माननीय अधिकारी एवं अतिथि महोदय"
+        tvResultMeta.text = "हार्दिक अभिनंदन एवं स्वागत"
+        tvResultSubNote.setTextColor(Color.parseColor("#1E3A8A"))
+        tvResultSubNote.text = "आज की लाइव उपस्थिति: $present / $total ($pct%)"
 
-            ivResultStudentPhoto.visibility = View.VISIBLE
-            ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
-            tvResultLogo.text = "🎖️"
-            tvResultDate.text = AppStorage.getTodayFullDot()
-            tvResultName.text = "माननीय निरीक्षण अधिकारी"
-            tvResultMeta.text = "हार्दिक अभिनंदन एवं स्वागत"
-            tvResultSubNote.setTextColor(Color.parseColor("#1E3A8A"))
-            tvResultSubNote.text = "आज की लाइव उपस्थिति: $present / $total ($pct%)"
+        resultCardBox.visibility = View.VISIBLE
+        hideCardRunnable?.let { uiHandler.removeCallbacks(it) }
+        hideCardRunnable = Runnable { resultCardBox.visibility = View.GONE }
+        uiHandler.postDelayed(hideCardRunnable!!, 8000)
 
-            resultCardBox.visibility = View.VISIBLE
-            hideCardRunnable?.let { uiHandler.removeCallbacks(it) }
-            hideCardRunnable = Runnable { resultCardBox.visibility = View.GONE }
-            uiHandler.postDelayed(hideCardRunnable!!, 8000)
-
-            voiceManager.speakVipInspectionWelcome(present, total)
-        } else {
-            // सामान्य मोड में वापस लाना (ग्लो हटाना)
-            logoVipTrigger.background = null
-            Toast.makeText(this, "🔒 सामान्य मोड", Toast.LENGTH_SHORT).show()
-            resultCardBox.visibility = View.GONE
-        }
+        voiceManager.speakVipInspectionWelcome(present, total)
     }
 
     private fun refreshScannerModeUI() {
@@ -322,13 +336,6 @@ class MainActivity : AppCompatActivity() {
         val now = System.currentTimeMillis()
         if (!isManualTap && (now - lastScanTimestamp < 1600)) return
 
-        if (payload.students.isEmpty()) {
-            if (isManualTap) {
-                showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
-            }
-            return
-        }
-
         val frameBmp: Bitmap = previewView.bitmap ?: return
         isProcessingFrame = true
 
@@ -353,16 +360,27 @@ class MainActivity : AppCompatActivity() {
 
                         lastScanTimestamp = System.currentTimeMillis()
                         handleMatchedStudent(matchedStudent)
+                    } else if (isVipInspectionModeActive) {
+                        if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
+                            hasSpokenVipForCurrentFace = true
+                            lastScanTimestamp = System.currentTimeMillis()
+                            speakAndShowVipWelcomeOnFaceDetected()
+                        }
                     } else if (isManualTap) {
                         lastScanTimestamp = System.currentTimeMillis()
-                        showResultBanner("error", null, "चेहरा मैच नहीं हुआ!", 2000)
-                        voiceManager.speakGreeting("error", "")
+                        if (payload.students.isEmpty()) {
+                            showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
+                        } else {
+                            showResultBanner("error", null, "चेहरा मैच नहीं हुआ!", 2000)
+                            voiceManager.speakGreeting("error", "")
+                        }
                     }
                 } else {
                     emptyFrameCount++
                     if (emptyFrameCount >= 5) {
                         lastSpokenStudentId = null
                         sameStudentScanStreak = 0
+                        hasSpokenVipForCurrentFace = false
                     }
                     if (isManualTap) {
                         showResultBanner("error", null, "कैमरे में चेहरा नहीं दिखा!", 2000)
