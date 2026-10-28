@@ -73,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvResultName: TextView
     private lateinit var tvResultMeta: TextView
     private lateinit var tvResultSubNote: TextView
+    private lateinit var logoVipTrigger: FrameLayout
 
     private lateinit var voiceManager: RealisticVoiceManager
     private lateinit var payload: BackupPayload
@@ -82,6 +83,9 @@ class MainActivity : AppCompatActivity() {
     private var isTorchOn = false
     private var isProcessingFrame = false
     private var lastScanTimestamp = 0L
+
+    // ✅ VIP निरीक्षण मोड स्टेट
+    private var isVipInspectionModeActive = false
 
     private var lastSpokenStudentId: String? = null
     private var sameStudentScanStreak: Int = 0
@@ -130,6 +134,7 @@ class MainActivity : AppCompatActivity() {
         tvResultName = findViewById(R.id.tvResultName)
         tvResultMeta = findViewById(R.id.tvResultMeta)
         tvResultSubNote = findViewById(R.id.tvResultSubNote)
+        logoVipTrigger = findViewById(R.id.logoVipTrigger)
 
         tvHeaderDate.text = AppStorage.getTodayFullDot()
 
@@ -142,9 +147,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // ✅ स्कूल के लोगो (स.म.वि.) को छूने पर '🎖️ VIP निरीक्षण अधिकारी स्वागत' चालू होगा!
-        findViewById<FrameLayout>(R.id.logoVipTrigger)?.setOnClickListener {
-            triggerVipInspectionWelcome()
+        // ✅ स्कूल के लोगो पर 2 सेकंड लॉन्ग-प्रैस करने पर VIP निरीक्षण मोड ऑन/ऑफ होगा (चाँद जैसी चांदनी के साथ)
+        logoVipTrigger.setOnLongClickListener {
+            toggleVipInspectionMode()
+            true
         }
 
         refreshScannerModeUI()
@@ -238,7 +244,6 @@ class MainActivity : AppCompatActivity() {
         uiHandler.removeCallbacks(autoScanLoop)
     }
 
-    // ✅ मुख्य स्क्रीन पर लाइव उपस्थिति टिकर (बिना पिन डाले लाइव संख्या और प्रतिशत)
     private fun updateLiveSchoolTicker() {
         val todayKey = AppStorage.getTodayShortKey()
         val total = payload.students.size
@@ -248,29 +253,41 @@ class MainActivity : AppCompatActivity() {
         tvLiveTickerCount.text = "📊 उपस्थित: $present/$total ($pct%)"
     }
 
-    // ✅ 🎖️ निरीक्षण अधिकारी का शाही स्वागत कार्ड और लाइव वॉयस रिपोर्ट
-    private fun triggerVipInspectionWelcome() {
+    // ✅ VIP निरीक्षण मोड टॉगल (चाँद की चांदनी जैसा ग्लो इफ़ेक्ट + वॉयस रिपोर्ट)
+    private fun toggleVipInspectionMode() {
+        isVipInspectionModeActive = !isVipInspectionModeActive
         val todayKey = AppStorage.getTodayShortKey()
         val total = payload.students.size
         val presentIds = payload.attendance[todayKey] ?: emptyList()
         val present = payload.students.count { presentIds.contains(it.id) }
         val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
 
-        ivResultStudentPhoto.visibility = View.VISIBLE
-        ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
-        tvResultLogo.text = "🎖️"
-        tvResultDate.text = AppStorage.getTodayFullDot()
-        tvResultName.text = "माननीय निरीक्षण अधिकारी"
-        tvResultMeta.text = "हार्दिक अभिनंदन एवं स्वागत"
-        tvResultSubNote.setTextColor(Color.parseColor("#1E3A8A"))
-        tvResultSubNote.text = "आज की लाइव उपस्थिति: $present / $total ($pct%)"
+        if (isVipInspectionModeActive) {
+            // चाँद के चारों तरफ चांदनी जैसा ग्लो बैकग्राउंड लगाएं
+            logoVipTrigger.setBackgroundResource(R.drawable.bg_vip_glow)
+            Toast.makeText(this, "🎖️ VIP निरीक्षण मोड सक्रिय", Toast.LENGTH_SHORT).show()
 
-        resultCardBox.visibility = View.VISIBLE
-        hideCardRunnable?.let { uiHandler.removeCallbacks(it) }
-        hideCardRunnable = Runnable { resultCardBox.visibility = View.GONE }
-        uiHandler.postDelayed(hideCardRunnable!!, 7500)
+            ivResultStudentPhoto.visibility = View.VISIBLE
+            ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
+            tvResultLogo.text = "🎖️"
+            tvResultDate.text = AppStorage.getTodayFullDot()
+            tvResultName.text = "माननीय निरीक्षण अधिकारी"
+            tvResultMeta.text = "हार्दिक अभिनंदन एवं स्वागत"
+            tvResultSubNote.setTextColor(Color.parseColor("#1E3A8A"))
+            tvResultSubNote.text = "आज की लाइव उपस्थिति: $present / $total ($pct%)"
 
-        voiceManager.speakVipInspectionWelcome(present, total)
+            resultCardBox.visibility = View.VISIBLE
+            hideCardRunnable?.let { uiHandler.removeCallbacks(it) }
+            hideCardRunnable = Runnable { resultCardBox.visibility = View.GONE }
+            uiHandler.postDelayed(hideCardRunnable!!, 8000)
+
+            voiceManager.speakVipInspectionWelcome(present, total)
+        } else {
+            // सामान्य मोड में वापस लाना (ग्लो हटाना)
+            logoVipTrigger.background = null
+            Toast.makeText(this, "🔒 सामान्य मोड", Toast.LENGTH_SHORT).show()
+            resultCardBox.visibility = View.GONE
+        }
     }
 
     private fun refreshScannerModeUI() {
@@ -391,7 +408,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ✅ स्कैन रिजल्ट कार्ड पर छात्र की रजिस्टर्ड फोटो (DP) भी दिखेगी
     private fun showResultBanner(type: String, stu: Student?, note: String, durationMs: Long) {
         tvResultDate.text = AppStorage.getTodayFullDot()
 
