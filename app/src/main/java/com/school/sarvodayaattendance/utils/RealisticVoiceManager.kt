@@ -127,7 +127,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         speakHindi(welcomeLine, boostFactor = 1.55f)
     }
 
-    // ✅ VIP निरीक्षण अधिकारी स्वागत (लोगो पर 2 सेकंड लॉन्ग-प्रैस करने पर बजेगा)
+    // ✅ 🎖️ VIP निरीक्षण अधिकारी स्वागत (आपका सटीक वाक्य)
     fun speakVipInspectionWelcome(presentCount: Int, totalCount: Int) {
         if (!isVoiceEnabled) return
         val msg = "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट एआई परिसर में माननीय अधिकारी एवं अतिथि महोदय का हार्दिक अभिनंदन है। आज विद्यालय में कुल $totalCount में से $presentCount छात्र उपस्थित हैं।"
