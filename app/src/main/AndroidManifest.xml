@@ -8,7 +8,8 @@
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@drawable/ic_smv_launcher"
+        android:roundIcon="@drawable/ic_smv_launcher"
         android:label="SMV RollCall"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
