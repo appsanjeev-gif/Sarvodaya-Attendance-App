@@ -44,20 +44,34 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:background="#E60F172A"
-            android:paddingHorizontal="14dp"
-            android:paddingVertical="12dp"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="10dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <TextView
-                android:layout_width="38dp"
-                android:layout_height="38dp"
-                android:background="#EA580C"
-                android:gravity="center"
-                android:text="स"
-                android:textColor="#FFFFFF"
-                android:textSize="19sp"
-                android:textStyle="bold" />
+            <!-- स्कूल का नया रॉयल लोगो + नीचे छोटे अक्षरों में स.म.वि. (VIP स्वागत ट्रिगर के साथ) -->
+            <FrameLayout
+                android:id="@+id/logoVipTrigger"
+                android:layout_width="46dp"
+                android:layout_height="46dp">
+
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:src="@drawable/ic_school_logo"
+                    android:scaleType="fitCenter" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="3dp"
+                    android:gravity="center"
+                    android:text="स.म.वि."
+                    android:textColor="#FDE047"
+                    android:textSize="7.5sp"
+                    android:textStyle="bold" />
+            </FrameLayout>
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -71,14 +85,14 @@
                     android:layout_height="wrap_content"
                     android:text="सर्वोदय मध्य विद्यालय, सोहसराय"
                     android:textColor="#FFFFFF"
-                    android:textSize="16sp"
+                    android:textSize="15.5sp"
                     android:textStyle="bold" />
 
                 <TextView
                     android:id="@+id/tvHeaderDate"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="27.10.2026"
+                    android:text="28.10.2026"
                     android:textColor="#38BDF8"
                     android:textSize="13sp"
                     android:textStyle="bold" />
@@ -108,19 +122,45 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/tvLiveStatus"
+        <!-- Live School Ticker Row (लाइव स्कैन + लाइव उपस्थिति काउंटर) -->
+        <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
             android:layout_marginTop="10dp"
-            android:background="#CC0F172A"
-            android:paddingHorizontal="18dp"
+            android:background="#D90F172A"
+            android:paddingHorizontal="16dp"
             android:paddingVertical="6dp"
-            android:text="🟢 लाइव स्कैन"
-            android:textColor="#4ADE80"
-            android:textSize="14sp"
-            android:textStyle="bold" />
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tvLiveStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🟢 लाइव स्कैन"
+                android:textColor="#4ADE80"
+                android:textSize="13.5sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginHorizontal="8dp"
+                android:text="|"
+                android:textColor="#64748B"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvLiveTickerCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📊 उपस्थित: 0/0 (0%)"
+                android:textColor="#FDE047"
+                android:textSize="13.5sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- Royal Bottom Bar -->
@@ -133,75 +173,87 @@
         android:background="#E60F172A"
         android:padding="14dp">
 
+        <!-- स्कैन रिजल्ट कार्ड (छात्र की रजिस्टर्ड बायोमेट्रिक फोटो के साथ) -->
         <LinearLayout
             android:id="@+id/resultCardBox"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginBottom="12dp"
             android:background="#FFFFFF"
-            android:orientation="vertical"
-            android:padding="14dp"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:padding="12dp"
             android:visibility="gone">
 
+            <!-- बाईं तरफ छात्र की रजिस्टर्ड फोटो -->
+            <ImageView
+                android:id="@+id/ivResultStudentPhoto"
+                android:layout_width="68dp"
+                android:layout_height="68dp"
+                android:layout_marginEnd="12dp"
+                android:scaleType="centerCrop"
+                android:background="#E2E8F0"
+                android:visibility="gone" />
+
             <LinearLayout
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
-                android:gravity="center_vertical"
-                android:orientation="horizontal">
+                android:layout_weight="1"
+                android:orientation="vertical">
 
-                <TextView
-                    android:id="@+id/tvResultLogo"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:gravity="center"
-                    android:text="✅"
-                    android:textSize="28sp" />
-
-                <TextView
-                    android:id="@+id/tvResultDate"
-                    android:layout_width="wrap_content"
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="8dp"
-                    android:text="27.10.2026"
-                    android:textColor="#0F172A"
-                    android:textSize="18sp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/tvResultLogo"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="✅"
+                        android:textSize="22sp" />
+
+                    <TextView
+                        android:id="@+id/tvResultDate"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="6dp"
+                        android:text="28.10.2026"
+                        android:textColor="#475569"
+                        android:textSize="14sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/tvResultName"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="राहुल कुमार"
+                    android:textColor="#000000"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvResultMeta"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="कक्षा: 7वीं | रोल: 07"
+                    android:textColor="#1E293B"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/tvResultSubNote"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="✔ उपस्थित"
+                    android:textColor="#15803D"
+                    android:textSize="14.5sp"
                     android:textStyle="bold" />
             </LinearLayout>
-
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1.5dp"
-                android:layout_marginVertical="6dp"
-                android:background="#CBD5E1" />
-
-            <TextView
-                android:id="@+id/tvResultName"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="राहुल कुमार"
-                android:textColor="#000000"
-                android:textSize="21sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvResultMeta"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="कक्षा: 7वीं | रोल: 07"
-                android:textColor="#1E293B"
-                android:textSize="17sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/tvResultSubNote"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="✔ उपस्थित"
-                android:textColor="#15803D"
-                android:textSize="15sp"
-                android:textStyle="bold" />
         </LinearLayout>
 
         <LinearLayout
