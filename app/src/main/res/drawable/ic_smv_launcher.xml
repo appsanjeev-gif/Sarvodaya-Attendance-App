@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Royal Blue Rounded Square Background -->
+    <path
+        android:fillColor="#0284C7"
+        android:pathData="M22,4 L86,4 A18,18 0 0,1 104,22 L104,86 A18,18 0 0,1 86,104 L22,104 A18,18 0 0,1 4,86 L4,22 A18,18 0 0,1 22,4 Z" />
+    <path
+        android:fillColor="#1D4ED8"
+        android:pathData="M22,8 L86,8 A14,14 0 0,1 100,22 L100,86 A14,14 0 0,1 86,100 L22,100 A14,14 0 0,1 8,86 L8,22 A14,14 0 0,1 22,8 Z" />
+
+    <!-- Attendance Clipboard (Right Side) -->
+    <path
+        android:fillColor="#1E3A8A"
+        android:strokeColor="#93C5FD"
+        android:strokeWidth="1.5"
+        android:pathData="M48,20 L86,20 A5,5 0 0,1 91,25 L91,82 A5,5 0 0,1 86,87 L48,87 A5,5 0 0,1 43,82 L43,25 A5,5 0 0,1 48,20 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,26 L86,26 L86,82 L48,82 Z" />
+
+    <!-- Clipboard Top Clip -->
+    <path
+        android:fillColor="#2563EB"
+        android:pathData="M58,14 L76,14 A3,3 0 0,1 79,17 L79,25 L55,25 L55,17 A3,3 0 0,1 58,14 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M67,17 A2,2 0 1,1 66.9,17 Z" />
+
+    <!-- Clipboard Grid Boxes -->
+    <path
+        android:fillColor="#DBEAFE"
+        android:pathData="M52,32 L61,32 L61,40 L52,40 Z M64,32 L73,32 L73,40 L64,40 Z M76,32 L83,32 L83,40 L76,40 Z M52,44 L61,44 L61,52 L52,52 Z M64,44 L73,44 L73,52 L64,52 Z M52,56 L61,56 L61,64 L52,64 Z M64,56 L73,56 L73,64 L64,64 Z" />
+
+    <!-- Small Green Check on Clipboard -->
+    <path
+        android:strokeColor="#16A34A"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M75,48 L78,51 L84,44" />
+
+    <!-- Cute Student (Left Side) - Shirt & Blue Tie -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M16,86 C16,68 24,62 36,62 C48,62 56,68 56,86 Z" />
+    <!-- Backpack Straps -->
+    <path
+        android:fillColor="#1E40AF"
+        android:pathData="M21,65 L26,63 L25,86 L19,86 Z M46,63 L51,65 L53,86 L47,86 Z" />
+    <!-- Blue School Tie -->
+    <path
+        android:fillColor="#1D4ED8"
+        android:pathData="M34,64 L38,64 L39,82 L36,86 L33,82 Z" />
+
+    <!-- Student Face -->
+    <path
+        android:fillColor="#FDBA74"
+        android:pathData="M36,32 A15,15 0 1,1 35.9,32 Z" />
+    <!-- Student Hair (Dark Brown) -->
+    <path
+        android:fillColor="#451A03"
+        android:pathData="M21,44 C20,32 27,25 36,25 C46,25 52,32 51,44 C47,37 42,35 36,36 C29,36 24,39 21,44 Z" />
+    <!-- Eyes & Smile -->
+    <path
+        android:fillColor="#1E293B"
+        android:pathData="M30,45 A2.2,2.2 0 1,1 29.9,45 Z M42,45 A2.2,2.2 0 1,1 41.9,45 Z" />
+    <path
+        android:strokeColor="#9A3412"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M32,53 Q36,57 40,53" />
+
+    <!-- Big Green Check Badge (Bottom Right) -->
+    <path
+        android:fillColor="#22C55E"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:pathData="M76,60 A15,15 0 1,1 75.9,60 Z" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M69,75 L74,80 L84,69" />
+
+    <!-- Golden Swoosh Ribbon at Bottom -->
+    <path
+        android:fillColor="#FACC15"
+        android:pathData="M10,82 Q45,98 92,85 Q50,103 10,88 Z" />
+</vector>
