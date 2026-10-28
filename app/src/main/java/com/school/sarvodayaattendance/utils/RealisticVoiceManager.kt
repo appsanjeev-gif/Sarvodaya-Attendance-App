@@ -11,7 +11,6 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Base64
-import android.widget.Toast
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -25,6 +24,7 @@ import java.nio.ByteOrder
 import java.security.MessageDigest
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
 class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
@@ -36,13 +36,27 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private val defPart2 = "JrUUGoKliLkRUeWbYZ"
     private val defPart3 = "38ZEo9InfG-hroP9Q"
 
+    private val builtInKeys = listOf(
+        defPart1 + defPart2 + defPart3
+    )
+
+    private val keyRotationIndex = AtomicInteger(0)
+
     fun getApiKey(): String {
-        val saved = prefs.getString("custom_gemini_api_key", "") ?: ""
-        return if (saved.isNotBlank()) saved.trim() else (defPart1 + defPart2 + defPart3)
+        return prefs.getString("custom_gemini_api_key", "") ?: ""
     }
 
     fun saveCustomApiKey(newKey: String) {
         prefs.edit().putString("custom_gemini_api_key", newKey.trim()).apply()
+    }
+
+    private fun getActiveKeyPool(): List<String> {
+        val savedRaw = prefs.getString("custom_gemini_api_key", "") ?: ""
+        val customList = savedRaw
+            .split(",", "\n", ";", " ")
+            .map { it.trim() }
+            .filter { it.length > 15 }
+        return if (customList.isNotEmpty()) customList else builtInKeys
     }
 
     private data class AiVoiceProfile(
@@ -52,16 +66,15 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
     private val aiVoiceProfiles = listOf(
         AiVoiceProfile(
-            name = "Sadachbia", // Male: Lively, Lower pitch
+            name = "Sadachbia",
             stylePrompt = "Read aloud in a lively, warm, lower-pitch Indian Hindi male voice:"
         ),
         AiVoiceProfile(
-            name = "Autonoe",   // Female: Bright, Middle pitch
+            name = "Autonoe",
             stylePrompt = "Read aloud in a bright, clear, natural middle-pitch Indian Hindi female voice:"
         )
     )
 
-    // ऐप स्टार्ट होने पर बोले जाने वाले स्वागत वाक्य (विकल्प 2, 3 और 5 - रैंडम मोड)
     private val startupWelcomeMessages = listOf(
         "सुप्रभात! सर्वोदय मध्य विद्यालय, सोहसराय में आपका हार्दिक स्वागत है। स्मार्ट उपस्थिति प्रणाली अब तैयार है।",
         "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट कैंपस में आपका स्वागत है। आइए, आज की उपस्थिति शुरू करें।",
@@ -120,21 +133,18 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         mainHandler.postDelayed(r, durationMs)
     }
 
-    // ऐप स्टार्ट होने पर हर बार तेज़ आवाज़ में रैंडम स्वागत वाक्य
     fun speakStartupWelcome() {
         if (!isVoiceEnabled) return
         val welcomeLine = startupWelcomeMessages[Random.nextInt(startupWelcomeMessages.size)]
         speakHindi(welcomeLine, boostFactor = 1.55f)
     }
 
-    // ✅ 🎖️ VIP निरीक्षण अधिकारी स्वागत (आपका सटीक वाक्य)
     fun speakVipInspectionWelcome(presentCount: Int, totalCount: Int) {
         if (!isVoiceEnabled) return
         val msg = "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट एआई परिसर में माननीय अधिकारी एवं अतिथि महोदय का हार्दिक अभिनंदन है। आज विद्यालय में कुल $totalCount में से $presentCount छात्र उपस्थित हैं।"
         speakHindi(msg, boostFactor = 1.60f)
     }
 
-    // ✅ छात्र की उपस्थिति, चेतावनी और तीसरी बार न हटने पर विकल्प 1 (केवल First Name के साथ)
     fun speakGreeting(type: String, studentName: String) {
         if (!isVoiceEnabled) return
         val cleanName = studentName.trim()
@@ -164,36 +174,35 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             val hash2 = md5Hash("${otherVoice.name}_$text")
             val file2 = File(voiceCacheDir, "$hash2.pcm")
 
-            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो तुरंत बजाएं
             if (file1.exists() && file1.length() > 1000) {
                 if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return@execute
             }
 
-            // 2. Google AI Studio से नई आवाज़ मंगाएं
-            val apiKey = getApiKey()
-            if (apiKey.isNotBlank()) {
-                val (pcmBytes, errCode) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, apiKey)
-                if (pcmBytes != null && pcmBytes.size > 1000) {
-                    try {
-                        FileOutputStream(file1).use { it.write(pcmBytes) }
-                    } catch (_: Exception) {}
-                    if (playRawPcm24kHz(pcmBytes, boostFactor)) return@execute
-                } else {
-                    if (file2.exists() && file2.length() > 1000) {
-                        if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return@execute
+            val keyPool = getActiveKeyPool()
+            if (keyPool.isNotEmpty()) {
+                val poolSize = keyPool.size
+                for (attempt in 0 until poolSize) {
+                    val idx = (keyRotationIndex.getAndIncrement() % poolSize).let { if (it < 0) it + poolSize else it }
+                    val candidateKey = keyPool[idx]
+                    val (pcmBytes, errCode) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, candidateKey)
+                    if (pcmBytes != null && pcmBytes.size > 1000) {
+                        try {
+                            FileOutputStream(file1).use { it.write(pcmBytes) }
+                        } catch (_: Exception) {}
+                        if (playRawPcm24kHz(pcmBytes, boostFactor)) return@execute
                     }
-                    if (errCode == 429) {
-                        showDebugToast("⚠️ AI Studio का प्रति-मिनट कोटा पूर्ण (429)! 1 मिनट बाद प्रयास करें।")
-                    } else if (errCode == 400 || errCode == 403) {
-                        showDebugToast("🔑 API Key ब्लॉक या अमान्य है ($errCode)! 🔊 बटन को दबाए रखकर नई Key डालें।")
+                    if (errCode != 429 && errCode != 400 && errCode != 403) {
+                        break
                     }
                 }
             }
 
-            // 3. ऑनलाइन High-Quality स्ट्रीम बैकअप
+            if (file2.exists() && file2.length() > 1000) {
+                if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return@execute
+            }
+
             if (tryPlayOnlineNeuralMp3(text, chosenVoice.name == "Sadachbia")) return@execute
 
-            // 4. अंतिम ऑफलाइन बैकअप
             if (isOfflineTtsReady) {
                 scheduleSpeakingUnlock(4500L)
                 tts?.setPitch(if (chosenVoice.name == "Sadachbia") 0.82f else 1.05f)
@@ -201,12 +210,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             } else {
                 isCurrentlySpeaking = false
             }
-        }
-    }
-
-    private fun showDebugToast(msg: String) {
-        mainHandler.post {
-            Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
         }
     }
 
@@ -223,8 +226,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
                 val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 6000
-                    readTimeout = 8000
+                    connectTimeout = 5000
+                    readTimeout = 7000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 }
@@ -264,12 +267,10 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                     if (b64Audio.isNotEmpty()) {
                         return Pair(Base64.decode(b64Audio, Base64.DEFAULT), 200)
                     }
-                } else if (lastHttpCode == 400 || lastHttpCode == 403) {
+                } else if (lastHttpCode == 400 || lastHttpCode == 403 || lastHttpCode == 429) {
                     break
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (_: Exception) {}
         }
         return Pair(null, lastHttpCode)
     }
@@ -335,7 +336,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             currentAudioTrack = track
             true
         } catch (e: Exception) {
-            e.printStackTrace()
             isCurrentlySpeaking = false
             false
         }
