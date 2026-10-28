@@ -127,7 +127,27 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         speakHindi(welcomeLine, boostFactor = 1.55f)
     }
 
+    fun // ✅ 🎖️ निरीक्षण अधिकारी / अतिथि स्वागत (लोगो छूने पर लाइव उपस्थिति संख्या के साथ स्वागत करेगा)
+    fun speakVipInspectionWelcome(presentCount: Int, totalCount: Int) {
+        if (!isVoiceEnabled) return
+        val msg = "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट एआई परिसर में माननीय निरीक्षण अधिकारी एवं अतिथि महोदय का हार्दिक अभिनंदन है। आज विद्यालय में कुल $totalCount में से $presentCount विद्यार्थी उपस्थित हैं।"
+        speakHindi(msg, boostFactor = 1.60f)
+    }
+
     fun speakGreeting(type: String, studentName: String) {
+        if (!isVoiceEnabled) return
+        val cleanName = studentName.trim()
+        val firstName = cleanName.substringBefore(" ").ifBlank { cleanName }
+
+        val message = when (type) {
+            "success" -> "स्वागत है $cleanName! आपकी आज की उपस्थिति दर्ज हो चुकी है।"
+            "warning" -> "ध्यान दें $cleanName, आपकी आज की हाज़िरी पहले ही लग चुकी है।"
+            // ✅ आपका चुना हुआ विकल्प 1:
+            "move_away" -> "अरे वाह $firstName, आज यहीं खड़े रहने का इरादा है क्या? चलो अब पीछे वाले दोस्त को आगे आने दो!"
+            else -> "क्षमा करें, चेहरा पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।"
+        }
+        speakHindi(message, boostFactor = 1.35f)
+    }(type: String, studentName: String) {
         if (!isVoiceEnabled) return
         val cleanName = studentName.trim()
         // ✅ हास्यास्पद वाक्य के लिए केवल फर्स्ट नेम (First Name) निकालें
