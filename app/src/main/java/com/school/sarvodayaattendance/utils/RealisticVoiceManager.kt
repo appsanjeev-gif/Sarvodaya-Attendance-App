@@ -61,7 +61,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         )
     )
 
-    // ✅ आपके द्वारा चुने गए स्वागत वाक्य (विकल्प 2, 3 और 5 - रैंडम मोड)
+    // ऐप स्टार्ट होने पर बोले जाने वाले स्वागत वाक्य (विकल्प 2, 3 और 5 - रैंडम मोड)
     private val startupWelcomeMessages = listOf(
         "सुप्रभात! सर्वोदय मध्य विद्यालय, सोहसराय में आपका हार्दिक स्वागत है। स्मार्ट उपस्थिति प्रणाली अब तैयार है।",
         "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट कैंपस में आपका स्वागत है। आइए, आज की उपस्थिति शुरू करें।",
@@ -120,37 +120,24 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         mainHandler.postDelayed(r, durationMs)
     }
 
-    // ✅ ऐप स्टार्ट होने पर हर बार तेज़ आवाज़ में रैंडम स्वागत वाक्य बोलने का फंक्शन
+    // ऐप स्टार्ट होने पर हर बार तेज़ आवाज़ में रैंडम स्वागत वाक्य
     fun speakStartupWelcome() {
         if (!isVoiceEnabled) return
         val welcomeLine = startupWelcomeMessages[Random.nextInt(startupWelcomeMessages.size)]
         speakHindi(welcomeLine, boostFactor = 1.55f)
     }
 
-    fun // ✅ 🎖️ निरीक्षण अधिकारी / अतिथि स्वागत (लोगो छूने पर लाइव उपस्थिति संख्या के साथ स्वागत करेगा)
+    // ✅ VIP निरीक्षण अधिकारी स्वागत (लोगो पर 2 सेकंड लॉन्ग-प्रैस करने पर बजेगा)
     fun speakVipInspectionWelcome(presentCount: Int, totalCount: Int) {
         if (!isVoiceEnabled) return
-        val msg = "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट एआई परिसर में माननीय निरीक्षण अधिकारी एवं अतिथि महोदय का हार्दिक अभिनंदन है। आज विद्यालय में कुल $totalCount में से $presentCount विद्यार्थी उपस्थित हैं।"
+        val msg = "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट एआई परिसर में माननीय अधिकारी एवं अतिथि महोदय का हार्दिक अभिनंदन है। आज विद्यालय में कुल $totalCount में से $presentCount छात्र उपस्थित हैं।"
         speakHindi(msg, boostFactor = 1.60f)
     }
 
+    // ✅ छात्र की उपस्थिति, चेतावनी और तीसरी बार न हटने पर विकल्प 1 (केवल First Name के साथ)
     fun speakGreeting(type: String, studentName: String) {
         if (!isVoiceEnabled) return
         val cleanName = studentName.trim()
-        val firstName = cleanName.substringBefore(" ").ifBlank { cleanName }
-
-        val message = when (type) {
-            "success" -> "स्वागत है $cleanName! आपकी आज की उपस्थिति दर्ज हो चुकी है।"
-            "warning" -> "ध्यान दें $cleanName, आपकी आज की हाज़िरी पहले ही लग चुकी है।"
-            // ✅ आपका चुना हुआ विकल्प 1:
-            "move_away" -> "अरे वाह $firstName, आज यहीं खड़े रहने का इरादा है क्या? चलो अब पीछे वाले दोस्त को आगे आने दो!"
-            else -> "क्षमा करें, चेहरा पहचाना नहीं जा सका, कृपया कैमरे के सामने सीधे देखें।"
-        }
-        speakHindi(message, boostFactor = 1.35f)
-    }(type: String, studentName: String) {
-        if (!isVoiceEnabled) return
-        val cleanName = studentName.trim()
-        // ✅ हास्यास्पद वाक्य के लिए केवल फर्स्ट नेम (First Name) निकालें
         val firstName = cleanName.substringBefore(" ").ifBlank { cleanName }
 
         val message = when (type) {
@@ -177,7 +164,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             val hash2 = md5Hash("${otherVoice.name}_$text")
             val file2 = File(voiceCacheDir, "$hash2.pcm")
 
-            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो तुरंत तेज़ आवाज़ में बजाएं
+            // 1. यदि चुनी गई आवाज़ पहले से फोन में सेव है, तो तुरंत बजाएं
             if (file1.exists() && file1.length() > 1000) {
                 if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return@execute
             }
@@ -287,7 +274,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         return Pair(null, lastHttpCode)
     }
 
-    // ✅ ऑडियो सैंपल्स को डिजिटली बूस्ट (Amplify) करें ताकि आवाज़ साफ़ और तेज़ आए
     private fun amplifyPcmSamples(rawPcm: ByteArray, gain: Float): ByteArray {
         if (gain <= 1.0f || rawPcm.size < 2) return rawPcm
         val out = ByteArray(rawPcm.size)
@@ -334,7 +320,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
             track.setVolume(AudioTrack.getMaxVolume())
 
-            // हार्डवेयर LoudnessEnhancer (+600mB यानी +6dB अतिरिक्त आवाज़ बूस्ट)
             try {
                 loudnessEnhancer = LoudnessEnhancer(track.audioSessionId).apply {
                     setTargetGain(600)
