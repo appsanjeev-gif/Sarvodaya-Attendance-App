@@ -7,17 +7,17 @@
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; user-select: none; }
   body { background: #f1f5f9; color: #0f172a; padding-bottom: 30px; }
-  .top-header { background: #ffffff; padding: 13px 15px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #e2e8f0; }
+  .top-header { background: #ffffff; padding: 11px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #e2e8f0; }
   .school-brand { display: flex; align-items: center; gap: 10px; }
-  .school-logo { width: 38dp; min-width: 38px; height: 38px; border-radius: 50%; background: #ea580c; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px; }
-  .school-title { font-size: 17px; font-weight: 900; color: #0f172a; }
+  .school-title { font-size: 16.5px; font-weight: 900; color: #0f172a; }
   .admin-wrap { padding: 12px; max-width: 480px; margin: 0 auto; }
-  .admin-banner { background: linear-gradient(135deg, #0f172a, #1e3a8a); color: #fff; padding: 16px; border-radius: 18px; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(15,23,42,0.18); }
+  .admin-banner { background: linear-gradient(135deg, #0f172a, #1e3a8a); color: #fff; padding: 15px; border-radius: 18px; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(15,23,42,0.18); }
   .date-picker-badge { position: relative; display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.2); border: 1.5px solid rgba(255,255,255,0.7); padding: 6px 14px; border-radius: 999px; font-size: 14px; font-weight: 900; color: #fff; overflow: hidden; }
   .date-picker-badge input[type="date"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; }
-  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: #fff; color: #0f172a; padding: 12px 8px; border-radius: 14px; text-align: center; }
+  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: #fff; color: #0f172a; padding: 11px 8px; border-radius: 14px; text-align: center; }
   .stat-box-label { font-size: 14px; font-weight: 900; }
   .stat-box-val { font-size: 24px; font-weight: 900; margin-top: 2px; }
+  .gender-cat-strip { margin-top: 10px; background: rgba(255,255,255,0.13); border: 1px solid rgba(255,255,255,0.28); border-radius: 12px; padding: 8px 10px; font-size: 12.5px; font-weight: 800; line-height: 1.5; color: #f8fafc; }
   .card-section { background: #fff; border-radius: 16px; padding: 14px; margin-bottom: 12px; border: 1.5px solid #e2e8f0; }
   .section-label { font-size: 16px; font-weight: 900; color: #0f172a; margin-bottom: 10px; }
   .class-breakdown-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
@@ -69,7 +69,8 @@
 <body>
   <header class="top-header">
     <div class="school-brand">
-      <div class="school-logo">स</div>
+      <!-- नया रॉयल नेवी एवं स्वर्ण सर्वोदय लोगो (स.म.वि. के साथ) -->
+      <div id="topSchoolLogoSlot" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;"></div>
       <div class="school-title">सर्वोदय मध्य विद्यालय, सोहसराय</div>
     </div>
     <div id="headerDateBadge" style="font-size:13.5px;font-weight:900;color:#1e3a8a;"></div>
@@ -91,6 +92,8 @@
         <div><div class="stat-box-label" style="color:#dc2626;">अनुपस्थित</div><div id="statAbsent" class="stat-box-val" style="color:#dc2626;">0</div></div>
         <div><div class="stat-box-label" style="color:#1e3a8a;">कुल छात्र</div><div id="statTotal" class="stat-box-val" style="color:#1e3a8a;">0</div></div>
       </div>
+      <!-- ✅ दैनिक कोटि एवं लिंग विश्लेषण (Boys/Girls & Category Breakdown) -->
+      <div id="dailyGenderCategoryStrip" class="gender-cat-strip"></div>
     </div>
 
     <div class="card-section">
@@ -144,7 +147,7 @@
     </div>
   </div>
 
-  <!-- MODAL 1: ADD / EDIT STUDENT (Clean Royal UI - No Instruction Clutter) -->
+  <!-- MODAL 1: ADD / EDIT STUDENT -->
   <div id="addStudentModal" class="sub-modal">
     <div class="modal-sheet">
       <div class="modal-header">
@@ -344,6 +347,31 @@
   var longPressTimer = null;
   var longPressTriggered = false;
   var dpPressTimer = null;
+
+  // ✅ डिज़ाइन 1: रॉयल नेवी एवं स्वर्ण सर्वोदय लोगो (पुस्तक के ठीक नीचे स.म.वि. के साथ)
+  function getSchoolLogoSVG(sizePx) {
+    var sz = sizePx || 44;
+    return '<svg width="' + sz + '" height="' + sz + '" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;flex-shrink:0;">' +
+      '<defs><linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0F172A"/><stop offset="100%" stop-color="#1E3A8A"/></linearGradient>' +
+      '<linearGradient id="sunG" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FDE047"/><stop offset="100%" stop-color="#EA580C"/></linearGradient></defs>' +
+      '<circle cx="60" cy="60" r="56" fill="url(#bgG)" stroke="#F59E0B" stroke-width="4.5"/>' +
+      '<circle cx="60" cy="60" r="50" fill="none" stroke="#FEF08A" stroke-width="1" stroke-dasharray="3,2"/>' +
+      '<g stroke="#FACC15" stroke-width="3.2" stroke-linecap="round"><line x1="60" y1="15" x2="60" y2="25"/><line x1="34" y1="22" x2="40" y2="30"/><line x1="86" y1="22" x2="80" y2="30"/><line x1="19" y1="41" x2="28" y2="45"/><line x1="101" y1="41" x2="92" y2="45"/></g>' +
+      '<path d="M 32 60 A 28 28 0 0 1 88 60 Z" fill="url(#sunG)"/>' +
+      '<path d="M 22 64 Q 41 58 60 66 Q 79 58 98 64 L 94 79 Q 77 73 60 81 Q 43 73 26 79 Z" fill="#FFFFFF"/>' +
+      '<path d="M 60 66 L 60 81" stroke="#1E3A8A" stroke-width="2.5"/>' +
+      '<text x="60" y="99" font-size="15.5" font-weight="900" fill="#FDE047" text-anchor="middle" font-family="sans-serif">स.म.वि.</text>' +
+      '</svg>';
+  }
+
+  // ✅ सभी PDF प्रिंटआउट के नीचे आधिकारिक हस्ताक्षर एवं मुहर (Official Sign & Seal Footer)
+  function getOfficialPdfSignatureFooter() {
+    return '<div style="margin-top:34px;padding-top:16px;display:flex;justify-content:space-between;align-items:flex-end;page-break-inside:avoid;font-size:11.5px;color:#0f172a;">' +
+      '<div style="text-align:center;width:30%;"><div style="border-top:1.5px dashed #334155;padding-top:6px;font-weight:bold;">वर्ग शिक्षक का हस्ताक्षर</div></div>' +
+      '<div style="text-align:center;width:32%;"><div style="border-top:1.5px dashed #334155;padding-top:6px;font-weight:bold;">निरीक्षण अधिकारी का हस्ताक्षर / टिप्पणी</div></div>' +
+      '<div style="text-align:center;width:32%;"><div style="border-top:1.5px dashed #334155;padding-top:6px;font-weight:bold;">प्रधानाध्यापक का हस्ताक्षर एवं मुहर<br><small style="font-size:10px;color:#475569;">सर्वोदय मध्य विद्यालय, सोहसराय</small></div></div>' +
+      '</div>';
+  }
 
   function sortStudentsByRollAsc(arr) {
     return arr.slice().sort(function(a, b) {
@@ -564,6 +592,26 @@
     document.getElementById('statAbsent').textContent = absentCount;
     document.getElementById('statTotal').textContent = filtered.length;
     document.getElementById('dateOverviewHeading').textContent = '📅 ' + activeDate + ' (' + currentAdminClass + ')' + (isHol ? ' 🏖️' : '');
+
+    // ✅ दैनिक लिंग एवं कोटि विश्लेषण (उपस्थित / कुल)
+    var boysTotal = filtered.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
+    var girlsTotal = filtered.filter(function(s) { return s.gender === 'F'; }).length;
+    var boysPres = presentStudents.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
+    var girlsPres = presentStudents.filter(function(s) { return s.gender === 'F'; }).length;
+
+    var cats = ['EBC', 'OBC', 'SC', 'ST', 'GEN'];
+    var catSummary = cats.map(function(c) {
+      var cTot = filtered.filter(function(s) { return (s.category || 'EBC') === c; }).length;
+      var cPr = presentStudents.filter(function(s) { return (s.category || 'EBC') === c; }).length;
+      return c + ': ' + cPr + '/' + cTot;
+    }).join(' | ');
+
+    document.getElementById('dailyGenderCategoryStrip').innerHTML =
+      '<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:4px;margin-bottom:4px;">' +
+        '<span>👦 छात्र: <b style="color:#fde047;">' + boysPres + '/' + boysTotal + '</b></span>' +
+        '<span>👧 छात्राएं: <b style="color:#fde047;">' + girlsPres + '/' + girlsTotal + '</b></span>' +
+      '</div>' +
+      '<div style="font-size:11.5px;color:#e2e8f0;text-align:center;">' + catSummary + '</div>';
 
     var classesList = ['सभी', '6वीं', '7वीं', '8वीं'];
     document.getElementById('classWiseMiniBreakdown').innerHTML = classesList.map(function(cName) {
@@ -948,7 +996,8 @@
         '<td>' + (s.address || '-') + '</td>' +
         '<td style="text-align:center;">' + st + '<br><b>' + stStats.pct + '%</b><br><small>(' + stStats.presentDays + '/' + stStats.totalDays + ')</small></td></tr>';
     }).join('');
-    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>@page{size:A4 portrait;margin:8mm;}body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;text-align:left;vertical-align:middle;}th{background:#f1f5f9;}</style></head><body><h2>सर्वोदय मध्य विद्यालय, सोहसराय - छात्र प्रोफाइल सूची (' + cls + ')</h2><table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table></body></html>', 'Profile_List_' + cls);
+    var headerHtml = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:10px;">' + getSchoolLogoSVG(48) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">छात्र प्रोफाइल एवं उपस्थिति सूची (कक्षा: ' + cls + ')</div></div></div>';
+    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>@page{size:A4 portrait;margin:8mm;}body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;text-align:left;vertical-align:middle;}th{background:#f1f5f9;}</style></head><body>' + headerHtml + '<table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' + getOfficialPdfSignatureFooter() + '</body></html>', 'Profile_List_' + cls);
   }
 
   function downloadStudentAttendanceCSV(stuId) {
@@ -978,7 +1027,7 @@
 
     var htmlDoc = '<html lang="hi"><head><meta charset="UTF-8"><style>' +
       '@page{size:A4 portrait;margin:10mm;}body{font-family:sans-serif;font-size:12px;color:#0f172a;}' +
-      '.header-bar{text-align:center;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:12px;}' +
+      '.header-bar{display:flex;align-items:center;justify-content:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:12px;}' +
       '.profile-top{display:flex;gap:14px;align-items:center;margin-bottom:12px;}' +
       '.box-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}' +
       '.info-box{border:1.5px solid #475569;border-radius:7px;padding:7px 10px;background:#f8fafc;}' +
@@ -986,7 +1035,7 @@
       '.info-val{font-size:13px;font-weight:bold;color:#000;}' +
       'table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #333;padding:6px 8px;text-align:left;}th{background:#e2e8f0;}' +
       '</style></head><body>' +
-      '<div class="header-bar"><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:13px;font-weight:bold;margin-top:3px;">छात्र प्रोफाइल एवं उपस्थिति विवरण</div></div>' +
+      '<div class="header-bar">' + getSchoolLogoSVG(50) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:13px;font-weight:bold;margin-top:3px;">छात्र व्यक्तिगत प्रोफाइल एवं उपस्थिति प्रतिवेदन</div></div></div>' +
       '<div class="profile-top">' + avatarHtml +
         '<div><h2 style="margin:0 0 4px 0;">' + s.name + ' (रोल: ' + formatRollTwoDigits(s.roll) + ')</h2>' +
         '<div style="font-size:13px;font-weight:bold;color:#15803d;">उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div></div>' +
@@ -1005,6 +1054,7 @@
       '</div>' +
       '<h3>📅 उपस्थिति विवरण</h3>' +
       '<table><thead><tr><th>तारीख</th><th style="text-align:center;">स्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+      getOfficialPdfSignatureFooter() +
       '</body></html>';
 
     printOrSavePDF(htmlDoc, 'Student_Profile_' + s.roll);
@@ -1070,7 +1120,8 @@
     var built = buildMonthlyRegisterTableHTML(cls, monthVal);
     if (!built) { showToast('कोई छात्र नहीं'); return; }
     var st = '@page{size:A4 landscape;margin:6mm;}body{font-family:sans-serif;font-size:10px;}table{width:100%;border-collapse:collapse;margin-top:6px;}th,td{border:1px solid #222;padding:3px 2px;text-align:center;}.hol-col-merged{background:#fef9c3;color:#b91c1c;font-weight:bold;}.hol-vert-text{writing-mode:vertical-rl;text-orientation:mixed;display:inline-block;white-space:nowrap;font-size:9px;}';
-    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>' + st + '</style></head><body><h2>सर्वोदय मध्य विद्यालय, सोहसराय - मासिक उपस्थिति पंजिका (कक्षा: ' + cls + ' | माह: ' + monthVal + ')</h2>' + built.tableHtml + '</body></html>', 'Register_' + cls + '_' + monthVal);
+    var topHead = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:6px;margin-bottom:6px;">' + getSchoolLogoSVG(42) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय - मासिक उपस्थिति पंजिका</h2><div style="font-size:11px;font-weight:bold;">कक्षा: ' + cls + ' | माह: ' + monthVal + '</div></div></div>';
+    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>' + st + '</style></head><body>' + topHead + built.tableHtml + getOfficialPdfSignatureFooter() + '</body></html>', 'Register_' + cls + '_' + monthVal);
   }
 
   function exportMonthlyRegisterChartExcel() {
@@ -1106,7 +1157,8 @@
       var stStats = getStudentAttendanceStats(s.id, fromM, toM);
       return '<tr><td><b>' + formatRollTwoDigits(s.roll) + '</b></td><td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || '-') + '</small></td><td>' + (s.father || '-') + '<br>' + (s.mother || '-') + '</td><td><b>M:</b> ' + (s.mobile || '-') + '<br><b>A:</b> ' + (s.aadhaar || '-') + '</td><td>' + (s.dob || '-') + '<br>' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')</td><td>' + (s.address || '-') + '</td><td><b>' + stStats.pct + '%</b> (' + stStats.presentDays + '/' + stStats.totalDays + ')</td></tr>';
     }).join('');
-    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;}</style></head><body><h2>मासिक उपस्थिति रिपोर्ट (' + cls + ')</h2><table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table></body></html>', 'Class_Report_' + cls);
+    var topHead = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:8px;">' + getSchoolLogoSVG(46) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">समेकित उपस्थिति प्रतिवेदन (' + cls + ' | ' + fromM + ' से ' + toM + ')</div></div></div>';
+    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;}</style></head><body>' + topHead + '<table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' + getOfficialPdfSignatureFooter() + '</body></html>', 'Class_Report_' + cls);
   }
 
   function openHolidayModal() {
@@ -1203,6 +1255,7 @@
   }
 
   window.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('topSchoolLogoSlot').innerHTML = getSchoolLogoSVG(44);
     selectedAdminDateKey = getTodayShort();
     loadState();
     updateDashboardStats();
