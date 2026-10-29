@@ -9,10 +9,10 @@ import java.util.Date
 import java.util.Locale
 
 data class Student(
-    val id: String,
-    var className: String,
-    var roll: String,
-    var name: String,
+    var id: String = "",
+    var className: String = "6वीं",
+    var roll: String = "01",
+    var name: String = "",
     var gender: String = "M",
     var category: String = "EBC",
     var aadhaar: String = "-",
@@ -23,41 +23,58 @@ data class Student(
     var admNo: String = "-",
     var admDate: String = "-",
     var address: String = "-",
-    var photos: MutableList<String> = mutableListOf(),
-    var faceEmbedding: FloatArray? = null
+    var photos: MutableList<String> = mutableListOf()
 )
 
 data class BackupPayload(
     var students: MutableList<Student> = mutableListOf(),
     var attendance: MutableMap<String, MutableList<String>> = mutableMapOf(),
-    var holidays: MutableMap<String, MutableMap<String, String>> = mutableMapOf(),
+    var holidays: MutableMap<String, Any> = mutableMapOf(),
     var adminPin: String = "123456",
-    var isScannerOnlyPack: Boolean = false
+    var isScannerOnlyPack: Boolean = false,
+    var sharedApiKeys: String = ""
 )
 
 object AppStorage {
-    private const val PREF_NAME = "sarvodaya_native_db_v16"
-    private const val KEY_PAYLOAD = "master_payload_json"
+    private const val PREF_NAME = "SarvodayaAppStorage"
+    private const val KEY_PAYLOAD_JSON = "master_payload_json"
+    private const val VOICE_PREF_NAME = "SarvodayaVoicePrefs"
+    private const val KEY_CUSTOM_API = "custom_gemini_api_key"
     private val gson = Gson()
 
     fun loadData(context: Context): BackupPayload {
         val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString(KEY_PAYLOAD, null) ?: return BackupPayload()
-        return try {
-            gson.fromJson(raw, BackupPayload::class.java) ?: BackupPayload()
-        } catch (e: Exception) {
+        val voicePrefs = context.getSharedPreferences(VOICE_PREF_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_PAYLOAD_JSON, null)
+        val payload = if (raw.isNullOrBlank()) {
             BackupPayload()
+        } else {
+            try {
+                gson.fromJson(raw, BackupPayload::class.java) ?: BackupPayload()
+            } catch (e: Exception) {
+                BackupPayload()
+            }
         }
+
+        val currentVoiceKeys = voicePrefs.getString(KEY_CUSTOM_API, "") ?: ""
+        if (currentVoiceKeys.isNotBlank()) {
+            payload.sharedApiKeys = currentVoiceKeys
+        } else if (payload.sharedApiKeys.isNotBlank()) {
+            voicePrefs.edit().putString(KEY_CUSTOM_API, payload.sharedApiKeys.trim()).apply()
+        }
+
+        return payload
     }
 
     fun saveData(context: Context, payload: BackupPayload) {
-        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putString(KEY_PAYLOAD, gson.toJson(payload)).apply()
-    }
+        val voicePrefs = context.getSharedPreferences(VOICE_PREF_NAME, Context.MODE_PRIVATE)
+        val currentVoiceKeys = voicePrefs.getString(KEY_CUSTOM_API, "") ?: ""
+        if (currentVoiceKeys.isNotBlank()) {
+            payload.sharedApiKeys = currentVoiceKeys
+        }
 
-    fun formatRoll(rollStr: String): String {
-        val clean = rollStr.trim()
-        return if (clean.length == 1) "0$clean" else clean
+        val prefs = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_PAYLOAD_JSON, gson.toJson(payload)).apply()
     }
 
     fun getTodayShortKey(): String {
@@ -68,92 +85,60 @@ object AppStorage {
         return SimpleDateFormat("dd.MM.yyyy", Locale.US).format(Date())
     }
 
-    fun isSundayOrHoliday(payload: BackupPayload, dateKey: String, targetClass: String): Boolean {
-        return getHolidayReason(payload, dateKey, targetClass) != null
+    fun formatRoll(roll: String): String {
+        val clean = roll.trim()
+        return if (clean.length == 1) "0$clean" else clean
     }
 
-    fun getHolidayReason(payload: BackupPayload, dateKey: String, targetClass: String): String? {
-        val holMap = payload.holidays[dateKey]
-        if (holMap != null) {
-            if (holMap.containsKey(targetClass)) return "छुट्टी - ${holMap[targetClass]}"
-            if (holMap.containsKey("सभी")) return "छुट्टी - ${holMap["सभी"]}"
-        }
-        return try {
-            val parts = dateKey.split(".")
+    fun isSundayOrHoliday(payload: BackupPayload, shortDateKey: String, targetClass: String): Boolean {
+        try {
+            val parts = shortDateKey.split(".")
             if (parts.size == 3) {
-                val cal = Calendar.getInstance()
+                val dd = parts[0].toInt()
+                val mm = parts[1].toInt() - 1
                 val yyyy = if (parts[2].length == 2) ("20" + parts[2]).toInt() else parts[2].toInt()
-                cal.set(yyyy, parts[1].toInt() - 1, parts[0].toInt())
-                if (cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY) "रविवार अवकाश" else null
-            } else null
-        } catch (e: Exception) {
-            null
+                val cal = Calendar.getInstance().apply { set(yyyy, mm, dd) }
+                if (cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY) return true
+            }
+        } catch (_: Exception) {}
+
+        val entry = payload.holidays[shortDateKey] ?: return false
+        if (entry is String) return true
+        if (entry is Map<*, *>) {
+            if (entry.containsKey("सभी")) return true
+            if (targetClass != "सभी" && entry.containsKey(targetClass)) return true
         }
+        return false
     }
 
-    // HTML (v15/v16) या JSON बैकअप फ़ाइल को 100% सटीक रूप से निकालने और सेव करने का इंजन
-    fun importFromHtmlOrJson(context: Context, fileContent: String): Boolean {
+    fun importFromHtmlOrJson(context: Context, rawContent: String): Boolean {
         return try {
-            var jsonStr = fileContent.trim()
-            if (!jsonStr.startsWith("{")) {
-                val regex = Regex("""<script[^>]*id=["']embeddedAppData["'][^>]*>([\s\S]*?)</script>""", RegexOption.IGNORE_CASE)
-                val match = regex.find(jsonStr)
-                if (match != null) {
-                    jsonStr = match.groupValues[1].trim()
+            val trimmed = rawContent.trim()
+            val jsonCandidate = if (trimmed.startsWith("{")) {
+                trimmed
+            } else {
+                val startIdx = trimmed.indexOf("{\"students\"")
+                val endIdx = trimmed.lastIndexOf("}")
+                if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
+                    trimmed.substring(startIdx, endIdx + 1)
                 } else {
-                    val idx = jsonStr.indexOf("embeddedAppData")
-                    if (idx != -1) {
-                        val start = jsonStr.indexOf(">", idx)
-                        val end = jsonStr.indexOf("</script>", start)
-                        if (start != -1 && end != -1) {
-                            jsonStr = jsonStr.substring(start + 1, end).trim()
-                        }
-                    }
+                    return false
                 }
             }
 
-            val mapType = object : TypeToken<Map<String, Any>>() {}.type
-            val rawMap: Map<String, Any> = gson.fromJson(jsonStr, mapType)
-
-            val studentsJson = gson.toJson(rawMap["students"] ?: emptyList<Any>())
-            val stuListType = object : TypeToken<MutableList<Student>>() {}.type
-            val stuList: MutableList<Student> = gson.fromJson(studentsJson, stuListType)
-
-            val attJson = gson.toJson(rawMap["attendance"] ?: emptyMap<String, Any>())
-            val attType = object : TypeToken<MutableMap<String, MutableList<String>>>() {}.type
-            val attMap: MutableMap<String, MutableList<String>> = gson.fromJson(attJson, attType)
-
-            val normalizedHolidays = mutableMapOf<String, MutableMap<String, String>>()
-            val rawHolidays = rawMap["holidays"]
-            if (rawHolidays is Map<*, *>) {
-                for ((k, v) in rawHolidays) {
-                    val dateKey = k?.toString() ?: continue
-                    if (v is String) {
-                        normalizedHolidays[dateKey] = mutableMapOf("सभी" to v)
-                    } else if (v is Map<*, *>) {
-                        val scopeMap = mutableMapOf<String, String>()
-                        for ((sk, sv) in v) {
-                            if (sk != null && sv != null) {
-                                scopeMap[sk.toString()] = sv.toString()
-                            }
-                        }
-                        normalizedHolidays[dateKey] = scopeMap
-                    }
+            val parsed = gson.fromJson(jsonCandidate, BackupPayload::class.java)
+            if (parsed != null && parsed.students != null) {
+                // ✅ यदि पैक के साथ गुप्त API Keys आई हैं, तो उन्हें इस मोबाइल के वॉइस मैनेजर में चुपचाप सेव कर दें
+                if (parsed.sharedApiKeys.isNotBlank()) {
+                    val voicePrefs = context.getSharedPreferences(VOICE_PREF_NAME, Context.MODE_PRIVATE)
+                    voicePrefs.edit().putString(KEY_CUSTOM_API, parsed.sharedApiKeys.trim()).apply()
                 }
+                saveData(context, parsed)
+                true
+            } else {
+                false
             }
-
-            val current = loadData(context)
-            current.students = stuList
-            current.attendance = attMap
-            current.holidays = normalizedHolidays
-            if (rawMap["adminPin"] is String) {
-                current.adminPin = rawMap["adminPin"] as String
-            }
-            current.isScannerOnlyPack = (rawMap["isScannerOnlyPack"] as? Boolean) ?: false
-            saveData(context, current)
-            true
         } catch (e: Exception) {
-            e.printStackTrace()
             false
         }
     }
