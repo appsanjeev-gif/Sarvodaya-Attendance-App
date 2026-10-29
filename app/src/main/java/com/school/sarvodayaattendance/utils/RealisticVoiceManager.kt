@@ -61,16 +61,20 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
     private data class AiVoiceProfile(
         val name: String,
+        val edgeNeuralVoice: String,
         val stylePrompt: String
     )
 
+    // ✅ AI Studio Voices + Microsoft Edge Neural Voices (SwaraNeural & MadhurNeural)
     private val aiVoiceProfiles = listOf(
         AiVoiceProfile(
             name = "Sadachbia",
+            edgeNeuralVoice = "hi-IN-MadhurNeural",
             stylePrompt = "Read aloud in a lively, warm, lower-pitch Indian Hindi male voice:"
         ),
         AiVoiceProfile(
             name = "Autonoe",
+            edgeNeuralVoice = "hi-IN-SwaraNeural",
             stylePrompt = "Read aloud in a bright, clear, natural middle-pitch Indian Hindi female voice:"
         )
     )
@@ -142,7 +146,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     fun speakVipInspectionWelcome(presentCount: Int, totalCount: Int) {
         if (!isVoiceEnabled) return
         val msg = "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट एआई परिसर में माननीय अधिकारी एवं अतिथि महोदय का हार्दिक अभिनंदन है। आज विद्यालय में कुल $totalCount में से $presentCount छात्र उपस्थित हैं।"
-        speakHindi(msg, boostFactor = 1.60f)
+        speakHindi(msg, boostFactor = 1.65f)
     }
 
     fun speakGreeting(type: String, studentName: String) {
@@ -162,7 +166,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     fun speakHindi(text: String, boostFactor: Float = 1.35f) {
         if (!isVoiceEnabled || text.isBlank()) return
 
-        scheduleSpeakingUnlock(6000L)
+        scheduleSpeakingUnlock(9500L)
 
         voiceExecutor.execute {
             val chosenVoice = aiVoiceProfiles[Random.nextInt(aiVoiceProfiles.size)]
@@ -174,10 +178,14 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             val hash2 = md5Hash("${otherVoice.name}_$text")
             val file2 = File(voiceCacheDir, "$hash2.pcm")
 
+            val mp3CacheFile = File(voiceCacheDir, "${md5Hash("edge_${chosenVoice.edgeNeuralVoice}_$text")}.mp3")
+
+            // 1. यदि फोन की मेमोरी में AI Studio PCM पहले से सेव है तो तुरंत बजाएं
             if (file1.exists() && file1.length() > 1000) {
                 if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return@execute
             }
 
+            // 2. Multi-Key Auto-Rotation Pool से AI Studio आवाज़ लाएं (VIP लंबे वाक्यों के लिए बढ़ाया गया टाइमआउट)
             val keyPool = getActiveKeyPool()
             if (keyPool.isNotEmpty()) {
                 val poolSize = keyPool.size
@@ -201,10 +209,20 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return@execute
             }
 
-            if (tryPlayOnlineNeuralMp3(text, chosenVoice.name == "Sadachbia")) return@execute
+            // 3. यदि पहले से सेव Neural MP3 मौजूद है तो उसे तुरंत बजाएं
+            if (mp3CacheFile.exists() && mp3CacheFile.length() > 800) {
+                if (playMp3File(mp3CacheFile, chosenVoice.name == "Sadachbia", isPureNeural = true)) return@execute
+            }
 
+            // 4. Microsoft Edge Neural Voice (SwaraNeural / MadhurNeural - Unlimited Free AI Voice)
+            if (tryPlayMicrosoftEdgeNeural(text, chosenVoice.edgeNeuralVoice, mp3CacheFile)) return@execute
+
+            // 5. Multi-Chunk Neural Stream Backup (लंबे VIP स्वागत वाक्यों को भी सपोर्ट करता है, कोई कोटा लिमिट नहीं)
+            if (tryPlayChunkedNeuralMp3(text, chosenVoice.name == "Sadachbia", mp3CacheFile)) return@execute
+
+            // 6. अंतिम ऑफलाइन बैकअप (केवल तब जब इंटरनेट पूरी तरह बंद हो)
             if (isOfflineTtsReady) {
-                scheduleSpeakingUnlock(4500L)
+                scheduleSpeakingUnlock(5500L)
                 tts?.setPitch(if (chosenVoice.name == "Sadachbia") 0.82f else 1.05f)
                 tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SARVODAYA_FALLBACK")
             } else {
@@ -226,8 +244,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
                 val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 5000
-                    readTimeout = 7000
+                    connectTimeout = 8000
+                    readTimeout = 12000 // ✅ लंबे VIP स्वागत संदेश के लिए 12 सेकंड का पर्याप्त समय
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 }
@@ -273,6 +291,106 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             } catch (_: Exception) {}
         }
         return Pair(null, lastHttpCode)
+    }
+
+    // ✅ Microsoft Edge Neural Engine (SwaraNeural / MadhurNeural - No Quota Limit)
+    private fun tryPlayMicrosoftEdgeNeural(text: String, voiceName: String, outFile: File): Boolean {
+        val endpoints = listOf(
+            "https://tts.travisvn.com/api/tts?text=${URLEncoder.encode(text, "UTF-8")}&voice=$voiceName",
+            "https://edge-tts-api.vercel.app/api/tts?text=${URLEncoder.encode(text, "UTF-8")}&voice=$voiceName"
+        )
+        for (urlStr in endpoints) {
+            try {
+                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 5000
+                    readTimeout = 8000
+                    setRequestProperty("User-Agent", "Mozilla/5.0")
+                }
+                if (conn.responseCode == 200) {
+                    val bytes = conn.inputStream.readBytes()
+                    if (bytes.size > 1000) {
+                        FileOutputStream(outFile).use { it.write(bytes) }
+                        if (playMp3File(outFile, voiceName.contains("Madhur"), isPureNeural = true)) {
+                            return true
+                        }
+                    }
+                }
+            } catch (_: Exception) {}
+        }
+        return false
+    }
+
+    // ✅ लंबे वाक्यों (जैसे VIP स्वागत) को छोटे भागों में जोड़कर बिना कटे और बिना कोटा लिमिट के बजाने वाला न्यूरल स्ट्रीम
+    private fun tryPlayChunkedNeuralMp3(text: String, isLowerPitchMale: Boolean, outFile: File): Boolean {
+        return try {
+            val sentences = text.split(Regex("(?<=[।!?])")).map { it.trim() }.filter { it.isNotEmpty() }
+            val combinedStream = java.io.ByteArrayOutputStream()
+
+            for (sentence in sentences) {
+                val encoded = URLEncoder.encode(sentence, "UTF-8")
+                val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=tw-ob"
+                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 4000
+                    readTimeout = 6000
+                    setRequestProperty("User-Agent", "Mozilla/5.0")
+                }
+                if (conn.responseCode == 200) {
+                    val chunkBytes = conn.inputStream.readBytes()
+                    if (chunkBytes.isNotEmpty()) {
+                        combinedStream.write(chunkBytes)
+                    }
+                }
+            }
+
+            val finalBytes = combinedStream.toByteArray()
+            if (finalBytes.size > 1000) {
+                FileOutputStream(outFile).use { it.write(finalBytes) }
+                playMp3File(outFile, isLowerPitchMale, isPureNeural = false)
+            } else {
+                false
+            }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    private fun playMp3File(mp3File: File, isLowerPitchMale: Boolean, isPureNeural: Boolean): Boolean {
+        return try {
+            stopCurrentAudio()
+            FileInputStream(mp3File).use { fis ->
+                mediaPlayer = MediaPlayer().apply {
+                    setAudioAttributes(
+                        AudioAttributes.Builder()
+                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                            .build()
+                    )
+                    setDataSource(fis.fd)
+                    prepare()
+                    setVolume(1.0f, 1.0f)
+                    try {
+                        loudnessEnhancer = LoudnessEnhancer(audioSessionId).apply {
+                            setTargetGain(650)
+                            enabled = true
+                        }
+                    } catch (_: Exception) {}
+                    if (!isPureNeural && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                        val targetPitch = if (isLowerPitchMale) 0.86f else 1.03f
+                        playbackParams = playbackParams.setPitch(targetPitch).setSpeed(0.98f)
+                    }
+                    val dur = duration.toLong().coerceAtLeast(3500L)
+                    scheduleSpeakingUnlock(dur + 450L)
+                    setOnCompletionListener {
+                        isCurrentlySpeaking = false
+                    }
+                    start()
+                }
+            }
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun amplifyPcmSamples(rawPcm: ByteArray, gain: Float): ByteArray {
@@ -337,59 +455,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             true
         } catch (e: Exception) {
             isCurrentlySpeaking = false
-            false
-        }
-    }
-
-    private fun tryPlayOnlineNeuralMp3(text: String, isLowerPitchMale: Boolean): Boolean {
-        return try {
-            val encoded = URLEncoder.encode(text, "UTF-8")
-            val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=tw-ob"
-            val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 3000
-                readTimeout = 4000
-                setRequestProperty("User-Agent", "Mozilla/5.0")
-            }
-            if (conn.responseCode == 200) {
-                val mp3File = File(voiceCacheDir, "temp_neural.mp3")
-                conn.inputStream.use { input ->
-                    FileOutputStream(mp3File).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-                stopCurrentAudio()
-                FileInputStream(mp3File).use { fis ->
-                    mediaPlayer = MediaPlayer().apply {
-                        setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                                .build()
-                        )
-                        setDataSource(fis.fd)
-                        prepare()
-                        setVolume(1.0f, 1.0f)
-                        try {
-                            loudnessEnhancer = LoudnessEnhancer(audioSessionId).apply {
-                                setTargetGain(600)
-                                enabled = true
-                            }
-                        } catch (_: Exception) {}
-                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                            val targetPitch = if (isLowerPitchMale) 0.85f else 1.04f
-                            playbackParams = playbackParams.setPitch(targetPitch).setSpeed(0.98f)
-                        }
-                        val dur = duration.toLong().coerceAtLeast(3000L)
-                        scheduleSpeakingUnlock(dur + 400L)
-                        setOnCompletionListener {
-                            isCurrentlySpeaking = false
-                        }
-                        start()
-                    }
-                }
-                true
-            } else false
-        } catch (e: Exception) {
             false
         }
     }
