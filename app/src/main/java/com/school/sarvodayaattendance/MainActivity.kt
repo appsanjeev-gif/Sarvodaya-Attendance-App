@@ -117,10 +117,9 @@ class MainActivity : AppCompatActivity() {
 
         FaceMatcherEngine.initEngine(this)
 
+        payload = AppStorage.loadData(this)
         voiceManager = RealisticVoiceManager(this)
         uiHandler.postDelayed({ voiceManager.speakStartupWelcome() }, 600)
-
-        payload = AppStorage.loadData(this)
 
         previewView = findViewById(R.id.previewView)
         tvHeaderDate = findViewById(R.id.tvHeaderDate)
@@ -201,7 +200,11 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        // ✅ स्कैनर पैक वाले दूसरे शिक्षक के मोबाइल में (isScannerOnlyPack == true) यह पूरी तरह लॉक और अदृश्य रहेगा!
         btnVoiceIcon.setOnLongClickListener {
+            if (payload.isScannerOnlyPack) {
+                return@setOnLongClickListener true
+            }
             val keyInput = EditText(this).apply {
                 setText(voiceManager.getApiKey())
                 hint = "Key1, Key2, Key3..."
@@ -216,6 +219,8 @@ class MainActivity : AppCompatActivity() {
                 .setPositiveButton("सेव") { _, _ ->
                     val newKeys = keyInput.text.toString().trim()
                     voiceManager.saveCustomApiKey(newKeys)
+                    payload.sharedApiKeys = newKeys
+                    AppStorage.saveData(this, payload)
                     Toast.makeText(this, "✔ सेव हो गया", Toast.LENGTH_SHORT).show()
                 }
                 .show()
@@ -280,7 +285,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ✅ VIP स्वागत कार्ड जिसमें अब सही "स.म.वि." वाला लोगो दिखेगा और असली AI आवाज़ बोलेगी[cite: 12]
+    // ✅ VIP स्वागत कार्ड में अब "स.म.वि." वाला गोल स्कूल लोगो (ic_school_logo) और असली AI आवाज़ सेट है
     private fun speakAndShowVipWelcomeOnFaceDetected() {
         val todayKey = AppStorage.getTodayShortKey()
         val total = payload.students.size
@@ -289,7 +294,7 @@ class MainActivity : AppCompatActivity() {
         val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
 
         ivResultStudentPhoto.visibility = View.VISIBLE
-        ivResultStudentPhoto.setImageResource(R.drawable.ic_smv_real_logo)
+        ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
         tvResultLogo.text = "✨"
         tvResultDate.text = AppStorage.getTodayFullDot()
         tvResultName.text = "माननीय अधिकारी एवं अतिथि महोदय"
