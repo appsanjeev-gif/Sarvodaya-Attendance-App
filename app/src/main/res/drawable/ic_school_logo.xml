@@ -5,50 +5,61 @@
     android:viewportWidth="120"
     android:viewportHeight="120">
 
-    <!-- Royal Navy Blue Background Circle -->
+    <!-- Dark Royal Blue Outer Circle with Gold Border -->
     <path
         android:fillColor="#0F172A"
-        android:strokeColor="#F59E0B"
-        android:strokeWidth="4"
+        android:strokeColor="#FACC15"
+        android:strokeWidth="5"
         android:pathData="M60,4 A56,56 0 1,1 59.9,4 Z" />
 
     <!-- Inner Golden Ring -->
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#FDE047"
-        android:strokeWidth="1.2"
-        android:pathData="M60,10 A50,50 0 1,1 59.9,10 Z" />
+        android:fillColor="#1E293B"
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="2.5"
+        android:pathData="M60,13 A47,47 0 1,1 59.9,13 Z" />
 
-    <!-- Sun Rays (उगते सूरज की किरणें) -->
+    <!-- Sun Rays -->
     <path
         android:strokeColor="#FACC15"
         android:strokeWidth="3.2"
         android:strokeLineCap="round"
-        android:pathData="M60,16 L60,26 M34,23 L40,31 M86,23 L80,31 M19,42 L28,46 M101,42 L92,46" />
+        android:pathData="M60,20 L60,28 M39,26 L44,33 M81,26 L76,33 M25,42 L33,46 M95,42 L87,46" />
 
-    <!-- Rising Sun (उगता हुआ सूरज) -->
+    <!-- Rising Golden Sun -->
     <path
         android:fillColor="#F59E0B"
-        android:pathData="M32,62 A28,28 0 0,1 88,62 Z" />
+        android:pathData="M36,58 A24,24 0 0,1 84,58 Z" />
     <path
         android:fillColor="#FDE047"
-        android:pathData="M38,62 A22,22 0 0,1 82,62 Z" />
+        android:pathData="M41,58 A19,19 0 0,1 79,58 Z" />
 
-    <!-- Open Book of Knowledge (खुली हुई पुस्तक) -->
+    <!-- Open White Book -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M22,66 Q41,60 60,68 Q79,60 98,66 L94,82 Q77,76 60,84 Q43,76 26,82 Z" />
-
-    <!-- Book Center Spine -->
+        android:pathData="M26,61 Q43,56 60,63 Q77,56 94,61 L90,75 Q75,69 60,76 Q45,69 30,75 Z" />
     <path
-        android:strokeColor="#1E3A8A"
+        android:strokeColor="#0F172A"
         android:strokeWidth="2.5"
-        android:pathData="M60,68 L60,84" />
+        android:pathData="M60,62 L60,76" />
 
-    <!-- Golden Horizon Line below Book -->
+    <!-- Golden Horizon Line -->
     <path
         android:strokeColor="#F59E0B"
         android:strokeWidth="2.2"
         android:strokeLineCap="round"
-        android:pathData="M32,92 L88,92" />
+        android:pathData="M34,80 L86,80" />
+
+    <!-- स्पष्ट "स.म.वि." देवनागरी अक्षर (Vector Paths ताकि हर फोन पर 100% दिखे) -->
+    <path
+        android:strokeColor="#FDE047"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M24,86 L42,86 M29,86 L29,93 C29,96 25,96 25,93 M29,93 L34,98 M29,92 L37,92 M37,86 L37,98 M49,86 L63,86 M53,86 L53,94 C53,96 50,96 50,93 L59,93 M59,86 L59,98 M71,86 L88,86 M74,86 L74,98 M85,86 L85,98 M85,92 C79,89 79,96 85,94 M74,86 C74,80 85,80 85,86" />
+
+    <!-- बिंदु (स. म. वि.) -->
+    <path
+        android:fillColor="#FDE047"
+        android:pathData="M44,97 A1.7,1.7 0 1,1 43.9,97 Z M66,97 A1.7,1.7 0 1,1 65.9,97 Z M92,97 A1.7,1.7 0 1,1 91.9,97 Z" />
 </vector>
