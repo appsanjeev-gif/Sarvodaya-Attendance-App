@@ -280,6 +280,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ✅ VIP स्वागत कार्ड जिसमें अब सही "स.म.वि." वाला लोगो दिखेगा और असली AI आवाज़ बोलेगी[cite: 12]
     private fun speakAndShowVipWelcomeOnFaceDetected() {
         val todayKey = AppStorage.getTodayShortKey()
         val total = payload.students.size
@@ -288,7 +289,7 @@ class MainActivity : AppCompatActivity() {
         val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
 
         ivResultStudentPhoto.visibility = View.VISIBLE
-        ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
+        ivResultStudentPhoto.setImageResource(R.drawable.ic_smv_real_logo)
         tvResultLogo.text = "✨"
         tvResultDate.text = AppStorage.getTodayFullDot()
         tvResultName.text = "माननीय अधिकारी एवं अतिथि महोदय"
