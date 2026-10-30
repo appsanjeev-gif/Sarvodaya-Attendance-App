@@ -8,11 +8,10 @@ import android.media.MediaPlayer
 import android.media.audiofx.LoudnessEnhancer
 import android.os.Handler
 import android.os.Looper
-import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -22,12 +21,11 @@ import java.net.URLEncoder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
-import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.random.Random
 
-class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitListener {
+class RealisticVoiceManager(private val context: Context) {
 
     private val prefs = context.getSharedPreferences("SarvodayaVoicePrefs", Context.MODE_PRIVATE)
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -36,11 +34,12 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     private val defPart2 = "JrUUGoKliLkRUeWbYZ"
     private val defPart3 = "38ZEo9InfG-hroP9Q"
 
-    private val builtInKeys = listOf(
+    private val builtInGeminiKeys = listOf(
         defPart1 + defPart2 + defPart3
     )
 
-    private val keyRotationIndex = AtomicInteger(0)
+    private val geminiKeyIndex = AtomicInteger(0)
+    private val elevenKeyIndex = AtomicInteger(0)
 
     fun getApiKey(): String {
         return prefs.getString("custom_gemini_api_key", "") ?: ""
@@ -48,33 +47,50 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
     fun saveCustomApiKey(newKey: String) {
         prefs.edit().putString("custom_gemini_api_key", newKey.trim()).apply()
+        preWarmStartupWelcomesInBackground()
     }
 
-    private fun getActiveKeyPool(): List<String> {
+    private fun parseAllSavedTokens(): List<String> {
         val savedRaw = prefs.getString("custom_gemini_api_key", "") ?: ""
-        val customList = savedRaw
+        return savedRaw
             .split(",", "\n", ";", " ")
             .map { it.trim() }
             .filter { it.length > 15 }
-        return if (customList.isNotEmpty()) customList else builtInKeys
+    }
+
+    private fun getGeminiKeyPool(): List<String> {
+        val all = parseAllSavedTokens()
+        val geminiList = all.filter {
+            it.startsWith("AQ.", ignoreCase = true) ||
+            it.startsWith("AIza", ignoreCase = true) ||
+            (!it.startsWith("sk_", ignoreCase = true) && it.length >= 35)
+        }
+        return if (geminiList.isNotEmpty()) geminiList else builtInGeminiKeys
+    }
+
+    private fun getElevenLabsKeyPool(): List<String> {
+        val all = parseAllSavedTokens()
+        return all.filter {
+            it.startsWith("sk_", ignoreCase = true) ||
+            (it.length == 32 && it.all { ch -> ch.isLetterOrDigit() })
+        }
     }
 
     private data class AiVoiceProfile(
         val name: String,
-        val edgeNeuralVoice: String,
+        val elevenVoiceId: String,
         val stylePrompt: String
     )
 
-    // ✅ AI Studio Voices + Microsoft Edge Neural Voices (SwaraNeural & MadhurNeural)
     private val aiVoiceProfiles = listOf(
         AiVoiceProfile(
             name = "Sadachbia",
-            edgeNeuralVoice = "hi-IN-MadhurNeural",
+            elevenVoiceId = "pNInz6obpgDQGcFmaJgB",
             stylePrompt = "Read aloud in a lively, warm, lower-pitch Indian Hindi male voice:"
         ),
         AiVoiceProfile(
             name = "Autonoe",
-            edgeNeuralVoice = "hi-IN-SwaraNeural",
+            elevenVoiceId = "EXAVITQu4vr4xnSDxMaL",
             stylePrompt = "Read aloud in a bright, clear, natural middle-pitch Indian Hindi female voice:"
         )
     )
@@ -85,8 +101,6 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         "नमस्कार! शिक्षा के मंदिर सर्वोदय मध्य विद्यालय, सोहसराय में आपका स्वागत है। कृपया कैमरे के सामने आकर अपनी उपस्थिति दर्ज कराएं।"
     )
 
-    private var tts: TextToSpeech? = null
-    private var isOfflineTtsReady = false
     var isVoiceEnabled = true
 
     @Volatile
@@ -95,6 +109,7 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
     private var unlockRunnable: Runnable? = null
     private val voiceExecutor = Executors.newSingleThreadExecutor()
+    private val preWarmExecutor = Executors.newSingleThreadExecutor()
     private var currentAudioTrack: AudioTrack? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -106,27 +121,48 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     }
 
     init {
-        tts = TextToSpeech(context, this)
+        preWarmStartupWelcomesInBackground()
     }
 
-    override fun onInit(status: Int) {
-        if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale("hi", "IN")
-            tts?.setPitch(0.90f)
-            tts?.setSpeechRate(0.95f)
-            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
-                override fun onStart(utteranceId: String?) {
-                    isCurrentlySpeaking = true
+    // ✅ ऐप खुलते ही बैकग्राउंड में तीनों स्वागत संदेशों को स्थायी रूप से फोन में सेव कर लेता है
+    private fun preWarmStartupWelcomesInBackground() {
+        preWarmExecutor.execute {
+            try {
+                for (i in startupWelcomeMessages.indices) {
+                    val msg = startupWelcomeMessages[i]
+                    val fixedPcm = File(voiceCacheDir, "startup_welcome_fixed_$i.pcm")
+                    val fixedMp3 = File(voiceCacheDir, "startup_welcome_fixed_$i.mp3")
+                    if ((fixedPcm.exists() && fixedPcm.length() > 2000) ||
+                        (fixedMp3.exists() && fixedMp3.length() > 1500)) {
+                        continue
+                    }
+                    val profile = aiVoiceProfiles[i % aiVoiceProfiles.size]
+                    val geminiPool = getGeminiKeyPool()
+                    for (attempt in geminiPool.indices) {
+                        val idx = (geminiKeyIndex.getAndIncrement() % geminiPool.size).let { if (it < 0) it + geminiPool.size else it }
+                        val (pcm, code) = fetchGoogleAiStudioTtsPcm(msg, profile, geminiPool[idx])
+                        if (pcm != null && pcm.size > 2000) {
+                            writeFileAtomically(fixedPcm, pcm)
+                            break
+                        }
+                        if (code != 429 && code != 400 && code != 403) break
+                    }
                 }
-                override fun onDone(utteranceId: String?) {
-                    isCurrentlySpeaking = false
-                }
-                override fun onError(utteranceId: String?) {
-                    isCurrentlySpeaking = false
-                }
-            })
-            isOfflineTtsReady = true
+            } catch (_: Exception) {}
         }
+    }
+
+    private fun writeFileAtomically(targetFile: File, bytes: ByteArray) {
+        try {
+            val tempFile = File(targetFile.parentFile, "${targetFile.name}.tmp")
+            FileOutputStream(tempFile).use { fos ->
+                fos.write(bytes)
+                fos.fd.sync()
+            }
+            if (tempFile.exists() && tempFile.length() > 1000) {
+                tempFile.renameTo(targetFile)
+            }
+        } catch (_: Exception) {}
     }
 
     private fun scheduleSpeakingUnlock(durationMs: Long) {
@@ -139,8 +175,31 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
     fun speakStartupWelcome() {
         if (!isVoiceEnabled) return
-        val welcomeLine = startupWelcomeMessages[Random.nextInt(startupWelcomeMessages.size)]
-        speakHindi(welcomeLine, boostFactor = 1.55f)
+        voiceExecutor.execute {
+            val readyIndices = startupWelcomeMessages.indices.filter { idx ->
+                File(voiceCacheDir, "startup_welcome_fixed_$idx.pcm").let { it.exists() && it.length() > 2000 } ||
+                File(voiceCacheDir, "startup_welcome_fixed_$idx.mp3").let { it.exists() && it.length() > 1500 }
+            }
+
+            val chosenIdx = if (readyIndices.isNotEmpty()) {
+                readyIndices[Random.nextInt(readyIndices.size)]
+            } else {
+                Random.nextInt(startupWelcomeMessages.size)
+            }
+
+            val fixedPcm = File(voiceCacheDir, "startup_welcome_fixed_$chosenIdx.pcm")
+            if (fixedPcm.exists() && fixedPcm.length() > 2000) {
+                if (playRawPcm24kHz(fixedPcm.readBytes(), 1.55f)) return@execute
+            }
+
+            val fixedMp3 = File(voiceCacheDir, "startup_welcome_fixed_$chosenIdx.mp3")
+            if (fixedMp3.exists() && fixedMp3.length() > 1500) {
+                if (playMp3File(fixedMp3, isLowerPitchMale = false, isPureNeural = true)) return@execute
+            }
+
+            val welcomeLine = startupWelcomeMessages[chosenIdx]
+            speakHindiInternal(welcomeLine, boostFactor = 1.55f, fixedStartupIndex = chosenIdx)
+        }
     }
 
     fun speakVipInspectionWelcome(presentCount: Int, totalCount: Int) {
@@ -165,70 +224,84 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
 
     fun speakHindi(text: String, boostFactor: Float = 1.35f) {
         if (!isVoiceEnabled || text.isBlank()) return
-
-        scheduleSpeakingUnlock(9500L)
-
         voiceExecutor.execute {
-            val chosenVoice = aiVoiceProfiles[Random.nextInt(aiVoiceProfiles.size)]
-            val otherVoice = aiVoiceProfiles.first { it.name != chosenVoice.name }
+            speakHindiInternal(text, boostFactor, fixedStartupIndex = -1)
+        }
+    }
 
-            val hash1 = md5Hash("${chosenVoice.name}_$text")
-            val file1 = File(voiceCacheDir, "$hash1.pcm")
+    private fun speakHindiInternal(text: String, boostFactor: Float, fixedStartupIndex: Int) {
+        scheduleSpeakingUnlock(10000L)
 
-            val hash2 = md5Hash("${otherVoice.name}_$text")
-            val file2 = File(voiceCacheDir, "$hash2.pcm")
+        val chosenVoice = aiVoiceProfiles[Random.nextInt(aiVoiceProfiles.size)]
+        val otherVoice = aiVoiceProfiles.first { it.name != chosenVoice.name }
 
-            val mp3CacheFile = File(voiceCacheDir, "${md5Hash("edge_${chosenVoice.edgeNeuralVoice}_$text")}.mp3")
+        val hash1 = md5Hash("${chosenVoice.name}_$text")
+        val file1 = if (fixedStartupIndex >= 0) {
+            File(voiceCacheDir, "startup_welcome_fixed_$fixedStartupIndex.pcm")
+        } else {
+            File(voiceCacheDir, "$hash1.pcm")
+        }
 
-            // 1. यदि फोन की मेमोरी में AI Studio PCM पहले से सेव है तो तुरंत बजाएं
-            if (file1.exists() && file1.length() > 1000) {
-                if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return@execute
-            }
+        val hash2 = md5Hash("${otherVoice.name}_$text")
+        val file2 = File(voiceCacheDir, "$hash2.pcm")
 
-            // 2. Multi-Key Auto-Rotation Pool से AI Studio आवाज़ लाएं (VIP लंबे वाक्यों के लिए बढ़ाया गया टाइमआउट)
-            val keyPool = getActiveKeyPool()
-            if (keyPool.isNotEmpty()) {
-                val poolSize = keyPool.size
-                for (attempt in 0 until poolSize) {
-                    val idx = (keyRotationIndex.getAndIncrement() % poolSize).let { if (it < 0) it + poolSize else it }
-                    val candidateKey = keyPool[idx]
-                    val (pcmBytes, errCode) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, candidateKey)
-                    if (pcmBytes != null && pcmBytes.size > 1000) {
-                        try {
-                            FileOutputStream(file1).use { it.write(pcmBytes) }
-                        } catch (_: Exception) {}
-                        if (playRawPcm24kHz(pcmBytes, boostFactor)) return@execute
-                    }
-                    if (errCode != 429 && errCode != 400 && errCode != 403) {
-                        break
-                    }
+        val mp3CacheFile = if (fixedStartupIndex >= 0) {
+            File(voiceCacheDir, "startup_welcome_fixed_$fixedStartupIndex.mp3")
+        } else {
+            File(voiceCacheDir, "${md5Hash("ai_mp3_$text")}.mp3")
+        }
+
+        // 1. पहले से सेव AI Studio PCM चेक करें
+        if (file1.exists() && file1.length() > 2000) {
+            if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return
+        }
+        if (file2.exists() && file2.length() > 2000) {
+            if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return
+        }
+        if (mp3CacheFile.exists() && mp3CacheFile.length() > 1500) {
+            if (playMp3File(mp3CacheFile, chosenVoice.name == "Sadachbia", isPureNeural = true)) return
+        }
+
+        // 2. Multi-Gemini Key Pool (AQ.Ab8... / AIza...)
+        val geminiPool = getGeminiKeyPool()
+        if (geminiPool.isNotEmpty()) {
+            val poolSize = geminiPool.size
+            for (attempt in 0 until poolSize) {
+                val idx = (geminiKeyIndex.getAndIncrement() % poolSize).let { if (it < 0) it + poolSize else it }
+                val candidateKey = geminiPool[idx]
+                val (pcmBytes, errCode) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, candidateKey)
+                if (pcmBytes != null && pcmBytes.size > 2000) {
+                    writeFileAtomically(file1, pcmBytes)
+                    if (playRawPcm24kHz(pcmBytes, boostFactor)) return
+                }
+                if (errCode != 429 && errCode != 400 && errCode != 403) {
+                    break
                 }
             }
+        }
 
-            if (file2.exists() && file2.length() > 1000) {
-                if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return@execute
-            }
-
-            // 3. यदि पहले से सेव Neural MP3 मौजूद है तो उसे तुरंत बजाएं
-            if (mp3CacheFile.exists() && mp3CacheFile.length() > 800) {
-                if (playMp3File(mp3CacheFile, chosenVoice.name == "Sadachbia", isPureNeural = true)) return@execute
-            }
-
-            // 4. Microsoft Edge Neural Voice (SwaraNeural / MadhurNeural - Unlimited Free AI Voice)
-            if (tryPlayMicrosoftEdgeNeural(text, chosenVoice.edgeNeuralVoice, mp3CacheFile)) return@execute
-
-            // 5. Multi-Chunk Neural Stream Backup (लंबे VIP स्वागत वाक्यों को भी सपोर्ट करता है, कोई कोटा लिमिट नहीं)
-            if (tryPlayChunkedNeuralMp3(text, chosenVoice.name == "Sadachbia", mp3CacheFile)) return@execute
-
-            // 6. अंतिम ऑफलाइन बैकअप (केवल तब जब इंटरनेट पूरी तरह बंद हो)
-            if (isOfflineTtsReady) {
-                scheduleSpeakingUnlock(5500L)
-                tts?.setPitch(if (chosenVoice.name == "Sadachbia") 0.82f else 1.05f)
-                tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SARVODAYA_FALLBACK")
-            } else {
-                isCurrentlySpeaking = false
+        // 3. Multi-ElevenLabs Key Pool (sk_...)
+        val elevenPool = getElevenLabsKeyPool()
+        if (elevenPool.isNotEmpty()) {
+            val poolSize = elevenPool.size
+            for (attempt in 0 until poolSize) {
+                val idx = (elevenKeyIndex.getAndIncrement() % poolSize).let { if (it < 0) it + poolSize else it }
+                val candidateKey = elevenPool[idx]
+                val (mp3Bytes, errCode) = fetchElevenLabsMp3(text, chosenVoice.elevenVoiceId, candidateKey)
+                if (mp3Bytes != null && mp3Bytes.size > 1500) {
+                    writeFileAtomically(mp3CacheFile, mp3Bytes)
+                    if (playMp3File(mp3CacheFile, chosenVoice.name == "Sadachbia", isPureNeural = true)) return
+                }
+                if (errCode != 429 && errCode != 401 && errCode != 403) {
+                    break
+                }
             }
         }
+
+        // 4. Online Natural Neural Stream (No Quota Limit, Never Boring System TTS)
+        if (tryPlayChunkedNeuralMp3(text, chosenVoice.name == "Sadachbia", mp3CacheFile)) return
+
+        isCurrentlySpeaking = false
     }
 
     private fun fetchGoogleAiStudioTtsPcm(
@@ -244,8 +317,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                 val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
                 val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"
-                    connectTimeout = 8000
-                    readTimeout = 12000 // ✅ लंबे VIP स्वागत संदेश के लिए 12 सेकंड का पर्याप्त समय
+                    connectTimeout = 9000
+                    readTimeout = 14000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 }
@@ -293,46 +366,59 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
         return Pair(null, lastHttpCode)
     }
 
-    // ✅ Microsoft Edge Neural Engine (SwaraNeural / MadhurNeural - No Quota Limit)
-    private fun tryPlayMicrosoftEdgeNeural(text: String, voiceName: String, outFile: File): Boolean {
-        val endpoints = listOf(
-            "https://tts.travisvn.com/api/tts?text=${URLEncoder.encode(text, "UTF-8")}&voice=$voiceName",
-            "https://edge-tts-api.vercel.app/api/tts?text=${URLEncoder.encode(text, "UTF-8")}&voice=$voiceName"
-        )
-        for (urlStr in endpoints) {
-            try {
-                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                    requestMethod = "GET"
-                    connectTimeout = 5000
-                    readTimeout = 8000
-                    setRequestProperty("User-Agent", "Mozilla/5.0")
+    private fun fetchElevenLabsMp3(
+        hindiText: String,
+        voiceId: String,
+        elevenApiKey: String
+    ): Pair<ByteArray?, Int> {
+        var httpCode = 0
+        try {
+            val endpoint = "https://api.elevenlabs.io/v1/text-to-speech/$voiceId"
+            val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 8000
+                readTimeout = 12000
+                doOutput = true
+                setRequestProperty("xi-api-key", elevenApiKey)
+                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                setRequestProperty("Accept", "audio/mpeg")
+            }
+
+            val payload = JSONObject().apply {
+                put("text", hindiText)
+                put("model_id", "eleven_multilingual_v2")
+                put("voice_settings", JSONObject().apply {
+                    put("stability", 0.55)
+                    put("similarity_boost", 0.80)
+                })
+            }
+
+            conn.outputStream.use { os ->
+                os.write(payload.toString().toByteArray(Charsets.UTF_8))
+            }
+
+            httpCode = conn.responseCode
+            if (httpCode == 200) {
+                val bytes = conn.inputStream.readBytes()
+                if (bytes.size > 1500) {
+                    return Pair(bytes, 200)
                 }
-                if (conn.responseCode == 200) {
-                    val bytes = conn.inputStream.readBytes()
-                    if (bytes.size > 1000) {
-                        FileOutputStream(outFile).use { it.write(bytes) }
-                        if (playMp3File(outFile, voiceName.contains("Madhur"), isPureNeural = true)) {
-                            return true
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-        }
-        return false
+            }
+        } catch (_: Exception) {}
+        return Pair(null, httpCode)
     }
 
-    // ✅ लंबे वाक्यों (जैसे VIP स्वागत) को छोटे भागों में जोड़कर बिना कटे और बिना कोटा लिमिट के बजाने वाला न्यूरल स्ट्रीम
     private fun tryPlayChunkedNeuralMp3(text: String, isLowerPitchMale: Boolean, outFile: File): Boolean {
         return try {
             val sentences = text.split(Regex("(?<=[।!?])")).map { it.trim() }.filter { it.isNotEmpty() }
-            val combinedStream = java.io.ByteArrayOutputStream()
+            val combinedStream = ByteArrayOutputStream()
 
             for (sentence in sentences) {
                 val encoded = URLEncoder.encode(sentence, "UTF-8")
                 val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=tw-ob"
                 val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 4000
-                    readTimeout = 6000
+                    connectTimeout = 5000
+                    readTimeout = 7000
                     setRequestProperty("User-Agent", "Mozilla/5.0")
                 }
                 if (conn.responseCode == 200) {
@@ -344,8 +430,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
             }
 
             val finalBytes = combinedStream.toByteArray()
-            if (finalBytes.size > 1000) {
-                FileOutputStream(outFile).use { it.write(finalBytes) }
+            if (finalBytes.size > 1500) {
+                writeFileAtomically(outFile, finalBytes)
                 playMp3File(outFile, isLowerPitchMale, isPureNeural = false)
             } else {
                 false
@@ -376,8 +462,8 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
                         }
                     } catch (_: Exception) {}
                     if (!isPureNeural && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                        val targetPitch = if (isLowerPitchMale) 0.86f else 1.03f
-                        playbackParams = playbackParams.setPitch(targetPitch).setSpeed(0.98f)
+                        val targetPitch = if (isLowerPitchMale) 0.90f else 1.02f
+                        playbackParams = playbackParams.setPitch(targetPitch).setSpeed(1.0f)
                     }
                     val dur = duration.toLong().coerceAtLeast(3500L)
                     scheduleSpeakingUnlock(dur + 450L)
@@ -490,9 +576,5 @@ class RealisticVoiceManager(private val context: Context) : TextToSpeech.OnInitL
     fun shutdown() {
         isCurrentlySpeaking = false
         stopCurrentAudio()
-        try {
-            tts?.stop()
-            tts?.shutdown()
-        } catch (_: Exception) {}
     }
 }
