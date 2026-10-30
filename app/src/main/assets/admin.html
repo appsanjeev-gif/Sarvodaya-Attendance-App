@@ -3,1335 +3,1237 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>एडमिन</title>
+<title>SMV RollCall - Admin Panel</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; font-family: sans-serif; -webkit-tap-highlight-color: transparent; user-select: none; }
-  body { background: #f1f5f9; color: #0f172a; padding-bottom: 30px; }
-  .top-header { background: #ffffff; padding: 11px 14px; display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #e2e8f0; }
-  .school-brand { display: flex; align-items: center; gap: 10px; }
-  .school-title { font-size: 16.5px; font-weight: 900; color: #0f172a; }
-  .admin-wrap { padding: 12px; max-width: 480px; margin: 0 auto; }
-  .admin-banner { background: linear-gradient(135deg, #0f172a, #1e3a8a); color: #fff; padding: 15px; border-radius: 18px; margin-bottom: 12px; box-shadow: 0 4px 12px rgba(15,23,42,0.18); }
-  .date-picker-badge { position: relative; display: inline-flex; align-items: center; gap: 6px; background: rgba(255,255,255,0.2); border: 1.5px solid rgba(255,255,255,0.7); padding: 6px 14px; border-radius: 999px; font-size: 14px; font-weight: 900; color: #fff; overflow: hidden; }
-  .date-picker-badge input[type="date"] { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; }
-  .stats-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: #fff; color: #0f172a; padding: 11px 8px; border-radius: 14px; text-align: center; }
-  .stat-box-label { font-size: 14px; font-weight: 900; }
-  .stat-box-val { font-size: 24px; font-weight: 900; margin-top: 2px; }
-  .gender-cat-strip { margin-top: 10px; background: rgba(255,255,255,0.13); border: 1px solid rgba(255,255,255,0.28); border-radius: 12px; padding: 8px 10px; font-size: 12.5px; font-weight: 800; line-height: 1.5; color: #f8fafc; cursor: pointer; }
-  .gender-cat-strip:active { background: rgba(255,255,255,0.25); }
-  .card-section { background: #fff; border-radius: 16px; padding: 14px; margin-bottom: 12px; border: 1.5px solid #e2e8f0; }
-  .section-label { font-size: 16px; font-weight: 900; color: #0f172a; margin-bottom: 10px; }
-  .class-breakdown-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
-  .class-mini-stat { background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 12px; padding: 9px 4px; text-align: center; font-size: 13px; font-weight: 900; }
-  .class-mini-stat.selected-cls { background: #eff6ff; border: 2.5px solid #1e3a8a; }
-  .roll-badges-scroll { display: flex; flex-wrap: wrap; gap: 6px; max-height: 76px; overflow-y: auto; }
-  .roll-num-circle { min-width: 32px; height: 32px; padding: 0 7px; border-radius: 999px; background: #16a34a; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 900; }
-  .start-scan-big-btn { width: 100%; background: #16a34a; color: #fff; border: none; padding: 15px; border-radius: 15px; font-size: 18px; font-weight: 900; margin-bottom: 12px; box-shadow: 0 4px 10px rgba(22,163,74,0.3); }
-  .admin-actions-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 12px; }
-  .action-tile { background: #fff; border: 1.5px solid #cbd5e1; border-radius: 15px; padding: 14px 6px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 6px; font-weight: 900; font-size: 14px; }
-  .sub-modal { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.8); z-index: 60; justify-content: center; align-items: flex-end; }
-  .sub-modal.open { display: flex; }
-  .modal-sheet { width: 100%; max-width: 480px; max-height: 92vh; background: #fff; border-top-left-radius: 22px; border-top-right-radius: 22px; display: flex; flex-direction: column; overflow: hidden; }
-  .modal-header { padding: 14px 16px; background: #0f172a; color: #fff; display: flex; justify-content: space-between; align-items: center; }
-  .modal-title { font-size: 18px; font-weight: 900; }
-  .close-btn { background: rgba(255,255,255,0.2); color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; font-size: 17px; font-weight: 900; }
-  .modal-body { padding: 15px; overflow-y: auto; flex: 1; }
+  :root {
+    --primary: #1e3a8a;
+    --secondary: #0f172a;
+    --accent: #2563eb;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --warning: #d97706;
+    --bg: #f1f5f9;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; font-family: 'Segoe UI', Roboto, sans-serif; -webkit-tap-highlight-color: transparent; user-select: none; }
+  input, textarea, select { user-select: text; }
+  body { margin: 0; padding: 0; background: var(--bg); color: #1e293b; padding-bottom: 40px; }
+
+  /* Header */
+  .top-header {
+    background: linear-gradient(135deg, #0f172a, #1e3a8a);
+    color: #fff; padding: 14px 16px; display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 40; box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+  }
+  .header-left { display: flex; align-items: center; gap: 10px; }
+  .school-title { font-size: 17px; font-weight: 800; line-height: 1.2; color: #facc15; }
+  .school-sub { font-size: 12px; color: #cbd5e1; }
+  .btn-back-scan {
+    background: #16a34a; color: #fff; border: none; padding: 9px 14px; border-radius: 10px;
+    font-weight: 700; font-size: 13px; cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  }
+
+  .container { padding: 12px; max-width: 700px; margin: 0 auto; }
+
+  /* Date Bar */
+  .date-bar {
+    background: #fff; border-radius: 14px; padding: 10px 14px; margin-bottom: 12px;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid #e2e8f0;
+  }
+  .date-bar input[type="date"] {
+    border: 1.5px solid #cbd5e1; border-radius: 9px; padding: 7px 10px; font-size: 14px;
+    font-weight: 700; color: #1e3a8a; background: #f8fafc; outline: none;
+  }
+  .holiday-badge {
+    background: #fef3c7; color: #b45309; padding: 6px 10px; border-radius: 8px;
+    font-size: 12px; font-weight: 700; cursor: pointer; border: 1px solid #fde68a;
+  }
+
+  /* Summary Cards */
+  .summary-card {
+    background: #fff; border-radius: 16px; padding: 14px; margin-bottom: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; cursor: pointer;
+  }
+  .summary-card:active { transform: scale(0.99); }
+  .sum-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  .sum-title { font-size: 15px; font-weight: 800; color: #0f172a; }
+  .sum-pct { background: #dbeafe; color: #1e40af; padding: 4px 10px; border-radius: 20px; font-size: 13px; font-weight: 800; }
+
+  .stat-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; text-align: center; }
+  .stat-box { background: #f8fafc; padding: 9px 6px; border-radius: 11px; border: 1px solid #e2e8f0; }
+  .stat-num { font-size: 18px; font-weight: 800; }
+  .stat-lbl { font-size: 11px; color: #64748b; font-weight: 600; margin-top: 2px; }
+
+  .cat-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+  .cat-chip { background: #f1f5f9; border-radius: 8px; padding: 6px 4px; text-align: center; font-size: 11px; font-weight: 700; color: #334155; }
+
+  /* Class Wise Grid */
+  .class-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
+  .class-box {
+    background: #fff; border-radius: 13px; padding: 11px 8px; text-align: center;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05); border: 2px solid transparent; cursor: pointer;
+  }
+  .class-box.active { border-color: #2563eb; background: #eff6ff; }
+  .cls-name { font-size: 14px; font-weight: 800; color: #1e3a8a; }
+  .cls-count { font-size: 13px; font-weight: 700; color: #15803d; margin-top: 3px; }
+
+  /* Admin Action Grid */
+  .action-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-bottom: 16px; }
+  .act-tile {
+    background: #fff; border-radius: 14px; padding: 12px 6px; text-align: center;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; cursor: pointer;
+  }
+  .act-tile:active { background: #f1f5f9; transform: scale(0.97); }
+  .act-ico { font-size: 22px; display: block; margin-bottom: 5px; }
+  .act-txt { font-size: 12px; font-weight: 700; color: #1e293b; }
+
+  /* Modals */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.68);
+    z-index: 60; align-items: center; justify-content: center; padding: 12px;
+  }
+  .modal-card {
+    background: #fff; width: 100%; max-width: 520px; border-radius: 18px;
+    max-height: 90vh; display: flex; flex-direction: column; overflow: hidden;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.35);
+  }
+  .modal-head {
+    background: #0f172a; color: #fff; padding: 14px 16px; display: flex;
+    align-items: center; justify-content: space-between;
+  }
+  .modal-head h3 { margin: 0; font-size: 16px; font-weight: 800; }
+  .btn-close-x {
+    background: rgba(255,255,255,0.15); color: #fff; border: none; width: 32px; height: 32px;
+    border-radius: 50%; font-size: 16px; font-weight: 800; cursor: pointer;
+  }
+  .modal-body { padding: 14px; overflow-y: auto; flex: 1; }
+
+  /* Forms & Buttons */
   .form-group { margin-bottom: 11px; }
-  .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-  label.field-lbl { display: block; font-size: 14px; font-weight: 900; color: #1e293b; margin-bottom: 4px; }
-  input, select { width: 100%; padding: 10px 12px; border: 1.5px solid #cbd5e1; border-radius: 10px; font-size: 15px; font-weight: 700; background: #f8fafc; user-select: text; }
-  .photo-thumbs { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  .photo-thumb { width: 58px; height: 58px; border-radius: 10px; object-fit: cover; border: 2.5px solid #16a34a; }
-  .btn-primary { width: 100%; background: #1e3a8a; color: #fff; border: none; padding: 13px; border-radius: 12px; font-size: 16px; font-weight: 900; }
-  .btn-danger { background: #fee2e2; color: #dc2626; border: 1.5px solid #fca5a5; padding: 8px 14px; border-radius: 10px; font-weight: 900; font-size: 14px; }
-  .btn-success-sm { background: #16a34a; color: #fff; border: none; padding: 8px 14px; border-radius: 10px; font-weight: 900; font-size: 14px; display: inline-flex; align-items: center; gap: 5px; }
-  .btn-locked-sm { background: #dcfce7; color: #15803d; border: 1.5px solid #86efac; padding: 7px 12px; border-radius: 10px; font-weight: 900; font-size: 13.5px; }
-  .btn-edit-sm { background: #dbeafe; color: #1e3a8a; border: 1.5px solid #93c5fd; padding: 8px 13px; border-radius: 10px; font-weight: 900; font-size: 14px; }
-  .class-pill { flex: 1; padding: 10px; border-radius: 999px; border: 1.5px solid #cbd5e1; background: #f8fafc; font-weight: 900; font-size: 15px; text-align: center; }
-  .class-pill.active { background: #1e3a8a; color: #fff; }
-  .student-item-card { border: 1.5px solid #cbd5e1; border-radius: 15px; padding: 12px; margin-bottom: 10px; background: #fff; }
-  .student-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-  .student-avatar-wrap { position: relative; width: 54px; height: 54px; }
-  .student-avatar-img { width: 54px; height: 54px; border-radius: 50%; object-fit: cover; border: 2.5px solid #16a34a; }
-  .pending-red-dp { width: 54px; height: 54px; border-radius: 50%; background: #dc2626; color: #ffffff; display: flex; flex-direction: column; align-items: center; justify-content: center; font-weight: 900; font-size: 13px; border: 2.5px solid #fecaca; position: relative; }
-  .roll-mini-badge { position: absolute; bottom: -2px; right: -2px; background: #1e3a8a; color: #fff; font-size: 11px; font-weight: 900; padding: 1px 6px; border-radius: 999px; border: 1.5px solid #fff; }
-  .att-summary-bar { background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 9px; margin-bottom: 8px; }
-  .six-day-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; background: #fff; border-radius: 8px; padding: 6px; margin-top: 6px; }
-  .six-day-cell { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 4px 2px; font-size: 11.5px; font-weight: 900; text-align: center; white-space: nowrap; }
-  .student-meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 9px; background: #f8fafc; padding: 9px; border-radius: 10px; font-size: 14px; margin-bottom: 10px; }
-  .meta-box-item { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 7px 9px; }
-  .att-history-box { max-height: 160px; overflow-y: auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px 9px; font-size: 13.5px; }
-  .att-history-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px dashed #e2e8f0; }
-  .download-choice-bar { display: none; background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 12px; padding: 9px; margin-bottom: 10px; }
-  .download-choice-bar.show { display: block; }
-  .demo-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 14px; }
-  .demo-table th, .demo-table td { border: 1.5px solid #cbd5e1; padding: 8px; text-align: center; font-weight: 800; }
-  .demo-table th { background: #eff6ff; color: #1e3a8a; }
-  .toast-msg { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: 14.5px; font-weight: 900; z-index: 200; display: none; }
+  .form-group label { display: block; font-size: 12px; font-weight: 700; color: #475569; margin-bottom: 4px; }
+  .form-control {
+    width: 100%; padding: 10px 12px; border: 1.5px solid #cbd5e1; border-radius: 10px;
+    font-size: 14px; font-weight: 600; outline: none; background: #f8fafc;
+  }
+  .form-row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+  .btn-block {
+    width: 100%; padding: 12px; border: none; border-radius: 11px; font-size: 14px;
+    font-weight: 800; color: #fff; cursor: pointer; margin-top: 8px;
+  }
+  .btn-primary { background: #2563eb; }
+  .btn-success { background: #16a34a; }
+  .btn-danger { background: #dc2626; }
+  .btn-dark { background: #334155; }
+
+  /* Student List Item */
+  .stu-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 8px; border-bottom: 1px solid #e2e8f0; gap: 10px;
+  }
+  .stu-left { display: flex; align-items: center; gap: 10px; flex: 1; cursor: pointer; }
+  .stu-left:active { opacity: 0.7; }
+  .roll-badge {
+    width: 36px; height: 36px; border-radius: 50%; background: #1e3a8a; color: #fff;
+    display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 13px; flex-shrink: 0;
+  }
+  .stu-info-name { font-size: 15px; font-weight: 800; color: #0f172a; }
+  .stu-info-sub { font-size: 12px; color: #64748b; font-weight: 600; }
+
+  .att-pill-btn {
+    padding: 7px 12px; border-radius: 20px; font-size: 12px; font-weight: 800;
+    border: 1.5px solid transparent; cursor: pointer; flex-shrink: 0;
+  }
+  .att-pill-present { background: #dcfce7; color: #15803d; border-color: #86efac; }
+  .att-pill-absent { background: #fee2e2; color: #b91c1c; border-color: #fca5a5; }
+
+  /* Tabs */
+  .pill-tabs { display: flex; gap: 8px; margin-bottom: 10px; }
+  .pill-tab {
+    flex: 1; padding: 9px; border-radius: 22px; text-align: center; font-size: 13px;
+    font-weight: 800; border: 1.5px solid #cbd5e1; background: #fff; color: #334155; cursor: pointer;
+  }
+  .pill-tab.active-p { background: #1e3a8a; color: #fff; border-color: #1e3a8a; }
+  .pill-tab.active-a { background: #dc2626; color: #fff; border-color: #dc2626; }
+
+  .kyc-thumb-strip { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .kyc-thumb-wrap { position: relative; width: 64px; height: 64px; }
+  .kyc-thumb-wrap img { width: 100%; height: 100%; object-fit: cover; border-radius: 10px; border: 2px solid #16a34a; }
+  .kyc-del-x {
+    position: absolute; top: -5px; right: -5px; background: #dc2626; color: #fff;
+    border: none; width: 20px; height: 20px; border-radius: 50%; font-size: 11px; font-weight: 800;
+  }
 </style>
 </head>
 <body>
-  <header class="top-header">
-    <div class="school-brand">
-      <div id="topSchoolLogoSlot" style="width:44px;height:44px;display:flex;align-items:center;justify-content:center;"></div>
+
+<div class="top-header">
+  <div class="header-left">
+    <div>
       <div class="school-title">सर्वोदय मध्य विद्यालय, सोहसराय</div>
+      <div class="school-sub">SMV RollCall • एडमिन नियंत्रण कक्ष</div>
     </div>
-    <div id="headerDateBadge" style="font-size:13.5px;font-weight:900;color:#1e3a8a;"></div>
-  </header>
+  </div>
+  <button class="btn-back-scan" onclick="closeToScanner()">📷 स्कैनर</button>
+</div>
 
-  <div class="admin-wrap">
-    <div class="admin-banner">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-        <div style="font-size:20px;font-weight:900;">एडमिन पैनल</div>
-        <label class="date-picker-badge">
-          <span>📅</span>
-          <span id="adminSelectedDateLabel"></span>
-          <span>▾</span>
-          <input type="date" id="adminDatePicker" onchange="onAdminDateChange(this.value)">
-        </label>
-      </div>
-      <div class="stats-row">
-        <div><div class="stat-box-label" style="color:#16a34a;">उपस्थित</div><div id="statPresent" class="stat-box-val" style="color:#16a34a;">0</div></div>
-        <div><div class="stat-box-label" style="color:#dc2626;">अनुपस्थित</div><div id="statAbsent" class="stat-box-val" style="color:#dc2626;">0</div></div>
-        <div><div class="stat-box-label" style="color:#1e3a8a;">कुल छात्र</div><div id="statTotal" class="stat-box-val" style="color:#1e3a8a;">0</div></div>
-      </div>
-      <div id="dailyGenderCategoryStrip" class="gender-cat-strip"
-           onmousedown="handleGenderBoxPressStart()" onmouseup="handleGenderBoxPressEnd()"
-           ontouchstart="handleGenderBoxPressStart()" ontouchend="handleGenderBoxPressEnd()"
-           oncontextmenu="event.preventDefault();openDemographicDetailsModal()"></div>
+<div class="container">
+
+  <!-- Date & Holiday Bar -->
+  <div class="date-bar">
+    <div>
+      <span style="font-size:12px;font-weight:700;color:#64748b;">📅 दिनांक:</span>
+      <input type="date" id="dashboardDateInput" onchange="onDashboardDateChange()">
     </div>
+    <div class="holiday-badge" onclick="openHolidayModal()" id="holidayStatusBadge">🏖️ अवकाश सेटिंग</div>
+  </div>
 
-    <div class="card-section">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <div class="section-label" style="margin-bottom:0;" id="dateOverviewHeading"></div>
-        <button type="button" class="btn-edit-sm" onclick="resetToTodayDate()">आज</button>
-      </div>
-      <div id="classWiseMiniBreakdown" class="class-breakdown-grid"></div>
-      <div id="datePresentListPreview" class="roll-badges-scroll"></div>
+  <!-- Live Analysis Card (Long Press opens Date Attendance List) -->
+  <div class="summary-card" id="mainSummaryCard">
+    <div class="sum-header">
+      <span class="sum-title" id="selectedClassHeading">📊 उपस्थिति विश्लेषण (सभी कक्षाएं)</span>
+      <span class="sum-pct" id="mainPctBadge">0%</span>
     </div>
-
-    <button type="button" class="start-scan-big-btn" onclick="goBackToLiveScanner()">[▶] लाइव स्कैनर</button>
-
-    <div class="admin-actions-grid">
-      <div class="action-tile" onclick="openAddStudentModal()"><div style="font-size:22px;">👤+</div><div>नया छात्र</div></div>
-      <div class="action-tile" onclick="openStudentListModal()"><div style="font-size:22px;">📋</div><div>छात्र सूची</div></div>
-      <div class="action-tile" onclick="openReportsModal()"><div style="font-size:22px;">📊</div><div>रिपोर्ट्स</div></div>
-      <div class="action-tile" onclick="openHolidayModal()"><div style="font-size:22px;">🏖️</div><div>छुट्टी</div></div>
-      <div class="action-tile" onclick="openMultiDeviceModal()" style="background:#eff6ff;"><div style="font-size:22px;">🤝</div><div>पैक शेयर</div></div>
-      <div class="action-tile" onclick="openChangePinModal()"><div style="font-size:22px;">🔑</div><div>पिन व सत्र</div></div>
-    </div>
-
-    <div class="card-section" style="background:#eff6ff;">
-      <div class="section-label" style="color:#1e3a8a;">💾 डेटा बैकअप</div>
-      <div style="display:flex;gap:8px;">
-        <button type="button" class="btn-primary" style="padding:11px;font-size:14.5px;flex:1;" onclick="exportMasterBackupJson()">📤 शेयर</button>
-        <button type="button" class="btn-primary" style="padding:11px;font-size:14.5px;flex:1;background:#0369a1;" onclick="saveMasterBackupPhone()">📥 सेव</button>
-        <button type="button" class="btn-primary" style="padding:11px;font-size:14.5px;flex:1;background:#0f766e;" onclick="triggerNativeRestore()">🔄 रिस्टोर</button>
+    <div class="stat-grid-3">
+      <div class="stat-box">
+        <div class="stat-num" style="color:#1e3a8a;" id="statTotal">0</div>
+        <div class="stat-lbl">कुल नामांकित</div>
       </div>
+      <div class="stat-box">
+        <div class="stat-num" style="color:#16a34a;" id="statPresent">0</div>
+        <div class="stat-lbl">✔ उपस्थित</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num" style="color:#dc2626;" id="statAbsent">0</div>
+        <div class="stat-lbl">✗ अनुपस्थित</div>
+      </div>
+    </div>
+    <div class="cat-strip" id="genderCatStrip"></div>
+  </div>
+
+  <!-- Class Selector Boxes (Tap filters, Long-Press opens Attendance Modal) -->
+  <div class="class-grid" id="classGridContainer"></div>
+
+  <!-- Admin Action Tiles -->
+  <div class="action-grid">
+    <div class="act-tile" onclick="openStudentFormModal(null)">
+      <span class="act-ico">➕</span>
+      <span class="act-txt">नया छात्र</span>
+    </div>
+    <div class="act-tile" onclick="openAllStudentsDirectory()">
+      <span class="act-ico">👨‍🎓</span>
+      <span class="act-txt">छात्र डायरेक्टरी</span>
+    </div>
+    <div class="act-tile" onclick="openMonthlyRegisterModal()">
+      <span class="act-ico">📑</span>
+      <span class="act-txt">मासिक पंजी PDF</span>
+    </div>
+    <div class="act-tile" onclick="openPackShareModal()">
+      <span class="act-ico">🤝</span>
+      <span class="act-txt">पैक शेयर</span>
+    </div>
+    <div class="act-tile" onclick="openBackupRestoreModal()">
+      <span class="act-ico">💾</span>
+      <span class="act-txt">बैकअप / मर्ज</span>
+    </div>
+    <!-- ✅ इस [🔑 पिन व सत्र] बॉक्स पर 2 सेकंड Long-Press करने पर 🎙️ Multi-API Keys खुलेगा -->
+    <div class="act-tile" id="pinSessionTile">
+      <span class="act-ico">🔑</span>
+      <span class="act-txt">पिन व सत्र</span>
     </div>
   </div>
 
-  <!-- MODAL 0A: DEMOGRAPHIC DETAILS POPUP -->
-  <div id="demographicDetailsModal" class="sub-modal" style="z-index:85;">
-    <div class="modal-sheet">
-      <div class="modal-header">
-        <div>
-          <div class="modal-title" id="demoModalTitle">📊 लिंग एवं कोटि विवरण</div>
-          <div id="demoModalSub" style="font-size:13px;color:#cbd5e1;"></div>
-        </div>
-        <button type="button" class="close-btn" onclick="closeModal('demographicDetailsModal')">✕</button>
+</div>
+
+<!-- 1. Date Attendance List Modal (Present / Absent) -->
+<div class="modal-backdrop" id="dateAttendanceModal" style="z-index: 65;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div>
+        <h3 id="attModalTitle">📅 29.10.26 (सभी)</h3>
+        <div id="attModalSubCounts" style="font-size:12px;color:#cbd5e1;margin-top:2px;">उपस्थित: 0 | अनुपस्थित: 0</div>
       </div>
-      <div class="modal-body" id="demoModalBody"></div>
+      <button class="btn-close-x" onclick="closeModal('dateAttendanceModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="pill-tabs">
+        <div class="pill-tab active-p" id="tabBtnPresent" onclick="switchAttListTab('P')">✔ उपस्थित</div>
+        <div class="pill-tab" id="tabBtnAbsent" onclick="switchAttListTab('A')">✗ अनुपस्थित</div>
+      </div>
+      <input type="text" class="form-control" id="attListSearchInput" placeholder="खोजें (नाम या रोल नंबर)..." oninput="renderDateAttendanceList()" style="margin-bottom:10px;">
+      <div id="dateAttendanceListContainer"></div>
     </div>
   </div>
+</div>
 
-  <!-- MODAL 0: DATE ATTENDANCE POPUP -->
-  <div id="dateAttendanceModal" class="sub-modal">
-    <div class="modal-sheet">
-      <div class="modal-header">
-        <div><div class="modal-title" id="dateModalTitle">उपस्थिति</div><div id="dateModalSub" style="font-size:13px;color:#cbd5e1;"></div></div>
-        <button type="button" class="close-btn" onclick="closeModal('dateAttendanceModal')">✕</button>
-      </div>
-      <div class="modal-body">
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <button type="button" class="class-pill active" id="tabBtnPresent" onclick="switchDateModalTab('present')">✔ उपस्थित</button>
-          <button type="button" class="class-pill" id="tabBtnAbsent" onclick="switchDateModalTab('absent')">✗ अनुपस्थित</button>
-        </div>
-        <input type="text" id="dateModalSearch" placeholder="खोजें..." style="margin-bottom:10px;" oninput="renderDateAttendanceModalList()">
-        <div id="dateModalListContainer" style="max-height:55vh;overflow-y:auto;"></div>
-      </div>
+<!-- 2. Student Full Profile & Attendance History Modal (z-index: 85 so it opens ABOVE dateAttendanceModal) -->
+<div class="modal-backdrop" id="studentProfileModal" style="z-index: 85;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3 id="profModalTitle">👨‍🎓 छात्र प्रोफाइल</h3>
+      <button class="btn-close-x" onclick="closeModal('studentProfileModal')">✕</button>
     </div>
+    <div class="modal-body" id="studentProfileBody"></div>
   </div>
+</div>
 
-  <!-- MODAL 2: STUDENT LIST -->
-  <div id="studentListModal" class="sub-modal" style="z-index:65;">
-    <div class="modal-sheet">
-      <div class="modal-header">
-        <div class="modal-title" id="studentCountSub">छात्र सूची</div>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <button type="button" class="btn-success-sm" onclick="toggleAllStudentsDownloadBar()">⬇️ डाउनलोड</button>
-          <button type="button" class="close-btn" onclick="closeModal('studentListModal')">✕</button>
-        </div>
-      </div>
-      <div class="modal-body">
-        <div id="allStudentsDownloadBar" class="download-choice-bar">
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-            <select id="exportSingleClassSelect" style="width:140px;background:#fff;">
-              <option value="सभी">सभी कक्षाएं</option>
-              <option value="6वीं">कक्षा 6वीं</option>
-              <option value="7वीं">कक्षा 7वीं</option>
-              <option value="8वीं">कक्षा 8वीं</option>
-            </select>
-            <div style="display:flex;gap:6px;">
-              <button type="button" class="btn-success-sm" onclick="exportAllStudentsFullCSV()">📊 Excel</button>
-              <button type="button" class="btn-edit-sm" style="background:#1e3a8a;color:#fff;" onclick="exportAllStudentsFullPDF()">📄 PDF</button>
-            </div>
-          </div>
-        </div>
-        <div style="display:flex;gap:8px;margin-bottom:10px;">
-          <input type="text" id="listSearchInput" placeholder="खोजें..." oninput="renderStudentList()">
-          <select id="listClassFilter" style="width:110px;" onchange="syncExportClassAndRender()">
-            <option value="सभी">सभी</option>
+<!-- 3. Add / Edit Student Modal (z-index: 95 so it always stays on top) -->
+<div class="modal-backdrop" id="studentFormModal" style="z-index: 95;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3 id="stuFormHeading">➕ नया छात्र पंजीकरण</h3>
+      <button class="btn-close-x" onclick="closeModal('studentFormModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="editStuId">
+      <div class="form-row-2">
+        <div class="form-group">
+          <label>कक्षा</label>
+          <select id="stuClass" class="form-control">
             <option value="6वीं">6वीं</option>
             <option value="7वीं">7वीं</option>
             <option value="8वीं">8वीं</option>
           </select>
         </div>
-        <div id="studentListContainer"></div>
+        <div class="form-group">
+          <label>रोल नंबर</label>
+          <input type="number" id="stuRoll" class="form-control" placeholder="01">
+        </div>
       </div>
+      <div class="form-group">
+        <label>छात्र / छात्रा का नाम *</label>
+        <input type="text" id="stuName" class="form-control" placeholder="पूरा नाम लिखें">
+      </div>
+      <div class="form-row-2">
+        <div class="form-group">
+          <label>लिंग</label>
+          <select id="stuGender" class="form-control">
+            <option value="M">छात्र (बालक)</option>
+            <option value="F">छात्रा (बालिका)</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>कोटि (Category)</label>
+          <select id="stuCat" class="form-control">
+            <option value="EBC">EBC</option>
+            <option value="BC">BC</option>
+            <option value="SC">SC</option>
+            <option value="ST">ST</option>
+            <option value="GEN">GEN</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-group">
+          <label>पिता का नाम</label>
+          <input type="text" id="stuFather" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>माता का नाम</label>
+          <input type="text" id="stuMother" class="form-control">
+        </div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-group">
+          <label>जन्म तिथि</label>
+          <input type="text" id="stuDob" class="form-control" placeholder="DD.MM.YYYY">
+        </div>
+        <div class="form-group">
+          <label>मोबाइल नंबर</label>
+          <input type="tel" id="stuMobile" class="form-control">
+        </div>
+      </div>
+      <div class="form-row-2">
+        <div class="form-group">
+          <label>आधार संख्या</label>
+          <input type="text" id="stuAadhaar" class="form-control">
+        </div>
+        <div class="form-group">
+          <label>प्रवेश संख्या व तिथि</label>
+          <input type="text" id="stuAdmNo" class="form-control" placeholder="Adm No / Date">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>पता</label>
+        <input type="text" id="stuAddress" class="form-control">
+      </div>
+      <div class="form-group">
+        <label>📸 KYC चेहरा फोटो (अधिकतम 3)</label>
+        <button type="button" class="btn-block btn-dark" onclick="triggerLiveKycCamera()">📷 लाइव KYC कैमरा खोलें</button>
+        <div class="kyc-thumb-strip" id="kycThumbContainer"></div>
+      </div>
+      <button type="button" class="btn-block btn-success" onclick="saveStudentRecord()">✔ सुरक्षित करें</button>
     </div>
   </div>
+</div>
 
-  <!-- MODAL 2B: FULL DETAILS POPUP -->
-  <div id="studentFullDetailsModal" class="sub-modal" style="z-index:80;">
-    <div class="modal-sheet">
-      <div class="modal-header">
-        <div><div class="modal-title" id="fullDetailTitle">प्रोफाइल</div><div id="fullDetailSub" style="font-size:13px;color:#cbd5e1;"></div></div>
-        <div id="fullDetailTopExportBtns" style="display:flex;gap:6px;align-items:center;"></div>
+<!-- 4. All Students Directory Modal -->
+<div class="modal-backdrop" id="directoryModal" style="z-index: 70;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>👨‍🎓 छात्र डायरेक्टरी</h3>
+      <button class="btn-close-x" onclick="closeModal('directoryModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row-2" style="margin-bottom:8px;">
+        <select id="dirClassFilter" class="form-control" onchange="renderDirectoryList()">
+          <option value="सभी">सभी कक्षाएं</option>
+          <option value="6वीं">6वीं</option>
+          <option value="7वीं">7वीं</option>
+          <option value="8वीं">8वीं</option>
+        </select>
+        <input type="text" id="dirSearchInput" class="form-control" placeholder="नाम/रोल खोजें..." oninput="renderDirectoryList()">
       </div>
-      <div class="modal-body" id="fullDetailModalBody"></div>
+      <div id="directoryListContainer"></div>
     </div>
   </div>
+</div>
 
-  <!-- MODAL 1: ADD / EDIT STUDENT (z-index: 95) -->
-  <div id="addStudentModal" class="sub-modal" style="z-index:95;">
-    <div class="modal-sheet">
-      <div class="modal-header">
-        <div class="modal-title" id="addEditModalTitle">नया छात्र</div>
-        <button type="button" class="close-btn" onclick="closeModal('addStudentModal')">✕</button>
+<!-- 5. Pack Share Modal -->
+<div class="modal-backdrop" id="packShareModal" style="z-index: 75;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>🤝 स्कैनर पैक शेयर करें</h3>
+      <button class="btn-close-x" onclick="closeModal('packShareModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p style="font-size:13px;color:#475569;margin-top:0;">दूसरे शिक्षक को केवल उपस्थिति बनाने हेतु स्कैनर पैक भेजें (इसमें एडमिन लॉक रहेगा और आपकी सेव की हुईं API Keys गुप्त रूप से साथ चली जाएंगी):</p>
+      <div class="form-group">
+        <label>कक्षा चुनें</label>
+        <select id="packShareClassSelect" class="form-control">
+          <option value="सभी">सभी कक्षाएं (6वीं - 8वीं)</option>
+          <option value="6वीं">केवल कक्षा 6वीं</option>
+          <option value="7वीं">केवल कक्षा 7वीं</option>
+          <option value="8वीं">केवल कक्षा 8वीं</option>
+        </select>
       </div>
-      <div class="modal-body">
-        <input type="hidden" id="editStudentId" value="">
-        <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">कक्षा *</label><select id="stuClass"><option value="6वीं">6वीं</option><option value="7वीं">7वीं</option><option value="8वीं">8वीं</option></select></div>
-          <div class="form-group"><label class="field-lbl">रोल नं. *</label><input type="number" id="stuRoll" placeholder="01"></div>
-        </div>
-        <div class="form-group"><label class="field-lbl">छात्र का नाम *</label><input type="text" id="stuName" placeholder="नाम"></div>
-        <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">लिंग *</label><select id="stuGender"><option value="M">M</option><option value="F">F</option></select></div>
-          <div class="form-group"><label class="field-lbl">कोटि *</label><select id="stuCategory"><option value="EBC">EBC</option><option value="OBC">OBC</option><option value="SC">SC</option><option value="ST">ST</option><option value="GEN">GEN</option></select></div>
-        </div>
-        <div class="form-group"><label class="field-lbl">आधार नं. (12 अंक) *</label><input type="tel" id="stuAadhaar" maxlength="12" inputmode="numeric"></div>
-        <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">पिता का नाम *</label><input type="text" id="stuFather"></div>
-          <div class="form-group"><label class="field-lbl">माता का नाम *</label><input type="text" id="stuMother"></div>
-        </div>
-        <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">जन्म तिथि</label><input type="date" id="stuDob"></div>
-          <div class="form-group"><label class="field-lbl">मोबाइल *</label><input type="tel" id="stuMobile" maxlength="10" inputmode="numeric"></div>
-        </div>
-        <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">नामांकन सं.</label><input type="text" id="stuAdmNo"></div>
-          <div class="form-group"><label class="field-lbl">नामांकन तिथि *</label><input type="date" id="stuAdmDate"></div>
-        </div>
-        <div class="form-group"><label class="field-lbl">पता</label><input type="text" id="stuAddress"></div>
-
-        <div class="form-group" style="background:#f0fdf4;padding:12px;border-radius:12px;border:1.5px solid #86efac;">
-          <div style="display:flex;justify-content:space-between;align-items:center;">
-            <span style="font-size:15px;font-weight:900;color:#15803d;">📸 KYC फोटो</span>
-            <div style="display:flex;gap:8px;">
-              <button type="button" class="btn-success-sm" onclick="startLiveKycCapture()">📷 फोटो लें</button>
-              <button type="button" class="btn-danger" onclick="clearTempPhotos()">हटाएं</button>
-            </div>
-          </div>
-          <div id="stuPhotoThumbs" class="photo-thumbs"></div>
-        </div>
-        <button type="button" class="btn-primary" onclick="saveStudentRecord()">✔ सेव करें</button>
-      </div>
+      <button class="btn-block btn-primary" onclick="shareScannerPackNow()">📤 स्कैनर पैक भेजें</button>
     </div>
   </div>
+</div>
 
-  <!-- MODAL 3: REPORTS -->
-  <div id="reportsModal" class="sub-modal">
-    <div class="modal-sheet">
-      <div class="modal-header">
-        <div class="modal-title">रिपोर्ट्स</div>
-        <button type="button" class="close-btn" onclick="closeModal('reportsModal')">✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="card-section" style="border:2px solid #16a34a;background:#f0fdf4;">
-          <div class="section-label" style="color:#15803d;">📋 मासिक रजिस्टर</div>
-          <div class="form-row-2">
-            <div class="form-group"><label class="field-lbl">कक्षा</label><select id="regChartClassSelect" style="background:#fff;"><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select></div>
-            <div class="form-group"><label class="field-lbl">माह</label><input type="month" id="regChartMonthInput" value="2026-10" style="background:#fff;"></div>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button type="button" class="btn-primary" style="background:#1e3a8a;" onclick="exportMonthlyRegisterChartPDF()">📄 PDF</button>
-            <button type="button" class="btn-primary" style="background:#15803d;" onclick="exportMonthlyRegisterChartExcel()">📊 Excel</button>
-          </div>
-        </div>
-        <div class="card-section" style="margin-bottom:0;">
-          <div class="section-label">📊 समेकित रिपोर्ट</div>
-          <div class="form-group"><label class="field-lbl">कक्षा</label><select id="repClassSelect"><option value="सभी">सभी कक्षाएं</option><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select></div>
-          <div class="form-row-2">
-            <div class="form-group"><label class="field-lbl">से</label><input type="month" id="repFromMonth" value="2026-04"></div>
-            <div class="form-group"><label class="field-lbl">तक</label><input type="month" id="repToMonth" value="2026-10"></div>
-          </div>
-          <div style="display:flex;gap:8px;">
-            <button type="button" class="btn-primary" style="background:#15803d;" onclick="exportClassCSV()">📊 Excel</button>
-            <button type="button" class="btn-primary" style="background:#b91c1c;" onclick="exportClassPDF()">📄 PDF</button>
-          </div>
-        </div>
-      </div>
+<!-- 6. Backup / Restore / Merge Modal -->
+<div class="modal-backdrop" id="backupModal" style="z-index: 75;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>💾 मास्टर बैकअप व हाज़िरी मर्ज</h3>
+      <button class="btn-close-x" onclick="closeModal('backupModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <button class="btn-block btn-success" onclick="AndroidBridge.saveMasterBackupToPhoneNative()">📥 फोन (Downloads) में मास्टर बैकअप सेव करें</button>
+      <button class="btn-block btn-primary" onclick="AndroidBridge.exportMasterBackupNative()">📤 मास्टर बैकअप शेयर करें (WhatsApp/Drive)</button>
+      <hr style="margin:14px 0;border:none;border-top:1px solid #e2e8f0;">
+      <button class="btn-block btn-dark" onclick="AndroidBridge.openNativeMergePicker()">🔄 अन्य शिक्षक की आज की हाज़िरी मर्ज करें</button>
+      <button class="btn-block btn-danger" onclick="AndroidBridge.openNativeRestorePicker()">📂 पुराना मास्टर बैकअप रिस्टोर करें</button>
     </div>
   </div>
+</div>
 
-  <!-- MODAL 4: PIN & PROMOTION -->
-  <div id="changePinModal" class="sub-modal">
-    <div class="modal-sheet">
-      <div class="modal-header"><div class="modal-title">🔑 पिन व सत्र</div><button type="button" class="close-btn" onclick="closeModal('changePinModal')">✕</button></div>
-      <div class="modal-body">
-        <div class="form-group"><label class="field-lbl">पुराना पिन</label><input type="password" id="oldPinInput" maxlength="6" inputmode="numeric"></div>
-        <div class="form-group"><label class="field-lbl">नया पिन (6 अंक)</label><input type="password" id="newPinInput" maxlength="6" inputmode="numeric"></div>
-        <div class="form-group"><label class="field-lbl">नया पिन पुष्टि</label><input type="password" id="confirmPinInput" maxlength="6" inputmode="numeric"></div>
-        <button type="button" class="btn-primary" onclick="saveNewAdminPin()">✔ पिन बदलें</button>
-        <div style="margin-top:20px;padding-top:14px;border-top:1.5px dashed #cbd5e1;display:flex;justify-content:space-between;align-items:center;">
-          <div style="font-size:15px;font-weight:900;">🎓 क्लास प्रोमोशन</div>
-          <button type="button" class="btn-danger" onclick="startPromotionStep(1)">प्रोमोट ▸</button>
-        </div>
-        <div id="promoWizardBox" style="display:none;margin-top:10px;background:#fef2f2;border:1.5px solid #f87171;border-radius:12px;padding:12px;"></div>
+<!-- 7. Pin & Session Modal -->
+<div class="modal-backdrop" id="pinModal" style="z-index: 75;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>🔑 एडमिन पिन प्रबंधन</h3>
+      <button class="btn-close-x" onclick="closeModal('pinModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>नया 6-अंकों का एडमिन पिन दर्ज करें</label>
+        <input type="number" id="newAdminPinInput" class="form-control" placeholder="123456">
       </div>
+      <button class="btn-block btn-primary" onclick="updateAdminPin()">✔ पिन अपडेट करें</button>
     </div>
   </div>
+</div>
 
-  <!-- MODAL 5: HOLIDAY -->
-  <div id="holidayModal" class="sub-modal">
-    <div class="modal-sheet">
-      <div class="modal-header"><div class="modal-title">🏖️ छुट्टी</div><button type="button" class="close-btn" onclick="closeModal('holidayModal')">✕</button></div>
-      <div class="modal-body">
-        <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">तारीख</label><input type="date" id="holidayDateInput"></div>
-          <div class="form-group"><label class="field-lbl">कक्षा</label><select id="holidayClassInput"><option value="सभी">सभी</option><option value="6वीं">6वीं</option><option value="7वीं">7वीं</option><option value="8वीं">8वीं</option></select></div>
-        </div>
-        <div class="form-group"><label class="field-lbl">कारण</label><input type="text" id="holidayReasonInput" placeholder="अवकाश का नाम"></div>
-        <button type="button" class="btn-primary" style="background:#15803d;margin-bottom:12px;" onclick="markDateAsHoliday()">✔ सेव करें</button>
-        <div id="holidayListContainer" style="max-height:170px;overflow-y:auto;background:#f8fafc;border:1px solid #cbd5e1;border-radius:10px;padding:9px;font-size:14px;"></div>
+<!-- 8. Holiday Modal -->
+<div class="modal-backdrop" id="holidayModal" style="z-index: 75;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>🏖️ अवकाश घोषणा</h3>
+      <button class="btn-close-x" onclick="closeModal('holidayModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label>अवकाश का कारण / पर्व का नाम</label>
+        <input type="text" id="holidayReasonInput" class="form-control" placeholder="जैसे: दीपावली अवकाश">
       </div>
+      <button class="btn-block btn-primary" onclick="saveHolidayForSelectedDate()">✔ इस तिथि को अवकाश घोषित करें</button>
+      <button class="btn-block btn-danger" onclick="removeHolidayForSelectedDate()">✕ अवकाश हटाएं</button>
     </div>
   </div>
+</div>
 
-  <!-- MODAL 6: MULTI MOBILE -->
-  <div id="multiDeviceModal" class="sub-modal">
-    <div class="modal-sheet">
-      <div class="modal-header"><div class="modal-title">🤝 पैक शेयर व मर्ज</div><button type="button" class="close-btn" onclick="closeModal('multiDeviceModal')">✕</button></div>
-      <div class="modal-body">
-        <div class="card-section" style="background:#f0fdf4;">
-          <div class="section-label" style="color:#15803d;">📤 स्कैनर पैक</div>
-          <div class="form-group"><select id="scannerPackClassSelect"><option value="सभी">सभी कक्षाएं</option><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select></div>
-          <button type="button" class="btn-primary" style="background:#16a34a;" onclick="exportLimitedScannerPack()">📤 पैक शेयर</button>
+<!-- 9. Monthly PDF Register Modal -->
+<div class="modal-backdrop" id="monthlyPdfModal" style="z-index: 75;">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>📑 मासिक उपस्थिति पंजी (PDF)</h3>
+      <button class="btn-close-x" onclick="closeModal('monthlyPdfModal')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row-2">
+        <div class="form-group">
+          <label>माह चुनें (MM.YY)</label>
+          <input type="month" id="pdfMonthPicker" class="form-control">
         </div>
-        <div class="card-section" style="background:#eff6ff;margin-bottom:0;">
-          <div class="section-label" style="color:#1e3a8a;">🔄 हाज़िरी मर्ज</div>
-          <button type="button" class="btn-primary" onclick="triggerNativeMerge()">📥 फ़ाइल चुनें</button>
+        <div class="form-group">
+          <label>कक्षा</label>
+          <select id="pdfClassSelect" class="form-control">
+            <option value="6वीं">6वीं</option>
+            <option value="7वीं">7वीं</option>
+            <option value="8वीं">8वीं</option>
+          </select>
         </div>
       </div>
+      <button class="btn-block btn-primary" onclick="generateMonthlyRegisterPdf()">🖨️ A4 मासिक पंजी प्रिंट / PDF</button>
     </div>
   </div>
-
-  <div id="toastBox" class="toast-msg"></div>
+</div>
 
 <script>
-  var students = [];
-  var attendance = {};
-  var holidays = {};
-  var adminPin = '123456';
-  var isScannerOnlyPack = false;
-  var currentAdminClass = 'सभी';
-  var tempStudentPhotos = [];
-  var selectedAdminDateKey = '';
-  var currentDateModalTab = 'present';
-  var longPressTimer = null;
-  var longPressTriggered = false;
-  var dpPressTimer = null;
-  var genderBoxTimer = null;
+const CLASSES = ["सभी", "6वीं", "7वीं", "8वीं"];
+let appData = {
+  students: [],
+  attendance: {},
+  holidays: {},
+  adminPin: "123456",
+  isScannerOnlyPack: false,
+  sharedApiKeys: ""
+};
 
-  function getSchoolLogoSVG(sizePx) {
-    var sz = sizePx || 44;
-    return '<svg width="' + sz + '" height="' + sz + '" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;flex-shrink:0;">' +
-      '<defs><linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#0F172A"/><stop offset="100%" stop-color="#1E3A8A"/></linearGradient>' +
-      '<linearGradient id="sunG" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stop-color="#FDE047"/><stop offset="100%" stop-color="#EA580C"/></linearGradient></defs>' +
-      '<circle cx="60" cy="60" r="56" fill="url(#bgG)" stroke="#F59E0B" stroke-width="4.5"/>' +
-      '<circle cx="60" cy="60" r="50" fill="none" stroke="#FEF08A" stroke-width="1" stroke-dasharray="3,2"/>' +
-      '<g stroke="#FACC15" stroke-width="3.2" stroke-linecap="round"><line x1="60" y1="15" x2="60" y2="25"/><line x1="34" y1="22" x2="40" y2="30"/><line x1="86" y1="22" x2="80" y2="30"/><line x1="19" y1="41" x2="28" y2="45"/><line x1="101" y1="41" x2="92" y2="45"/></g>' +
-      '<path d="M 32 60 A 28 28 0 0 1 88 60 Z" fill="url(#sunG)"/>' +
-      '<path d="M 22 64 Q 41 58 60 66 Q 79 58 98 64 L 94 79 Q 77 73 60 81 Q 43 73 26 79 Z" fill="#FFFFFF"/>' +
-      '<path d="M 60 66 L 60 81" stroke="#1E3A8A" stroke-width="2.5"/>' +
-      '<text x="60" y="99" font-size="15.5" font-weight="900" fill="#FDE047" text-anchor="middle" font-family="sans-serif">स.म.वि.</text>' +
-      '</svg>';
-  }
+let currentSelectedClass = "सभी";
+let currentDashboardDateKey = ""; // dd.MM.yy
+let currentAttModalTab = "P";
+let unlockedManualStudentIds = {};
+let workingKycPhotos = [];
 
-  function getOfficialPdfSignatureFooter() {
-    return '<div style="margin-top:34px;padding-top:16px;display:flex;justify-content:space-between;align-items:flex-end;page-break-inside:avoid;font-size:11.5px;color:#0f172a;">' +
-      '<div style="text-align:center;width:30%;"><div style="border-top:1.5px dashed #334155;padding-top:6px;font-weight:bold;">वर्ग शिक्षक का हस्ताक्षर</div></div>' +
-      '<div style="text-align:center;width:32%;"><div style="border-top:1.5px dashed #334155;padding-top:6px;font-weight:bold;">निरीक्षण अधिकारी का हस्ताक्षर / टिप्पणी</div></div>' +
-      '<div style="text-align:center;width:32%;"><div style="border-top:1.5px dashed #334155;padding-top:6px;font-weight:bold;">प्रधानाध्यापक का हस्ताक्षर एवं मुहर<br><small style="font-size:10px;color:#475569;">सर्वोदय मध्य विद्यालय, सोहसराय</small></div></div>' +
-      '</div>';
-  }
+window.onload = function() {
+  loadFromBridge();
+  initTodayDate();
+  setupPinTileLongPress();
+  setupSummaryCardLongPress();
+  renderAllDashboard();
+};
 
-  function sortStudentsByRollAsc(arr) {
-    return arr.slice().sort(function(a, b) {
-      var rDiff = Number(a.roll) - Number(b.roll);
-      if (rDiff !== 0) return rDiff;
-      return String(a.className).localeCompare(String(b.className));
-    });
-  }
-  function formatRollTwoDigits(r) {
-    var s = String(r || '').trim();
-    return s.length === 1 ? ('0' + s) : s;
-  }
-  function isExactDigits(str, len) {
-    if (!str || str.length !== len) return false;
-    for (var i = 0; i < str.length; i++) {
-      var c = str.charCodeAt(i);
-      if (c < 48 || c > 57) return false;
-    }
-    return true;
-  }
-  function getTodayShort() {
-    var d = new Date();
-    return String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0') + '.' + String(d.getFullYear()).slice(-2);
-  }
-  function getTodayIso() {
-    var d = new Date();
-    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-  }
-  function isoToShortDateKey(isoStr) {
-    if (!isoStr || isoStr.indexOf('-') === -1) return getTodayShort();
-    var p = isoStr.split('-');
-    return p[2].padStart(2, '0') + '.' + p[1].padStart(2, '0') + '.' + p[0].slice(-2);
-  }
-  function shortDateKeyToIso(shortKey) {
-    if (!shortKey || shortKey.indexOf('.') === -1) return getTodayIso();
-    var p = shortKey.split('.');
-    var yyyy = p[2].length === 2 ? ('20' + p[2]) : p[2];
-    return yyyy + '-' + p[1].padStart(2, '0') + '-' + p[0].padStart(2, '0');
-  }
-  function shortKeyToFullYearDot(shortKey) {
-    if (!shortKey || shortKey.indexOf('.') === -1) return shortKey;
-    var p = shortKey.split('.');
-    var yyyy = p[2].length === 2 ? ('20' + p[2]) : p[2];
-    return p[0].padStart(2, '0') + '.' + p[1].padStart(2, '0') + '.' + yyyy;
-  }
-  function formatIsoToDot(isoStr) {
-    if (!isoStr) return '-';
-    if (isoStr.indexOf('-') !== -1) return isoStr.split('-').reverse().join('.');
-    return isoStr;
-  }
-  function formatDotToIso(dotStr) {
-    if (!dotStr || dotStr === '-') return '';
-    if (dotStr.indexOf('.') !== -1) {
-      var parts = dotStr.split('.');
-      if (parts.length === 3) {
-        var yyyy = parts[2].length === 2 ? ('20' + parts[2]) : parts[2];
-        return yyyy + '-' + parts[1].padStart(2, '0') + '-' + parts[0].padStart(2, '0');
+function loadFromBridge() {
+  try {
+    if (window.AndroidBridge) {
+      const raw = AndroidBridge.loadNativePayload();
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        appData = Object.assign(appData, parsed);
       }
     }
-    return dotStr;
-  }
+  } catch (e) { console.error(e); }
+}
 
-  function isSundayOrHoliday(dateKey, targetClass) {
-    if (!dateKey) return false;
-    var iso = shortDateKeyToIso(dateKey);
-    var d = new Date(iso + 'T12:00:00');
-    if (!isNaN(d.getTime()) && d.getDay() === 0) return true;
-    if (!holidays || !holidays[dateKey]) return false;
-    var entry = holidays[dateKey];
-    if (typeof entry === 'string') return true;
-    if (typeof entry === 'object') {
-      if (entry['सभी']) return true;
-      if (targetClass && targetClass !== 'सभी' && entry[targetClass]) return true;
+function saveToBridge() {
+  try {
+    if (window.AndroidBridge) {
+      AndroidBridge.saveNativePayload(JSON.stringify(appData));
     }
-    return false;
-  }
+  } catch (e) { console.error(e); }
+}
 
-  function getHolidayReasonForRegister(dateKey, targetClass) {
-    if (!dateKey) return null;
-    if (holidays && holidays[dateKey]) {
-      var entry = holidays[dateKey];
-      if (typeof entry === 'string') return 'छुट्टी - ' + entry;
-      if (typeof entry === 'object') {
-        if (targetClass && entry[targetClass]) return 'छुट्टी - ' + entry[targetClass];
-        if (entry['सभी']) return 'छुट्टी - ' + entry['सभी'];
-      }
-    }
-    var iso = shortDateKeyToIso(dateKey);
-    var d = new Date(iso + 'T12:00:00');
-    if (!isNaN(d.getTime()) && d.getDay() === 0) return 'रविवार अवकाश';
-    return null;
-  }
+function closeToScanner() {
+  if (window.AndroidBridge) AndroidBridge.closeAdminAndOpenScanner();
+}
 
-  function showToast(msg) {
-    var t = document.getElementById('toastBox');
-    t.textContent = msg;
-    t.style.display = 'block';
-    clearTimeout(window._tTimer);
-    window._tTimer = setTimeout(function() { t.style.display = 'none'; }, 2200);
-  }
+function initTodayDate() {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
+  document.getElementById('dashboardDateInput').value = `${yyyy}-${mm}-${dd}`;
+  document.getElementById('pdfMonthPicker').value = `${yyyy}-${mm}`;
+  currentDashboardDateKey = `${dd}.${mm}.${String(yyyy).slice(-2)}`;
+}
 
-  function loadState() {
-    try {
-      if (window.AndroidBridge) {
-        var raw = window.AndroidBridge.loadNativePayload();
-        var parsed = JSON.parse(raw);
-        students = parsed.students || [];
-        attendance = parsed.attendance || {};
-        holidays = parsed.holidays || {};
-        adminPin = parsed.adminPin || '123456';
-        isScannerOnlyPack = !!parsed.isScannerOnlyPack;
-      }
-    } catch(e) {}
-  }
+function onDashboardDateChange() {
+  const val = document.getElementById('dashboardDateInput').value;
+  if (!val) return;
+  const parts = val.split("-");
+  currentDashboardDateKey = `${parts[2]}.${parts[1]}.${parts[0].slice(-2)}`;
+  renderAllDashboard();
+}
 
-  function saveState() {
-    var payload = {
-      students: students,
-      attendance: attendance,
-      holidays: holidays,
-      adminPin: adminPin,
-      isScannerOnlyPack: isScannerOnlyPack
-    };
-    try {
-      if (window.AndroidBridge) {
-        window.AndroidBridge.saveNativePayload(JSON.stringify(payload));
-      }
-    } catch(e) {}
-    updateDashboardStats();
-  }
+function formatRoll(r) {
+  const s = String(r || "").trim();
+  return s.length === 1 ? "0" + s : s;
+}
 
-  function triggerNativeRestore() {
-    if (window.AndroidBridge && window.AndroidBridge.openNativeRestorePicker) {
-      window.AndroidBridge.openNativeRestorePicker();
-    }
-  }
+// ✅ [🔑 पिन व सत्र] पर सटीक 2 सेकंड (2000ms) Long-Press करने पर Multi-API Keys खुलेगा
+function setupPinTileLongPress() {
+  const tile = document.getElementById('pinSessionTile');
+  let pressTimer = null;
+  let longPressTriggered = false;
 
-  function triggerNativeMerge() {
-    if (window.AndroidBridge && window.AndroidBridge.openNativeMergePicker) {
-      window.AndroidBridge.openNativeMergePicker();
-    }
-  }
-
-  function onNativeAttendanceMergeContent(rawStr) {
-    try {
-      var d = JSON.parse(rawStr);
-      if (d.dateKey && Array.isArray(d.presentStudentIds)) {
-        if (!attendance[d.dateKey]) attendance[d.dateKey] = [];
-        d.presentStudentIds.forEach(function(id) {
-          if (attendance[d.dateKey].indexOf(id) === -1) attendance[d.dateKey].push(id);
-        });
-        saveState();
-        closeModal('multiDeviceModal');
-        showToast('✔ मर्ज हो गया (' + d.presentStudentIds.length + ')');
-      } else {
-        showToast('❌ अमान्य फ़ाइल');
-      }
-    } catch(err) {
-      showToast('❌ त्रुटि');
-    }
-  }
-
-  function goBackToLiveScanner() {
-    if (window.AndroidBridge) window.AndroidBridge.closeAdminAndOpenScanner();
-  }
-
-  function closeModal(id) { document.getElementById(id).classList.remove('open'); }
-  function getActiveDateKey() {
-    if (!selectedAdminDateKey) selectedAdminDateKey = getTodayShort();
-    return selectedAdminDateKey;
-  }
-  function onAdminDateChange(isoVal) {
-    if (!isoVal) return;
-    selectedAdminDateKey = isoToShortDateKey(isoVal);
-    updateDashboardStats();
-    if (document.getElementById('studentListModal').classList.contains('open')) renderStudentList();
-  }
-  function resetToTodayDate() {
-    selectedAdminDateKey = getTodayShort();
-    document.getElementById('adminDatePicker').value = getTodayIso();
-    updateDashboardStats();
-  }
-
-  function handleGenderBoxPressStart() {
-    clearTimeout(genderBoxTimer);
-    genderBoxTimer = setTimeout(function() {
-      openDemographicDetailsModal();
-    }, 450);
-  }
-  function handleGenderBoxPressEnd() {
-    clearTimeout(genderBoxTimer);
-  }
-
-  function openDemographicDetailsModal() {
-    var activeDate = getActiveDateKey();
-    var filtered = (currentAdminClass === 'सभी') ? students : students.filter(function(s) { return s.className === currentAdminClass; });
-    var presentIds = attendance[activeDate] || [];
-    var presentStudents = filtered.filter(function(s) { return presentIds.indexOf(s.id) !== -1; });
-
-    document.getElementById('demoModalTitle').textContent = '📊 लिंग एवं कोटि विवरण (' + currentAdminClass + ')';
-    document.getElementById('demoModalSub').textContent = 'तारीख: ' + activeDate + ' | उपस्थित: ' + presentStudents.length + '/' + filtered.length;
-
-    var bTot = filtered.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
-    var bPr = presentStudents.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
-    var gTot = filtered.filter(function(s) { return s.gender === 'F'; }).length;
-    var gPr = presentStudents.filter(function(s) { return s.gender === 'F'; }).length;
-
-    var cats = ['EBC', 'OBC', 'SC', 'ST', 'GEN'];
-    var catRows = cats.map(function(c) {
-      var cList = filtered.filter(function(s) { return (s.category || 'EBC') === c; });
-      var cPList = presentStudents.filter(function(s) { return (s.category || 'EBC') === c; });
-      var cbTot = cList.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
-      var cbPr = cPList.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
-      var cgTot = cList.filter(function(s) { return s.gender === 'F'; }).length;
-      var cgPr = cPList.filter(function(s) { return s.gender === 'F'; }).length;
-      return '<tr>' +
-        '<td><b>' + c + '</b></td>' +
-        '<td style="color:#15803d;">' + cbPr + ' / ' + cbTot + '</td>' +
-        '<td style="color:#15803d;">' + cgPr + ' / ' + cgTot + '</td>' +
-        '<td><b>' + cPList.length + ' / ' + cList.length + '</b></td>' +
-      '</tr>';
-    }).join('');
-
-    document.getElementById('demoModalBody').innerHTML =
-      '<table class="demo-table">' +
-        '<thead><tr><th>कोटि</th><th>👦 छात्र (उप./कुल)</th><th>👧 छात्राएं (उप./कुल)</th><th>योग (उप./कुल)</th></tr></thead>' +
-        '<tbody>' +
-          catRows +
-          '<tr style="background:#f0fdf4;font-size:15px;">' +
-            '<td><b>कुल योग</b></td>' +
-            '<td style="color:#15803d;"><b>' + bPr + ' / ' + bTot + '</b></td>' +
-            '<td style="color:#15803d;"><b>' + gPr + ' / ' + gTot + '</b></td>' +
-            '<td style="color:#1e3a8a;"><b>' + presentStudents.length + ' / ' + filtered.length + '</b></td>' +
-          '</tr>' +
-        '</tbody>' +
-      '</table>' +
-      '<button type="button" class="btn-primary" onclick="closeModal(\'demographicDetailsModal\');openDateAttendanceModal()">📋 उपस्थित/अनुपस्थित छात्रों के नाम देखें</button>';
-
-    document.getElementById('demographicDetailsModal').classList.add('open');
-  }
-
-  function handleClassCardPressStart(clsName) {
+  const startPress = () => {
     longPressTriggered = false;
-    clearTimeout(longPressTimer);
-    longPressTimer = setTimeout(function() {
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => {
       longPressTriggered = true;
-      currentAdminClass = clsName;
-      updateDashboardStats();
-      openDateAttendanceModal();
-    }, 500);
-  }
-  function handleClassCardPressEnd(clsName) {
-    clearTimeout(longPressTimer);
+      if (window.AndroidBridge && AndroidBridge.openMultiApiKeyDialog) {
+        AndroidBridge.openMultiApiKeyDialog();
+      }
+    }, 2000);
+  };
+
+  const endPress = () => {
+    clearTimeout(pressTimer);
+  };
+
+  tile.addEventListener('touchstart', startPress, { passive: true });
+  tile.addEventListener('touchend', () => {
+    clearTimeout(pressTimer);
     if (!longPressTriggered) {
-      currentAdminClass = clsName;
-      updateDashboardStats();
+      openPinModal();
     }
+  });
+  tile.addEventListener('touchmove', endPress, { passive: true });
+  tile.addEventListener('touchcancel', endPress, { passive: true });
+
+  tile.addEventListener('mousedown', startPress);
+  tile.addEventListener('mouseup', () => {
+    clearTimeout(pressTimer);
+    if (!longPressTriggered) {
+      openPinModal();
+    }
+  });
+}
+
+// ऊपर वाले विश्लेषण कार्ड पर Long-Press से भी विस्तृत उपस्थिति सूची खुलेगी
+function setupSummaryCardLongPress() {
+  const card = document.getElementById('mainSummaryCard');
+  let timer = null;
+  card.addEventListener('touchstart', () => {
+    timer = setTimeout(() => {
+      openDateAttendanceModal(currentSelectedClass);
+    }, 650);
+  }, { passive: true });
+  card.addEventListener('touchend', () => clearTimeout(timer));
+  card.addEventListener('touchmove', () => clearTimeout(timer));
+}
+
+function renderAllDashboard() {
+  const hol = appData.holidays[currentDashboardDateKey];
+  const badge = document.getElementById('holidayStatusBadge');
+  if (hol) {
+    const reason = typeof hol === 'string' ? hol : (hol["सभी"] || "अवकाश");
+    badge.innerText = `🏖️ ${reason}`;
+  } else {
+    badge.innerText = `🏖️ अवकाश सेटिंग`;
   }
 
-  function updateDashboardStats() {
-    var activeDate = getActiveDateKey();
-    document.getElementById('headerDateBadge').textContent = shortKeyToFullYearDot(getTodayShort());
-    document.getElementById('adminSelectedDateLabel').textContent = activeDate;
-    document.getElementById('adminDatePicker').value = shortDateKeyToIso(activeDate);
+  const presentIds = appData.attendance[currentDashboardDateKey] || [];
+  const filteredStudents = currentSelectedClass === "सभी"
+    ? appData.students
+    : appData.students.filter(s => s.className === currentSelectedClass);
 
-    var isHol = isSundayOrHoliday(activeDate, currentAdminClass);
-    var filtered = (currentAdminClass === 'सभी') ? students : students.filter(function(s) { return s.className === currentAdminClass; });
-    var presentIds = attendance[activeDate] || [];
-    var presentStudents = filtered.filter(function(s) { return presentIds.indexOf(s.id) !== -1; });
-    var absentCount = 0;
-    filtered.forEach(function(s) {
-      if (presentIds.indexOf(s.id) === -1 && !isSundayOrHoliday(activeDate, s.className)) absentCount++;
+  const total = filteredStudents.length;
+  const presentList = filteredStudents.filter(s => presentIds.includes(s.id));
+  const present = presentList.length;
+  const absent = total - present;
+  const pct = total > 0 ? Math.round((present * 100) / total) : 0;
+
+  document.getElementById('selectedClassHeading').innerText = `📊 उपस्थिति विश्लेषण (${currentSelectedClass})`;
+  document.getElementById('mainPctBadge').innerText = `${pct}%`;
+  document.getElementById('statTotal').innerText = total;
+  document.getElementById('statPresent').innerText = present;
+  document.getElementById('statAbsent').innerText = absent;
+
+  const boysP = presentList.filter(s => s.gender === 'M').length;
+  const girlsP = presentList.filter(s => s.gender === 'F').length;
+  const ebcP = presentList.filter(s => s.category === 'EBC').length;
+  const bcP = presentList.filter(s => s.category === 'BC').length;
+  const scP = presentList.filter(s => s.category === 'SC').length;
+  const stP = presentList.filter(s => s.category === 'ST').length;
+
+  document.getElementById('genderCatStrip').innerHTML = `
+    <div class="cat-chip">👦 छात्र: ${boysP}</div>
+    <div class="cat-chip">👧 छात्रा: ${girlsP}</div>
+    <div class="cat-chip">EBC/BC: ${ebcP + bcP}</div>
+    <div class="cat-chip">SC/ST: ${scP + stP}</div>
+  `;
+
+  renderClassBoxes(presentIds);
+}
+
+function renderClassBoxes(presentIds) {
+  const container = document.getElementById('classGridContainer');
+  container.innerHTML = "";
+  const clsList = ["6वीं", "7वीं", "8वीं"];
+
+  clsList.forEach(cls => {
+    const stuInCls = appData.students.filter(s => s.className === cls);
+    const pCount = stuInCls.filter(s => presentIds.includes(s.id)).length;
+    const div = document.createElement('div');
+    div.className = 'class-box' + (currentSelectedClass === cls ? ' active' : '');
+    div.innerHTML = `
+      <div class="cls-name">कक्षा ${cls}</div>
+      <div class="cls-count">${pCount} / ${stuInCls.length}</div>
+    `;
+
+    let holdTimer = null;
+    let longPressed = false;
+
+    div.addEventListener('touchstart', () => {
+      longPressed = false;
+      holdTimer = setTimeout(() => {
+        longPressed = true;
+        currentSelectedClass = cls;
+        renderAllDashboard();
+        openDateAttendanceModal(cls);
+      }, 650);
+    }, { passive: true });
+
+    div.addEventListener('touchend', () => {
+      clearTimeout(holdTimer);
+      if (!longPressed) {
+        currentSelectedClass = (currentSelectedClass === cls) ? "सभी" : cls;
+        renderAllDashboard();
+      }
     });
 
-    document.getElementById('statPresent').textContent = presentStudents.length;
-    document.getElementById('statAbsent').textContent = absentCount;
-    document.getElementById('statTotal').textContent = filtered.length;
-    document.getElementById('dateOverviewHeading').textContent = '📅 ' + activeDate + ' (' + currentAdminClass + ')' + (isHol ? ' 🏖️' : '');
+    div.addEventListener('touchmove', () => clearTimeout(holdTimer));
+    container.appendChild(div);
+  });
+}
 
-    var boysTotal = filtered.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
-    var girlsTotal = filtered.filter(function(s) { return s.gender === 'F'; }).length;
-    var boysPres = presentStudents.filter(function(s) { return (s.gender || 'M') === 'M'; }).length;
-    var girlsPres = presentStudents.filter(function(s) { return s.gender === 'F'; }).length;
+function openDateAttendanceModal(cls) {
+  currentSelectedClass = cls || currentSelectedClass;
+  currentAttModalTab = "P";
+  document.getElementById('attListSearchInput').value = "";
+  updateAttModalTabButtons();
+  renderDateAttendanceList();
+  document.getElementById('dateAttendanceModal').style.display = 'flex';
+}
 
-    var cats = ['EBC', 'OBC', 'SC', 'ST', 'GEN'];
-    var catSummary = cats.map(function(c) {
-      var cTot = filtered.filter(function(s) { return (s.category || 'EBC') === c; }).length;
-      var cPr = presentStudents.filter(function(s) { return (s.category || 'EBC') === c; }).length;
-      return c + ': ' + cPr + '/' + cTot;
-    }).join(' | ');
+function switchAttListTab(tab) {
+  currentAttModalTab = tab;
+  updateAttModalTabButtons();
+  renderDateAttendanceList();
+}
 
-    document.getElementById('dailyGenderCategoryStrip').innerHTML =
-      '<div style="display:flex;justify-content:space-between;border-bottom:1px solid rgba(255,255,255,0.2);padding-bottom:4px;margin-bottom:4px;">' +
-        '<span>👦 छात्र: <b style="color:#fde047;">' + boysPres + '/' + boysTotal + '</b></span>' +
-        '<span>👧 छात्राएं: <b style="color:#fde047;">' + girlsPres + '/' + girlsTotal + '</b></span>' +
-      '</div>' +
-      '<div style="font-size:11.5px;color:#e2e8f0;text-align:center;">' + catSummary + '</div>';
+function updateAttModalTabButtons() {
+  const btnP = document.getElementById('tabBtnPresent');
+  const btnA = document.getElementById('tabBtnAbsent');
+  btnP.className = 'pill-tab' + (currentAttModalTab === 'P' ? ' active-p' : '');
+  btnA.className = 'pill-tab' + (currentAttModalTab === 'A' ? ' active-a' : '');
+}
 
-    var classesList = ['सभी', '6वीं', '7वीं', '8वीं'];
-    document.getElementById('classWiseMiniBreakdown').innerHTML = classesList.map(function(cName) {
-      var cTotal = (cName === 'सभी') ? students : students.filter(function(s) { return s.className === cName; });
-      var cPres = cTotal.filter(function(s) { return presentIds.indexOf(s.id) !== -1; }).length;
-      var activeCls = (currentAdminClass === cName) ? 'class-mini-stat selected-cls' : 'class-mini-stat';
-      var cHol = isSundayOrHoliday(activeDate, cName);
-      var titleLbl = (cName === 'सभी') ? 'सभी' : cName;
-      return '<div class="' + activeCls + '" onmousedown="handleClassCardPressStart(\'' + cName + '\')" onmouseup="handleClassCardPressEnd(\'' + cName + '\')" ontouchstart="handleClassCardPressStart(\'' + cName + '\')" ontouchend="handleClassCardPressEnd(\'' + cName + '\')">' +
-        '<div>' + titleLbl + (cHol && cName !== 'सभी' ? ' 🏖️' : '') + '</div>' +
-        '<div style="color:#15803d;font-size:14px;margin-top:2px;">' + cPres + '/' + cTotal.length + '</div></div>';
-    }).join('');
+// ✅ उपस्थित / अनुपस्थित सूची में छात्र के रोल या नाम वाले हिस्से पर Long-Press करने से उसका पूरा प्रोफाइल खुलेगा
+function renderDateAttendanceList() {
+  const presentIds = appData.attendance[currentDashboardDateKey] || [];
+  const pool = (currentSelectedClass === "सभी"
+    ? appData.students
+    : appData.students.filter(s => s.className === currentSelectedClass)
+  ).slice().sort((a, b) => parseInt(a.roll || 0) - parseInt(b.roll || 0));
 
-    var previewEl = document.getElementById('datePresentListPreview');
-    if (isHol) {
-      previewEl.innerHTML = '<span style="color:#b45309;font-weight:900;font-size:13.5px;">🏖️ अवकाश</span>';
-    } else {
-      previewEl.innerHTML = sortStudentsByRollAsc(presentStudents).map(function(s) {
-        return '<span class="roll-num-circle">' + formatRollTwoDigits(s.roll) + '</span>';
-      }).join('');
-    }
+  const pCount = pool.filter(s => presentIds.includes(s.id)).length;
+  const aCount = pool.length - pCount;
+
+  document.getElementById('attModalTitle').innerText = `📅 ${currentDashboardDateKey} (${currentSelectedClass})`;
+  document.getElementById('attModalSubCounts').innerText = `उपस्थित: ${pCount} | अनुपस्थित: ${aCount}`;
+
+  const q = (document.getElementById('attListSearchInput').value || "").trim().toLowerCase();
+  const filtered = pool.filter(s => {
+    const isP = presentIds.includes(s.id);
+    if (currentAttModalTab === 'P' && !isP) return false;
+    if (currentAttModalTab === 'A' && isP) return false;
+    if (q && !s.name.toLowerCase().includes(q) && !String(s.roll).includes(q)) return false;
+    return true;
+  });
+
+  const listEl = document.getElementById('dateAttendanceListContainer');
+  listEl.innerHTML = "";
+
+  if (filtered.length === 0) {
+    listEl.innerHTML = `<div style="text-align:center;padding:24px;color:#64748b;font-weight:700;">कोई छात्र नहीं मिला</div>`;
+    return;
   }
 
-  function openDateAttendanceModal() {
-    currentDateModalTab = 'present';
-    document.getElementById('dateModalSearch').value = '';
-    switchDateModalTab('present');
-    document.getElementById('dateAttendanceModal').classList.add('open');
-  }
-  function switchDateModalTab(tab) {
-    currentDateModalTab = tab;
-    document.getElementById('tabBtnPresent').className = (tab === 'present') ? 'class-pill active' : 'class-pill';
-    document.getElementById('tabBtnAbsent').className = (tab === 'absent') ? 'class-pill active' : 'class-pill';
-    renderDateAttendanceModalList();
-  }
-  function renderDateAttendanceModalList() {
-    var activeDate = getActiveDateKey();
-    var q = (document.getElementById('dateModalSearch').value || '').trim().toLowerCase();
-    var filteredClass = sortStudentsByRollAsc((currentAdminClass === 'सभी') ? students : students.filter(function(s) { return s.className === currentAdminClass; }));
-    var presentIds = attendance[activeDate] || [];
-    var pList = filteredClass.filter(function(s) { return presentIds.indexOf(s.id) !== -1; });
-    var aList = filteredClass.filter(function(s) { return presentIds.indexOf(s.id) === -1; });
+  filtered.forEach(stu => {
+    const isP = presentIds.includes(stu.id);
+    const isUnlocked = !!unlockedManualStudentIds[stu.id];
+    const row = document.createElement('div');
+    row.className = 'stu-row';
 
-    document.getElementById('dateModalTitle').textContent = '📅 ' + activeDate + ' (' + currentAdminClass + ')';
-    document.getElementById('dateModalSub').textContent = 'उपस्थित: ' + pList.length + ' | अनुपस्थित: ' + aList.length;
-    var targetList = (currentDateModalTab === 'present') ? pList : aList;
-    if (q) targetList = targetList.filter(function(s) { return s.name.toLowerCase().indexOf(q) !== -1 || String(s.roll).indexOf(q) !== -1; });
+    const leftDiv = document.createElement('div');
+    leftDiv.className = 'stu-left';
+    leftDiv.innerHTML = `
+      <div class="roll-badge" style="background:${isP ? '#16a34a' : '#dc2626'};">${formatRoll(stu.roll)}</div>
+      <div>
+        <div class="stu-info-name">${stu.name}</div>
+        <div class="stu-info-sub">कक्षा: ${stu.className}</div>
+      </div>
+    `;
 
-    document.getElementById('dateModalListContainer').innerHTML = targetList.map(function(s) {
-      var isP = (currentDateModalTab === 'present');
-      return '<div style="display:flex;justify-content:space-between;align-items:center;padding:9px;border-bottom:1px solid #e2e8f0;">' +
-        '<div style="display:flex;align-items:center;gap:10px;"><span class="roll-num-circle">' + formatRollTwoDigits(s.roll) + '</span><div><div style="font-weight:900;font-size:15.5px;">' + s.name + '</div><div style="font-size:13px;color:#475569;">कक्षा: ' + s.className + '</div></div></div>' +
-        (isP ? '<span class="btn-locked-sm">🔒 उपस्थित</span>' : '<button type="button" class="btn-success-sm" onclick="markManualPresentOnly(\'' + s.id + '\');renderDateAttendanceModalList();">✔ उपस्थित</button>') +
-      '</div>';
-    }).join('');
-  }
-
-  function openAddStudentModal() {
-    document.getElementById('addEditModalTitle').textContent = 'नया छात्र';
-    document.getElementById('editStudentId').value = '';
-    document.getElementById('stuClass').value = '6वीं';
-    document.getElementById('stuRoll').value = '';
-    document.getElementById('stuName').value = '';
-    document.getElementById('stuGender').value = 'M';
-    document.getElementById('stuCategory').value = 'EBC';
-    document.getElementById('stuAadhaar').value = '';
-    document.getElementById('stuFather').value = '';
-    document.getElementById('stuMother').value = '';
-    document.getElementById('stuDob').value = '';
-    document.getElementById('stuMobile').value = '';
-    document.getElementById('stuAdmNo').value = '';
-    document.getElementById('stuAdmDate').value = getTodayIso();
-    document.getElementById('stuAddress').value = '';
-    tempStudentPhotos = [];
-    renderTempPhotos();
-    document.getElementById('addStudentModal').classList.add('open');
-  }
-
-  function openEditStudentModal(stuId) {
-    var s = students.find(function(x) { return x.id === stuId; });
-    if (!s) return;
-    document.getElementById('addEditModalTitle').textContent = 'प्रोफाइल सुधारें';
-    document.getElementById('editStudentId').value = s.id;
-    document.getElementById('stuClass').value = s.className || '6वीं';
-    document.getElementById('stuRoll').value = s.roll || '';
-    document.getElementById('stuName').value = s.name || '';
-    document.getElementById('stuGender').value = s.gender || 'M';
-    document.getElementById('stuCategory').value = s.category || 'EBC';
-    document.getElementById('stuAadhaar').value = (s.aadhaar && s.aadhaar !== '-') ? s.aadhaar : '';
-    document.getElementById('stuFather').value = (s.father && s.father !== '-') ? s.father : '';
-    document.getElementById('stuMother').value = (s.mother && s.mother !== '-') ? s.mother : '';
-    document.getElementById('stuDob').value = formatDotToIso(s.dob);
-    document.getElementById('stuMobile').value = (s.mobile && s.mobile !== '-') ? s.mobile : '';
-    document.getElementById('stuAdmNo').value = (s.admNo && s.admNo !== '-') ? s.admNo : '';
-    document.getElementById('stuAdmDate').value = formatDotToIso(s.admDate);
-    document.getElementById('stuAddress').value = (s.address && s.address !== '-') ? s.address : '';
-    tempStudentPhotos = s.photos ? s.photos.slice() : [];
-    renderTempPhotos();
-    document.getElementById('addStudentModal').classList.add('open');
-  }
-
-  function startLiveKycCapture() {
-    if (tempStudentPhotos.length >= 5) {
-      showToast('अधिकतम 5 फोटो');
-      return;
-    }
-    if (window.AndroidBridge && window.AndroidBridge.openLiveKycCamera) {
-      window.AndroidBridge.openLiveKycCamera();
-    }
-  }
-
-  function onLiveKycPhotoApproved(base64Img) {
-    if (base64Img && tempStudentPhotos.length < 5) {
-      tempStudentPhotos.push(base64Img);
-      renderTempPhotos();
-    }
-  }
-
-  function clearTempPhotos() { tempStudentPhotos = []; renderTempPhotos(); }
-  function renderTempPhotos() {
-    var box = document.getElementById('stuPhotoThumbs');
-    if (tempStudentPhotos.length === 0) {
-      box.innerHTML = '';
-      return;
-    }
-    box.innerHTML = tempStudentPhotos.map(function(src) {
-      return '<img src="' + src + '" class="photo-thumb">';
-    }).join('');
-  }
-
-  function saveStudentRecord() {
-    var editId = document.getElementById('editStudentId').value;
-    var cls = document.getElementById('stuClass').value;
-    var roll = document.getElementById('stuRoll').value.trim();
-    var name = document.getElementById('stuName').value.trim();
-    var gender = document.getElementById('stuGender').value;
-    var category = document.getElementById('stuCategory').value;
-    var aadhaar = document.getElementById('stuAadhaar').value.trim();
-    var father = document.getElementById('stuFather').value.trim();
-    var mother = document.getElementById('stuMother').value.trim();
-    var dob = document.getElementById('stuDob').value;
-    var mobile = document.getElementById('stuMobile').value.trim();
-    var admNo = document.getElementById('stuAdmNo').value.trim();
-    var admDate = document.getElementById('stuAdmDate').value;
-    var address = document.getElementById('stuAddress').value.trim();
-
-    if (!roll || !name) { showToast('रोल और नाम भरें'); return; }
-    if (!isExactDigits(aadhaar, 12)) { showToast('❌ 12 अंकों का आधार डालें'); return; }
-    if (mobile && !isExactDigits(mobile, 10)) { showToast('❌ 10 अंकों का मोबाइल डालें'); return; }
-
-    var duplicate = students.find(function(s) { return s.className === cls && Number(s.roll) === Number(roll) && s.id !== editId; });
-    if (duplicate) { showToast('❌ रोल ' + roll + ' पहले से है'); return; }
-
-    var recordObj = {
-      id: editId || ('stu_' + Date.now()),
-      className: cls,
-      roll: formatRollTwoDigits(roll),
-      name: name,
-      gender: gender || 'M',
-      category: category || 'EBC',
-      aadhaar: aadhaar,
-      father: father || '-',
-      mother: mother || '-',
-      dob: dob ? formatIsoToDot(dob) : '-',
-      mobile: mobile || '-',
-      admNo: admNo || '-',
-      admDate: admDate ? formatIsoToDot(admDate) : getTodayShort(),
-      address: address || '-',
-      photos: tempStudentPhotos.slice()
-    };
-
-    if (editId) students = students.map(function(s) { return s.id === editId ? recordObj : s; });
-    else students.push(recordObj);
-    saveState();
-    closeModal('addStudentModal');
-    if (document.getElementById('studentListModal').classList.contains('open')) renderStudentList();
-    showToast('✔ सेव हो गया');
-  }
-
-  function getLastSixDaysStatusForStudent(stuId) {
-    var stu = students.find(function(x) { return x.id === stuId; });
-    var stuCls = stu ? stu.className : 'सभी';
-    var baseDate = new Date(shortDateKeyToIso(getActiveDateKey()) + 'T12:00:00');
-    var items = [];
-    for (var offset = 5; offset >= 0; offset--) {
-      var d = new Date(baseDate.getTime() - offset * 86400000);
-      var dd = String(d.getDate()).padStart(2, '0');
-      var mm = String(d.getMonth() + 1).padStart(2, '0');
-      var yy = String(d.getFullYear()).slice(-2);
-      var shortKey = dd + '.' + mm + '.' + yy;
-      var fullDisplay = dd + '.' + mm + '.' + d.getFullYear();
-      var presentIds = attendance[shortKey] || [];
-      var icon = presentIds.indexOf(stuId) !== -1 ? '✅' : (isSundayOrHoliday(shortKey, stuCls) ? '✔️' : '❌');
-      items.push({ fullDate: fullDisplay, icon: icon });
-    }
-    return items;
-  }
-
-  function getStudentAttendanceStats(stuId, fromMonthStr, toMonthStr) {
-    var s = students.find(function(x) { return x.id === stuId; });
-    var stuCls = s ? s.className : 'सभी';
-    var admIso = formatDotToIso(s && s.admDate && s.admDate !== '-' ? s.admDate : '01.04.2024') || '2024-04-01';
-    var admTime = new Date(admIso).getTime();
-    var rangeStartTime = fromMonthStr ? new Date(fromMonthStr + '-01').getTime() : null;
-    var rangeEndTime = null;
-    if (toMonthStr) {
-      var p = toMonthStr.split('-');
-      var ld = new Date(Number(p[0]), Number(p[1]), 0).getDate();
-      rangeEndTime = new Date(toMonthStr + '-' + String(ld).padStart(2, '0')).getTime();
-    }
-    var allDates = Object.keys(attendance).sort();
-    var activeDate = getActiveDateKey();
-    if (allDates.indexOf(activeDate) === -1) allDates.push(activeDate);
-
-    var validWorkingDays = 0, presentDays = 0, historyList = [];
-    allDates.forEach(function(d) {
-      var dTime = new Date(shortDateKeyToIso(d)).getTime();
-      if (!isNaN(admTime) && !isNaN(dTime) && dTime < admTime) return;
-      if (rangeStartTime && !isNaN(dTime) && dTime < rangeStartTime) return;
-      if (rangeEndTime && !isNaN(dTime) && dTime > rangeEndTime) return;
-      var isHol = isSundayOrHoliday(d, stuCls);
-      var isP = (attendance[d] || []).indexOf(stuId) !== -1;
-      if (!isHol) { validWorkingDays++; if (isP) presentDays++; }
-      historyList.push({ date: shortKeyToFullYearDot(d), present: isP, holiday: isHol });
+    // ✅ रोल नंबर या नाम पर Long-Press करने से पूरा छात्र प्रोफाइल (With Attendance) खुलेगा[cite: 4]
+    let profHoldTimer = null;
+    leftDiv.addEventListener('touchstart', () => {
+      profHoldTimer = setTimeout(() => {
+        openStudentProfileModal(stu.id);
+      }, 600);
+    }, { passive: true });
+    leftDiv.addEventListener('touchend', () => clearTimeout(profHoldTimer));
+    leftDiv.addEventListener('touchmove', () => clearTimeout(profHoldTimer));
+    leftDiv.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      openStudentProfileModal(stu.id);
     });
-    var pct = validWorkingDays > 0 ? Math.round((presentDays / validWorkingDays) * 100) : 0;
-    return { totalDays: validWorkingDays, presentDays: presentDays, pct: pct, history: historyList };
-  }
 
-  function handleDpPressStart(stuId) {
-    clearTimeout(dpPressTimer);
-    dpPressTimer = setTimeout(function() { openStudentFullDetailsModal(stuId); }, 450);
-  }
-  function handleDpPressEnd() { clearTimeout(dpPressTimer); }
+    const rightBtn = document.createElement('button');
+    rightBtn.className = 'att-pill-btn ' + (isP ? 'att-pill-present' : 'att-pill-absent');
+    rightBtn.innerHTML = `${isUnlocked ? '🔓' : '🔒'} ${isP ? 'उपस्थित' : 'अनुपस्थित'}`;
 
-  function openStudentFullDetailsModal(stuId) {
-    var s = students.find(function(x) { return x.id === stuId; });
-    if (!s) return;
-    var stStats = getStudentAttendanceStats(s.id);
-    document.getElementById('fullDetailTitle').textContent = s.name + ' (' + formatRollTwoDigits(s.roll) + ')';
-    document.getElementById('fullDetailSub').textContent = 'कक्षा: ' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || '-');
-    document.getElementById('fullDetailTopExportBtns').innerHTML =
-      '<button type="button" class="btn-success-sm" onclick="downloadStudentAttendanceCSV(\'' + s.id + '\')">📊 Excel</button>' +
-      '<button type="button" class="btn-edit-sm" onclick="downloadStudentAttendancePDF(\'' + s.id + '\')">📄 PDF</button>' +
-      '<button type="button" class="close-btn" onclick="closeModal(\'studentFullDetailsModal\')">✕</button>';
+    let btnHoldTimer = null;
+    let btnLongTriggered = false;
+    rightBtn.addEventListener('touchstart', () => {
+      btnLongTriggered = false;
+      btnHoldTimer = setTimeout(() => {
+        btnLongTriggered = true;
+        unlockedManualStudentIds[stu.id] = !unlockedManualStudentIds[stu.id];
+        renderDateAttendanceList();
+      }, 700);
+    }, { passive: true });
 
-    var fullHistoryRows = stStats.history.slice().reverse().map(function(h) {
-      var icon = h.present ? '✅' : (h.holiday ? '✔️' : '❌');
-      return '<div class="att-history-row"><span>📅 ' + h.date + '</span><b>' + icon + '</b></div>';
-    }).join('');
-
-    document.getElementById('fullDetailModalBody').innerHTML =
-      '<div class="student-meta-grid">' +
-        '<div class="meta-box-item"><b>नाम:</b> ' + s.name + '</div><div class="meta-box-item"><b>कक्षा/रोल:</b> ' + s.className + ' (' + formatRollTwoDigits(s.roll) + ')</div>' +
-        '<div class="meta-box-item"><b>लिंग/कोटि:</b> ' + (s.gender || 'M') + ' / ' + (s.category || '-') + '</div><div class="meta-box-item"><b>M:</b> ' + (s.mobile || '-') + '</div>' +
-        '<div class="meta-box-item" style="grid-column:span 2;"><b>A:</b> ' + (s.aadhaar || '-') + '</div>' +
-        '<div class="meta-box-item"><b>पिता:</b> ' + (s.father || '-') + '</div><div class="meta-box-item"><b>माता:</b> ' + (s.mother || '-') + '</div>' +
-        '<div class="meta-box-item"><b>DOB:</b> ' + (s.dob || '-') + '</div><div class="meta-box-item"><b>नामांकन:</b> ' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')</div>' +
-        '<div class="meta-box-item" style="grid-column:span 2;"><b>पता:</b> ' + (s.address || '-') + '</div>' +
-      '</div>' +
-      '<div class="att-summary-bar"><div style="font-weight:900;font-size:14.5px;color:#1e3a8a;">📊 उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div><div class="att-history-box">' + fullHistoryRows + '</div></div>' +
-      '<div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn-edit-sm" onclick="closeModal(\'studentFullDetailsModal\');openEditStudentModal(\'' + s.id + '\')">✏️ सुधारें</button><button type="button" class="btn-danger" onclick="closeModal(\'studentFullDetailsModal\');deleteStudent(\'' + s.id + '\')">🗑️ हटाएं</button></div>';
-    document.getElementById('studentFullDetailsModal').classList.add('open');
-  }
-
-  function openStudentListModal() {
-    document.getElementById('allStudentsDownloadBar').classList.remove('show');
-    renderStudentList();
-    document.getElementById('studentListModal').classList.add('open');
-  }
-  function toggleAllStudentsDownloadBar() { document.getElementById('allStudentsDownloadBar').classList.toggle('show'); }
-  function syncExportClassAndRender() {
-    var fCls = document.getElementById('listClassFilter').value;
-    document.getElementById('exportSingleClassSelect').value = fCls;
-    renderStudentList();
-  }
-
-  function renderStudentList() {
-    var q = (document.getElementById('listSearchInput').value || '').trim().toLowerCase();
-    var cls = document.getElementById('listClassFilter').value;
-    var activeDate = getActiveDateKey();
-    var presentIds = attendance[activeDate] || [];
-    var filtered = sortStudentsByRollAsc(students.filter(function(s) {
-      var matchClass = (cls === 'सभी') || (s.className === cls);
-      var matchQ = !q || s.name.toLowerCase().indexOf(q) !== -1 || String(s.roll).indexOf(q) !== -1 || (s.mobile && s.mobile.indexOf(q) !== -1);
-      return matchClass && matchQ;
-    }));
-    document.getElementById('studentCountSub').textContent = 'छात्र सूची (' + filtered.length + ')';
-    var container = document.getElementById('studentListContainer');
-    if (filtered.length === 0) {
-      container.innerHTML = '<div style="text-align:center;padding:20px;color:#64748b;font-weight:900;">कोई छात्र नहीं</div>';
-      return;
-    }
-    container.innerHTML = filtered.map(function(s) {
-      var isPresentOnDate = presentIds.indexOf(s.id) !== -1;
-      var isHolOnDate = isSundayOrHoliday(activeDate, s.className);
-      var hasPhoto = s.photos && s.photos.length > 0;
-      var stStats = getStudentAttendanceStats(s.id);
-      var sixDays = getLastSixDaysStatusForStudent(s.id);
-      var dpEvents = 'onmousedown="handleDpPressStart(\'' + s.id + '\')" onmouseup="handleDpPressEnd()" ontouchstart="handleDpPressStart(\'' + s.id + '\')" ontouchend="handleDpPressEnd()" oncontextmenu="event.preventDefault();openStudentFullDetailsModal(\'' + s.id + '\')"';
-
-      var avatarHtml = hasPhoto
-        ? '<div class="student-avatar-wrap" ' + dpEvents + '><img src="' + s.photos[0] + '" class="student-avatar-img"><span class="roll-mini-badge">' + formatRollTwoDigits(s.roll) + '</span></div>'
-        : '<div class="pending-red-dp" ' + dpEvents + '><span>🔴</span><span style="font-size:11px;">' + formatRollTwoDigits(s.roll) + '</span></div>';
-
-      var sixDaysGridHtml = '<div class="six-day-grid">' + sixDays.map(function(item) { return '<div class="six-day-cell">📅 ' + item.fullDate + ' ' + item.icon + '</div>'; }).join('') + '</div>';
-      var topBadgeIcon = isPresentOnDate ? '✅' : (isHolOnDate ? '✔️' : '❌');
-      var manualBtnHtml = isPresentOnDate
-        ? '<button type="button" class="btn-locked-sm">🔒 उपस्थित</button>'
-        : '<button type="button" class="btn-success-sm" onclick="markManualPresentOnly(\'' + s.id + '\')">✔ उपस्थित</button>';
-      var addPicBtn = !hasPhoto
-        ? '<button type="button" class="btn-danger" style="margin-left:6px;" onclick="openEditStudentModal(\'' + s.id + '\')">📷 फोटो</button>'
-        : '';
-
-      return '<div class="student-item-card"><div class="student-card-head"><div style="display:flex;align-items:center;gap:10px;">' + avatarHtml +
-        '<div><div style="font-size:17px;font-weight:900;">' + s.name + '</div><div style="font-size:13px;font-weight:800;color:#475569;">कक्षा: ' + s.className + ' | रोल: ' + formatRollTwoDigits(s.roll) + ' | ' + (s.gender || 'M') + ' | ' + (s.category || '-') + '</div></div></div><span style="font-size:18px;">' + topBadgeIcon + '</span></div>' +
-        '<div class="att-summary-bar"><div style="display:flex;justify-content:space-between;font-size:13px;font-weight:900;color:#1e3a8a;"><span>📊 उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</span><span>6 दिन</span></div>' + sixDaysGridHtml + '</div>' +
-        '<div style="display:flex;align-items:center;">' + manualBtnHtml + addPicBtn + '</div></div>';
-    }).join('');
-  }
-
-  function markManualPresentOnly(stuId) {
-    var activeDate = getActiveDateKey();
-    var stu = students.find(function(x) { return x.id === stuId; });
-    if (isSundayOrHoliday(activeDate, stu ? stu.className : 'सभी')) { showToast('🏖️ अवकाश'); return; }
-    if (!attendance[activeDate]) attendance[activeDate] = [];
-    if (attendance[activeDate].indexOf(stuId) === -1) {
-      attendance[activeDate].push(stuId);
-      saveState();
-      renderStudentList();
-      showToast('✔ उपस्थित');
-    }
-  }
-
-  function deleteStudent(id) {
-    students = students.filter(function(s) { return s.id !== id; });
-    saveState();
-    renderStudentList();
-    showToast('🗑️ हटाया गया');
-  }
-
-  function printOrSavePDF(htmlString, jobTitle) {
-    if (window.AndroidBridge) window.AndroidBridge.printHtmlDocument(htmlString, jobTitle);
-  }
-  function shareOrSaveTextFile(fileName, content, mime) {
-    if (window.AndroidBridge) window.AndroidBridge.shareFileContent(fileName, content, mime);
-  }
-
-  function exportAllStudentsFullCSV() {
-    var cls = document.getElementById('exportSingleClassSelect').value;
-    var activeDate = getActiveDateKey();
-    var presentIds = attendance[activeDate] || [];
-    var list = sortStudentsByRollAsc((cls === 'सभी') ? students : students.filter(function(s) { return s.className === cls; }));
-    if (list.length === 0) { showToast('कोई छात्र नहीं'); return; }
-    var NL = String.fromCharCode(10);
-    var csv = 'रोल नं,छात्र का नाम,कक्षा,लिंग,कोटि,आधार नं,पिता का नाम,माता का नाम,जन्म तिथि,मोबाइल,नामांकन संख्या,नामांकन तिथि,पूरा पता,स्थिति,उपस्थिति %' + NL;
-    list.forEach(function(s) {
-      var st = presentIds.indexOf(s.id) !== -1 ? 'उपस्थित' : 'अनुपस्थित';
-      var stStats = getStudentAttendanceStats(s.id);
-      csv += '"' + formatRollTwoDigits(s.roll) + '","' + s.name + '","' + s.className + '","' + (s.gender || 'M') + '","' + (s.category || '-') + '","' + (s.aadhaar || '-') + '","' + (s.father || '-') + '","' + (s.mother || '-') + '","' + (s.dob || '-') + '","' + (s.mobile || '-') + '","' + (s.admNo || '-') + '","' + (s.admDate || '-') + '","' + (s.address || '-') + '","' + st + '","' + stStats.pct + '%"' + NL;
+    rightBtn.addEventListener('touchend', () => {
+      clearTimeout(btnHoldTimer);
+      if (!btnLongTriggered) {
+        if (!unlockedManualStudentIds[stu.id]) {
+          return;
+        }
+        toggleStudentAttendanceOnDate(stu.id);
+      }
     });
-    shareOrSaveTextFile('Students_' + cls + '.csv', csv, 'text/csv');
+
+    row.appendChild(leftDiv);
+    row.appendChild(rightBtn);
+    listEl.appendChild(row);
+  });
+}
+
+function toggleStudentAttendanceOnDate(stuId) {
+  if (!appData.attendance[currentDashboardDateKey]) {
+    appData.attendance[currentDashboardDateKey] = [];
   }
-
-  function exportAllStudentsFullPDF() {
-    var cls = document.getElementById('exportSingleClassSelect').value;
-    var activeDate = getActiveDateKey();
-    var presentIds = attendance[activeDate] || [];
-    var list = sortStudentsByRollAsc((cls === 'सभी') ? students : students.filter(function(s) { return s.className === cls; }));
-    if (list.length === 0) { showToast('कोई छात्र नहीं'); return; }
-    var rows = list.map(function(s) {
-      var st = presentIds.indexOf(s.id) !== -1 ? '✅' : (isSundayOrHoliday(activeDate, s.className) ? '✔️' : '❌');
-      var stStats = getStudentAttendanceStats(s.id);
-      var photoHtml = (s.photos && s.photos.length > 0)
-        ? '<img src="' + s.photos[0] + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;display:block;margin:2px auto 0;">'
-        : '<div style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;font-size:10px;line-height:26px;margin:2px auto 0;">🔴</div>';
-      return '<tr><td style="text-align:center;"><b>' + formatRollTwoDigits(s.roll) + '</b>' + photoHtml + '</td>' +
-        '<td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || '-') + '</small></td>' +
-        '<td>' + (s.father || '-') + '<br>' + (s.mother || '-') + '</td>' +
-        '<td style="white-space:nowrap;"><b>M:</b> ' + (s.mobile || '-') + '<br><b>A:</b> ' + (s.aadhaar || '-') + '</td>' +
-        '<td>' + (s.dob || '-') + '<br>' + (s.admNo || '-') + '<br><small>(' + (s.admDate || '-') + ')</small></td>' +
-        '<td>' + (s.address || '-') + '</td>' +
-        '<td style="text-align:center;">' + st + '<br><b>' + stStats.pct + '%</b><br><small>(' + stStats.presentDays + '/' + stStats.totalDays + ')</small></td></tr>';
-    }).join('');
-    var headerHtml = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:10px;">' + getSchoolLogoSVG(48) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">छात्र प्रोफाइल एवं उपस्थिति सूची (कक्षा: ' + cls + ')</div></div></div>';
-    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>@page{size:A4 portrait;margin:8mm;}body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;text-align:left;vertical-align:middle;}th{background:#f1f5f9;}</style></head><body>' + headerHtml + '<table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' + getOfficialPdfSignatureFooter() + '</body></html>', 'Profile_List_' + cls);
+  const arr = appData.attendance[currentDashboardDateKey];
+  const idx = arr.indexOf(stuId);
+  if (idx >= 0) {
+    arr.splice(idx, 1);
+  } else {
+    arr.push(stuId);
   }
+  unlockedManualStudentIds[stuId] = false;
+  saveToBridge();
+  renderDateAttendanceList();
+  renderAllDashboard();
+}
 
-  function downloadStudentAttendanceCSV(stuId) {
-    var s = students.find(function(x) { return x.id === stuId; });
-    if (!s) return;
-    var stStats = getStudentAttendanceStats(s.id);
-    var NL = String.fromCharCode(10);
-    var csv = 'नाम,"' + s.name + '",रोल,"' + formatRollTwoDigits(s.roll) + '",कक्षा,"' + s.className + '",लिंग,"' + (s.gender || 'M') + '",कोटि,"' + (s.category || '-') + '"' + NL +
-      'पिता,"' + (s.father || '-') + '",माता,"' + (s.mother || '-') + '",मोबाइल,"' + (s.mobile || '-') + '",आधार,"' + (s.aadhaar || '-') + '"' + NL +
-      'जन्म तिथि,"' + (s.dob || '-') + '",नामांकन,"' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')",पता,"' + (s.address || '-') + '"' + NL + NL +
-      'तारीख,स्थिति' + NL;
-    stStats.history.forEach(function(h) { csv += '"' + h.date + '","' + (h.present ? '✅ उपस्थित' : (h.holiday ? '✔️ अवकाश' : '❌ अनुपस्थित')) + '"' + NL; });
-    shareOrSaveTextFile('Student_' + s.roll + '.csv', csv, 'text/csv');
-  }
+// ✅ छात्र का पूरा प्रोफाइल (उसकी कुल उपस्थिति हिस्ट्री और विवरण के साथ)
+function openStudentProfileModal(stuId) {
+  const stu = appData.students.find(s => s.id === stuId);
+  if (!stu) return;
 
-  function downloadStudentAttendancePDF(stuId) {
-    var s = students.find(function(x) { return x.id === stuId; });
-    if (!s) return;
-    var stStats = getStudentAttendanceStats(s.id);
-    var avatarHtml = (s.photos && s.photos.length > 0)
-      ? '<img src="' + s.photos[0] + '" style="width:72px;height:72px;border-radius:10px;object-fit:cover;border:2px solid #1e3a8a;">'
-      : '<div style="width:72px;height:72px;border-radius:10px;background:#fee2e2;color:#dc2626;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #dc2626;">🔴</div>';
-
-    var rows = stStats.history.map(function(h) {
-      return '<tr><td>' + h.date + '</td><td style="text-align:center;">' + (h.present ? '✅ उपस्थित' : (h.holiday ? '✔️ अवकाश' : '❌ अनुपस्थित')) + '</td></tr>';
-    }).join('');
-
-    var htmlDoc = '<html lang="hi"><head><meta charset="UTF-8"><style>' +
-      '@page{size:A4 portrait;margin:10mm;}body{font-family:sans-serif;font-size:12px;color:#0f172a;}' +
-      '.header-bar{display:flex;align-items:center;justify-content:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:12px;}' +
-      '.profile-top{display:flex;gap:14px;align-items:center;margin-bottom:12px;}' +
-      '.box-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}' +
-      '.info-box{border:1.5px solid #475569;border-radius:7px;padding:7px 10px;background:#f8fafc;}' +
-      '.info-lbl{font-size:10.5px;color:#475569;font-weight:bold;display:block;margin-bottom:2px;}' +
-      '.info-val{font-size:13px;font-weight:bold;color:#000;}' +
-      'table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #333;padding:6px 8px;text-align:left;}th{background:#e2e8f0;}' +
-      '</style></head><body>' +
-      '<div class="header-bar">' + getSchoolLogoSVG(50) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:13px;font-weight:bold;margin-top:3px;">छात्र व्यक्तिगत प्रोफाइल एवं उपस्थिति प्रतिवेदन</div></div></div>' +
-      '<div class="profile-top">' + avatarHtml +
-        '<div><h2 style="margin:0 0 4px 0;">' + s.name + ' (रोल: ' + formatRollTwoDigits(s.roll) + ')</h2>' +
-        '<div style="font-size:13px;font-weight:bold;color:#15803d;">उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div></div>' +
-      '</div>' +
-      '<div class="box-grid">' +
-        '<div class="info-box"><span class="info-lbl">नाम</span><span class="info-val">' + s.name + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">कक्षा एवं रोल</span><span class="info-val">कक्षा ' + s.className + ' | रोल: ' + formatRollTwoDigits(s.roll) + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">लिंग एवं कोटि</span><span class="info-val">' + (s.gender || 'M') + ' / ' + (s.category || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">मोबाइल</span><span class="info-val">' + (s.mobile || '-') + '</span></div>' +
-        '<div class="info-box" style="grid-column:span 2;"><span class="info-lbl">आधार संख्या</span><span class="info-val">' + (s.aadhaar || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">पिता का नाम</span><span class="info-val">' + (s.father || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">माता का नाम</span><span class="info-val">' + (s.mother || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">जन्म तिथि</span><span class="info-val">' + (s.dob || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">नामांकन विवरण</span><span class="info-val">' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')</span></div>' +
-        '<div class="info-box" style="grid-column:span 2;"><span class="info-lbl">पता</span><span class="info-val">' + (s.address || '-') + '</span></div>' +
-      '</div>' +
-      '<h3>📅 उपस्थिति विवरण</h3>' +
-      '<table><thead><tr><th>तारीख</th><th style="text-align:center;">स्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' +
-      getOfficialPdfSignatureFooter() +
-      '</body></html>';
-
-    printOrSavePDF(htmlDoc, 'Student_Profile_' + s.roll);
-  }
-
-  function openReportsModal() { document.getElementById('reportsModal').classList.add('open'); }
-
-  function buildMonthlyRegisterTableHTML(cls, monthVal) {
-    var list = sortStudentsByRollAsc(students.filter(function(s) { return s.className === cls; }));
-    if (list.length === 0) return null;
-    var parts = monthVal.split('-');
-    var yyyy = Number(parts[0]), mm = Number(parts[1]);
-    var yyShort = String(yyyy).slice(-2), mmStr = String(mm).padStart(2, '0');
-    var daysInMonth = new Date(yyyy, mm, 0).getDate();
-    var dayMeta = [];
-    for (var d = 1; d <= daysInMonth; d++) {
-      var ddStr = String(d).padStart(2, '0');
-      var shortKey = ddStr + '.' + mmStr + '.' + yyShort;
-      var isoDate = yyyy + '-' + mmStr + '-' + ddStr;
-      dayMeta.push({ dayNum: ddStr, shortKey: shortKey, timeMs: new Date(isoDate + 'T12:00:00').getTime(), holidayReason: getHolidayReasonForRegister(shortKey, cls) });
+  const allDates = Object.keys(appData.attendance).sort();
+  let presentDates = [];
+  allDates.forEach(dKey => {
+    const list = appData.attendance[dKey] || [];
+    if (list.includes(stu.id)) {
+      presentDates.push(dKey);
     }
-    var headerCells = '<th>रोल</th><th style="text-align:left;">छात्र का नाम</th>';
-    dayMeta.forEach(function(dm) { headerCells += '<th style="' + (dm.holidayReason ? 'background:#fef08a;color:#b91c1c;' : '') + '">' + dm.dayNum + '</th>'; });
-    headerCells += '<th>कुल</th><th>%</th>';
+  });
 
-    var totalStudentsCount = list.length;
-    var dailyPresentTotals = new Array(daysInMonth).fill(0);
-    var bodyRows = list.map(function(stu, rowIdx) {
-      var admIso = formatDotToIso(stu.admDate && stu.admDate !== '-' ? stu.admDate : '01.04.2024') || '2024-04-01';
-      var admTime = new Date(admIso + 'T00:00:00').getTime();
-      var stuWorkingDays = 0, stuPresentDays = 0;
-      var rowCells = '<td><b>' + formatRollTwoDigits(stu.roll) + '</b></td><td style="text-align:left;white-space:nowrap;"><b>' + stu.name + '</b></td>';
-      dayMeta.forEach(function(dm, dIdx) {
-        if (dm.holidayReason) {
-          if (rowIdx === 0) rowCells += '<td rowspan="' + totalStudentsCount + '" class="hol-col-merged"><div class="hol-vert-text">' + dm.holidayReason + '</div></td>';
-        } else {
-          var isP = (attendance[dm.shortKey] || []).indexOf(stu.id) !== -1;
-          if (!isNaN(admTime) && dm.timeMs < admTime && !isP) {
-            rowCells += '<td>-</td>';
-          } else {
-            stuWorkingDays++;
-            if (isP) { stuPresentDays++; dailyPresentTotals[dIdx]++; rowCells += '<td style="color:#15803d;font-weight:bold;">P</td>'; }
-            else rowCells += '<td style="color:#dc2626;">A</td>';
-          }
+  const totalWorkingDays = allDates.length;
+  const totalPresent = presentDates.length;
+  const totalAbsent = Math.max(0, totalWorkingDays - totalAbsentCalc(totalWorkingDays, totalPresent));
+  const attPct = totalWorkingDays > 0 ? Math.round((totalPresent * 100) / totalWorkingDays) : 0;
+
+  const photoHtml = (stu.photos && stu.photos.length > 0)
+    ? `<img src="${stu.photos[0]}" style="width:76px;height:76px;border-radius:50%;object-fit:cover;border:3px solid #1e3a8a;">`
+    : `<div class="roll-badge" style="width:70px;height:70px;font-size:22px;">${formatRoll(stu.roll)}</div>`;
+
+  const recentChips = presentDates.slice(-18).reverse().map(d =>
+    `<span style="display:inline-block;background:#dcfce7;color:#15803d;padding:4px 8px;border-radius:6px;font-size:11px;font-weight:700;margin:2px;">✔ ${d}</span>`
+  ).join("") || `<span style="font-size:12px;color:#64748b;">अभी कोई उपस्थिति दर्ज नहीं है</span>`;
+
+  const body = document.getElementById('studentProfileBody');
+  body.innerHTML = `
+    <div style="display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:1px solid #e2e8f0;">
+      ${photoHtml}
+      <div>
+        <div style="font-size:18px;font-weight:800;color:#0f172a;">${stu.name}</div>
+        <div style="font-size:13px;font-weight:700;color:#1e3a8a;">कक्षा: ${stu.className} | रोल: ${formatRoll(stu.roll)}</div>
+        <div style="font-size:12px;color:#475569;">लिंग: ${stu.gender === 'M' ? 'छात्र' : 'छात्रा'} | कोटि: ${stu.category}</div>
+      </div>
+    </div>
+
+    <div class="stat-grid-3" style="margin:12px 0;">
+      <div class="stat-box">
+        <div class="stat-num" style="color:#1e3a8a;">${totalWorkingDays}</div>
+        <div class="stat-lbl">कुल कार्यदिवस</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num" style="color:#16a34a;">${totalPresent}</div>
+        <div class="stat-lbl">कुल उपस्थित</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-num" style="color:#2563eb;">${attPct}%</div>
+        <div class="stat-lbl">उपस्थिति %</div>
+      </div>
+    </div>
+
+    <div style="background:#f8fafc;padding:10px 12px;border-radius:12px;font-size:13px;line-height:1.7;border:1px solid #e2e8f0;">
+      <div><b>पिता का नाम:</b> ${stu.father || '-'}</div>
+      <div><b>माता का नाम:</b> ${stu.mother || '-'}</div>
+      <div><b>जन्म तिथि:</b> ${stu.dob || '-'} | <b>मोबाइल:</b> ${stu.mobile || '-'}</div>
+      <div><b>आधार:</b> ${stu.aadhaar || '-'} | <b>प्रवेश:</b> ${stu.admNo || '-'}</div>
+      <div><b>पता:</b> ${stu.address || '-'}</div>
+    </div>
+
+    <div style="margin-top:12px;">
+      <div style="font-size:12px;font-weight:800;color:#334155;margin-bottom:6px;">📅 उपस्थित तिथियाँ (हाल की):</div>
+      <div>${recentChips}</div>
+    </div>
+
+    <div class="form-row-2" style="margin-top:14px;">
+      <button class="btn-block btn-primary" onclick="openStudentFormModal('${stu.id}')">✏️ प्रोफाइल सुधारें</button>
+      <button class="btn-block btn-danger" onclick="deleteStudentRecord('${stu.id}')">🗑️ हटाएं</button>
+    </div>
+  `;
+
+  document.getElementById('studentProfileModal').style.display = 'flex';
+}
+
+function totalAbsentCalc(totalDays, presentDays) {
+  return totalDays - presentDays;
+}
+
+function openAllStudentsDirectory() {
+  document.getElementById('dirSearchInput').value = "";
+  renderDirectoryList();
+  document.getElementById('directoryModal').style.display = 'flex';
+}
+
+function renderDirectoryList() {
+  const cls = document.getElementById('dirClassFilter').value;
+  const q = (document.getElementById('dirSearchInput').value || "").trim().toLowerCase();
+
+  const list = appData.students.filter(s => {
+    if (cls !== "सभी" && s.className !== cls) return false;
+    if (q && !s.name.toLowerCase().includes(q) && !String(s.roll).includes(q)) return false;
+    return true;
+  }).sort((a, b) => parseInt(a.roll || 0) - parseInt(b.roll || 0));
+
+  const container = document.getElementById('directoryListContainer');
+  container.innerHTML = "";
+
+  if (list.length === 0) {
+    container.innerHTML = `<div style="text-align:center;padding:20px;color:#64748b;">कोई छात्र नहीं मिला</div>`;
+    return;
+  }
+
+  list.forEach(stu => {
+    const div = document.createElement('div');
+    div.className = 'stu-row';
+    div.innerHTML = `
+      <div class="stu-left" onclick="openStudentProfileModal('${stu.id}')">
+        <div class="roll-badge">${formatRoll(stu.roll)}</div>
+        <div>
+          <div class="stu-info-name">${stu.name}</div>
+          <div class="stu-info-sub">कक्षा: ${stu.className} | पिता: ${stu.father || '-'}</div>
+        </div>
+      </div>
+      <button class="att-pill-btn att-pill-present" onclick="openStudentFormModal('${stu.id}')">✏️ सुधारें</button>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function openStudentFormModal(stuId) {
+  const heading = document.getElementById('stuFormHeading');
+  if (stuId) {
+    const stu = appData.students.find(s => s.id === stuId);
+    if (!stu) return;
+    heading.innerText = "✏️ छात्र विवरण सुधारें";
+    document.getElementById('editStuId').value = stu.id;
+    document.getElementById('stuClass').value = stu.className || "6वीं";
+    document.getElementById('stuRoll').value = stu.roll || "";
+    document.getElementById('stuName').value = stu.name || "";
+    document.getElementById('stuGender').value = stu.gender || "M";
+    document.getElementById('stuCat').value = stu.category || "EBC";
+    document.getElementById('stuFather').value = stu.father || "";
+    document.getElementById('stuMother').value = stu.mother || "";
+    document.getElementById('stuDob').value = stu.dob || "";
+    document.getElementById('stuMobile').value = stu.mobile || "";
+    document.getElementById('stuAadhaar').value = stu.aadhaar || "";
+    document.getElementById('stuAdmNo').value = stu.admNo || "";
+    document.getElementById('stuAddress').value = stu.address || "";
+    workingKycPhotos = (stu.photos || []).slice();
+  } else {
+    heading.innerText = "➕ नया छात्र पंजीकरण";
+    document.getElementById('editStuId').value = "";
+    document.getElementById('stuRoll').value = "";
+    document.getElementById('stuName').value = "";
+    document.getElementById('stuFather').value = "";
+    document.getElementById('stuMother').value = "";
+    document.getElementById('stuDob').value = "";
+    document.getElementById('stuMobile').value = "";
+    document.getElementById('stuAadhaar').value = "";
+    document.getElementById('stuAdmNo').value = "";
+    document.getElementById('stuAddress').value = "";
+    workingKycPhotos = [];
+  }
+  renderKycThumbs();
+  document.getElementById('studentFormModal').style.display = 'flex';
+}
+
+function triggerLiveKycCamera() {
+  if (workingKycPhotos.length >= 3) {
+    alert("अधिकतम 3 फोटो ही जोड़े जा सकते हैं।");
+    return;
+  }
+  if (window.AndroidBridge) {
+    AndroidBridge.openLiveKycCamera();
+  }
+}
+
+function onLiveKycPhotoApproved(base64Img) {
+  if (base64Img && workingKycPhotos.length < 3) {
+    workingKycPhotos.push(base64Img);
+    renderKycThumbs();
+  }
+}
+
+function renderKycThumbs() {
+  const box = document.getElementById('kycThumbContainer');
+  box.innerHTML = workingKycPhotos.map((img, idx) => `
+    <div class="kyc-thumb-wrap">
+      <img src="${img}">
+      <button type="button" class="kyc-del-x" onclick="removeKycPhoto(${idx})">✕</button>
+    </div>
+  `).join("");
+}
+
+function removeKycPhoto(idx) {
+  workingKycPhotos.splice(idx, 1);
+  renderKycThumbs();
+}
+
+function saveStudentRecord() {
+  const name = document.getElementById('stuName').value.trim();
+  const roll = document.getElementById('stuRoll').value.trim();
+  const cls = document.getElementById('stuClass').value;
+  if (!name || !roll) {
+    alert("कृपया छात्र का नाम और रोल नंबर अवश्य भरें!");
+    return;
+  }
+
+  const editId = document.getElementById('editStuId').value;
+  const record = {
+    id: editId || ("stu_" + Date.now() + "_" + Math.floor(Math.random() * 1000)),
+    className: cls,
+    roll: formatRoll(roll),
+    name: name,
+    gender: document.getElementById('stuGender').value,
+    category: document.getElementById('stuCat').value,
+    father: document.getElementById('stuFather').value.trim() || "-",
+    mother: document.getElementById('stuMother').value.trim() || "-",
+    dob: document.getElementById('stuDob').value.trim() || "-",
+    mobile: document.getElementById('stuMobile').value.trim() || "-",
+    aadhaar: document.getElementById('stuAadhaar').value.trim() || "-",
+    admNo: document.getElementById('stuAdmNo').value.trim() || "-",
+    admDate: "-",
+    address: document.getElementById('stuAddress').value.trim() || "-",
+    photos: workingKycPhotos
+  };
+
+  if (editId) {
+    const idx = appData.students.findIndex(s => s.id === editId);
+    if (idx >= 0) appData.students[idx] = record;
+  } else {
+    appData.students.push(record);
+  }
+
+  saveToBridge();
+  closeModal('studentFormModal');
+  renderAllDashboard();
+  if (document.getElementById('directoryModal').style.display === 'flex') {
+    renderDirectoryList();
+  }
+  if (document.getElementById('studentProfileModal').style.display === 'flex' && editId) {
+    openStudentProfileModal(editId);
+  }
+}
+
+function deleteStudentRecord(stuId) {
+  if (!confirm("क्या आप निश्चित रूप से इस छात्र का रिकॉर्ड हटाना चाहते हैं?")) return;
+  appData.students = appData.students.filter(s => s.id !== stuId);
+  saveToBridge();
+  closeModal('studentProfileModal');
+  renderAllDashboard();
+  if (document.getElementById('directoryModal').style.display === 'flex') {
+    renderDirectoryList();
+  }
+}
+
+function openPackShareModal() {
+  document.getElementById('packShareModal').style.display = 'flex';
+}
+
+function shareScannerPackNow() {
+  const targetCls = document.getElementById('packShareClassSelect').value;
+  if (window.AndroidBridge) {
+    AndroidBridge.exportScannerPackNative(targetCls);
+  }
+  closeModal('packShareModal');
+}
+
+function openBackupRestoreModal() {
+  document.getElementById('backupModal').style.display = 'flex';
+}
+
+function onNativeAttendanceMergeContent(rawJson) {
+  try {
+    const obj = JSON.parse(rawJson);
+    if (obj && obj.dateKey && Array.isArray(obj.presentStudentIds)) {
+      const dKey = obj.dateKey;
+      if (!appData.attendance[dKey]) appData.attendance[dKey] = [];
+      let added = 0;
+      obj.presentStudentIds.forEach(id => {
+        if (!appData.attendance[dKey].includes(id)) {
+          appData.attendance[dKey].push(id);
+          added++;
         }
       });
-      var pct = stuWorkingDays > 0 ? Math.round((stuPresentDays / stuWorkingDays) * 100) : 0;
-      rowCells += '<td><b>' + stuPresentDays + '/' + stuWorkingDays + '</b></td><td><b>' + pct + '%</b></td>';
-      return '<tr>' + rowCells + '</tr>';
-    }).join('');
-
-    var footerCells = '<td colspan="2" style="text-align:right;font-weight:bold;">कुल उपस्थित:</td>';
-    dayMeta.forEach(function(dm, dIdx) {
-      footerCells += dm.holidayReason ? '<td>-</td>' : '<td><b>' + dailyPresentTotals[dIdx] + '</b></td>';
-    });
-    footerCells += '<td colspan="2"></td>';
-    return { cls: cls, monthVal: monthVal, studentCount: totalStudentsCount, tableHtml: '<table><thead><tr>' + headerCells + '</tr></thead><tbody>' + bodyRows + '<tr>' + footerCells + '</tr></tbody></table>' };
-  }
-
-  function exportMonthlyRegisterChartPDF() {
-    var cls = document.getElementById('regChartClassSelect').value;
-    var monthVal = document.getElementById('regChartMonthInput').value;
-    var built = buildMonthlyRegisterTableHTML(cls, monthVal);
-    if (!built) { showToast('कोई छात्र नहीं'); return; }
-    var st = '@page{size:A4 landscape;margin:6mm;}body{font-family:sans-serif;font-size:10px;}table{width:100%;border-collapse:collapse;margin-top:6px;}th,td{border:1px solid #222;padding:3px 2px;text-align:center;}.hol-col-merged{background:#fef9c3;color:#b91c1c;font-weight:bold;}.hol-vert-text{writing-mode:vertical-rl;text-orientation:mixed;display:inline-block;white-space:nowrap;font-size:9px;}';
-    var topHead = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:6px;margin-bottom:6px;">' + getSchoolLogoSVG(42) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय - मासिक उपस्थिति पंजिका</h2><div style="font-size:11px;font-weight:bold;">कक्षा: ' + cls + ' | माह: ' + monthVal + '</div></div></div>';
-    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>' + st + '</style></head><body>' + topHead + built.tableHtml + getOfficialPdfSignatureFooter() + '</body></html>', 'Register_' + cls + '_' + monthVal);
-  }
-
-  function exportMonthlyRegisterChartExcel() {
-    var cls = document.getElementById('regChartClassSelect').value;
-    var monthVal = document.getElementById('regChartMonthInput').value;
-    var built = buildMonthlyRegisterTableHTML(cls, monthVal);
-    if (!built) { showToast('कोई छात्र नहीं'); return; }
-    shareOrSaveTextFile('Register_' + cls + '_' + monthVal + '.xls', built.tableHtml, 'application/vnd.ms-excel');
-  }
-
-  function exportClassCSV() {
-    var cls = document.getElementById('repClassSelect').value;
-    var fromM = document.getElementById('repFromMonth').value;
-    var toM = document.getElementById('repToMonth').value;
-    var list = sortStudentsByRollAsc((cls === 'सभी') ? students : students.filter(function(s) { return s.className === cls; }));
-    if (list.length === 0) { showToast('कोई छात्र नहीं'); return; }
-    var NL = String.fromCharCode(10);
-    var csv = 'रोल नं,नाम,कक्षा,लिंग,कोटि,आधार नं,पिता,माता,मोबाइल,उपस्थित/कार्यदिवस,उपस्थिति %' + NL;
-    list.forEach(function(s) {
-      var stStats = getStudentAttendanceStats(s.id, fromM, toM);
-      csv += '"' + formatRollTwoDigits(s.roll) + '","' + s.name + '","' + s.className + '","' + (s.gender || 'M') + '","' + (s.category || '-') + '","' + (s.aadhaar || '-') + '","' + (s.father || '-') + '","' + (s.mother || '-') + '","' + (s.mobile || '-') + '","' + stStats.presentDays + '/' + stStats.totalDays + '","' + stStats.pct + '%"' + NL;
-    });
-    shareOrSaveTextFile('Report_' + cls + '.csv', csv, 'text/csv');
-  }
-
-  function exportClassPDF() {
-    var cls = document.getElementById('repClassSelect').value;
-    var fromM = document.getElementById('repFromMonth').value;
-    var toM = document.getElementById('repToMonth').value;
-    var list = sortStudentsByRollAsc((cls === 'सभी') ? students : students.filter(function(s) { return s.className === cls; }));
-    if (list.length === 0) { showToast('कोई छात्र नहीं'); return; }
-    var rows = list.map(function(s) {
-      var stStats = getStudentAttendanceStats(s.id, fromM, toM);
-      return '<tr><td><b>' + formatRollTwoDigits(s.roll) + '</b></td><td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || '-') + '</small></td><td>' + (s.father || '-') + '<br>' + (s.mother || '-') + '</td><td><b>M:</b> ' + (s.mobile || '-') + '<br><b>A:</b> ' + (s.aadhaar || '-') + '</td><td>' + (s.dob || '-') + '<br>' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')</td><td>' + (s.address || '-') + '</td><td><b>' + stStats.pct + '%</b> (' + stStats.presentDays + '/' + stStats.totalDays + ')</td></tr>';
-    }).join('');
-    var topHead = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:8px;">' + getSchoolLogoSVG(46) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">समेकित उपस्थिति प्रतिवेदन (' + cls + ' | ' + fromM + ' से ' + toM + ')</div></div></div>';
-    printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;}</style></head><body>' + topHead + '<table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' + getOfficialPdfSignatureFooter() + '</body></html>', 'Class_Report_' + cls);
-  }
-
-  function openHolidayModal() {
-    document.getElementById('holidayDateInput').value = getTodayIso();
-    document.getElementById('holidayClassInput').value = 'सभी';
-    document.getElementById('holidayReasonInput').value = '';
-    renderHolidayList();
-    document.getElementById('holidayModal').classList.add('open');
-  }
-  function markDateAsHoliday() {
-    var iso = document.getElementById('holidayDateInput').value;
-    var targetCls = document.getElementById('holidayClassInput').value || 'सभी';
-    var reason = document.getElementById('holidayReasonInput').value.trim() || 'अवकाश';
-    if (!iso) return;
-    var key = isoToShortDateKey(iso);
-    if (!holidays[key] || typeof holidays[key] === 'string') holidays[key] = {};
-    if (targetCls === 'सभी') holidays[key] = { 'सभी': reason };
-    else { delete holidays[key]['सभी']; holidays[key][targetCls] = reason; }
-    saveState();
-    renderHolidayList();
-    showToast('🏖️ सेव हो गया');
-  }
-  function removeHolidayScope(key, scope) {
-    if (!holidays[key]) return;
-    if (scope === 'सभी') delete holidays[key];
-    else { delete holidays[key][scope]; if (Object.keys(holidays[key]).length === 0) delete holidays[key]; }
-    saveState();
-    renderHolidayList();
-  }
-  function renderHolidayList() {
-    var keys = Object.keys(holidays).sort();
-    var items = [];
-    keys.forEach(function(k) {
-      var val = holidays[k];
-      if (typeof val === 'object') {
-        Object.keys(val).forEach(function(sc) {
-          items.push('<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px dashed #cbd5e1;"><span>📅 <b>' + k + '</b> [' + sc + ']: ' + val[sc] + '</span><button type="button" class="btn-danger" onclick="removeHolidayScope(\'' + k + '\',\'' + sc + '\')">हटाएं</button></div>');
-        });
-      }
-    });
-    document.getElementById('holidayListContainer').innerHTML = items.length ? items.join('') : 'कोई छुट्टी नहीं';
-  }
-
-  function openChangePinModal() { document.getElementById('changePinModal').classList.add('open'); }
-  function saveNewAdminPin() {
-    var oldP = document.getElementById('oldPinInput').value.trim();
-    var newP = document.getElementById('newPinInput').value.trim();
-    var confP = document.getElementById('confirmPinInput').value.trim();
-    if (oldP !== adminPin || !isExactDigits(newP, 6) || newP !== confP) { showToast('❌ पिन जाँचें'); return; }
-    adminPin = newP;
-    saveState();
-    closeModal('changePinModal');
-    showToast('✔ पिन बदल गया');
-  }
-
-  function startPromotionStep(step) {
-    var box = document.getElementById('promoWizardBox');
-    box.style.display = 'block';
-    if (step === 1) box.innerHTML = '<b>सत्र प्रोमोशन करें?</b><br><button class="btn-danger" style="margin-top:8px;" onclick="startPromotionStep(2)">आगे ▸</button>';
-    else if (step === 2) box.innerHTML = '<input type="password" id="promoPin" maxlength="6" inputmode="numeric" placeholder="6 अंक पिन" style="margin:6px 0;text-align:center;" oninput="if(this.value.length===6)executeFinalClassPromotion()">';
-  }
-  function executeFinalClassPromotion() {
-    if (document.getElementById('promoPin').value.trim() !== adminPin) { showToast('❌ गलत पिन'); document.getElementById('promoPin').value=''; return; }
-    var promoted = [];
-    students.forEach(function(s) {
-      if (s.className === '6वीं') { s.className = '7वीं'; promoted.push(s); }
-      else if (s.className === '7वीं') { s.className = '8वीं'; promoted.push(s); }
-    });
-    students = promoted;
-    saveState();
-    closeModal('changePinModal');
-    showToast('🎓 प्रोमोशन पूर्ण');
-  }
-
-  function openMultiDeviceModal() { document.getElementById('multiDeviceModal').classList.add('open'); }
-
-  function exportLimitedScannerPack() {
-    var cls = document.getElementById('scannerPackClassSelect').value;
-    if (window.AndroidBridge && window.AndroidBridge.exportScannerPackNative) {
-      window.AndroidBridge.exportScannerPackNative(cls);
+      saveToBridge();
+      renderAllDashboard();
+      alert(`✔ दिनांक ${dKey} की ${added} नई उपस्थिति सफलतापूर्वक मर्ज हो गईं!`);
+      closeModal('backupModal');
+    } else {
+      alert("❌ अमान्य हाज़िरी फ़ाइल!");
     }
+  } catch (e) {
+    alert("❌ मर्ज करने में त्रुटि!");
+  }
+}
+
+function openPinModal() {
+  document.getElementById('newAdminPinInput').value = appData.adminPin || "123456";
+  document.getElementById('pinModal').style.display = 'flex';
+}
+
+function updateAdminPin() {
+  const v = (document.getElementById('newAdminPinInput').value || "").trim();
+  if (v.length !== 6 || isNaN(v)) {
+    alert("कृपया ठीक 6 अंकों का पिन डालें!");
+    return;
+  }
+  appData.adminPin = v;
+  saveToBridge();
+  closeModal('pinModal');
+  alert("✔ एडमिन पिन बदल दिया गया!");
+}
+
+function openHolidayModal() {
+  const cur = appData.holidays[currentDashboardDateKey];
+  document.getElementById('holidayReasonInput').value = typeof cur === 'string' ? cur : "";
+  document.getElementById('holidayModal').style.display = 'flex';
+}
+
+function saveHolidayForSelectedDate() {
+  const r = document.getElementById('holidayReasonInput').value.trim() || "विद्यालय अवकाश";
+  appData.holidays[currentDashboardDateKey] = r;
+  saveToBridge();
+  closeModal('holidayModal');
+  renderAllDashboard();
+}
+
+function removeHolidayForSelectedDate() {
+  delete appData.holidays[currentDashboardDateKey];
+  saveToBridge();
+  closeModal('holidayModal');
+  renderAllDashboard();
+}
+
+function openMonthlyRegisterModal() {
+  document.getElementById('monthlyPdfModal').style.display = 'flex';
+}
+
+function generateMonthlyRegisterPdf() {
+  const monthVal = document.getElementById('pdfMonthPicker').value; // YYYY-MM
+  const cls = document.getElementById('pdfClassSelect').value;
+  if (!monthVal) return;
+
+  const [yyyy, mm] = monthVal.split("-");
+  const yy = yyyy.slice(-2);
+  const daysInMonth = new Date(parseInt(yyyy), parseInt(mm), 0).getDate();
+
+  const stuList = appData.students
+    .filter(s => s.className === cls)
+    .sort((a, b) => parseInt(a.roll || 0) - parseInt(b.roll || 0));
+
+  let dayHeaders = "";
+  for (let d = 1; d <= daysInMonth; d++) {
+    dayHeaders += `<th>${d}</th>`;
   }
 
-  function exportMasterBackupJson() {
-    if (window.AndroidBridge && window.AndroidBridge.exportMasterBackupNative) {
-      window.AndroidBridge.exportMasterBackupNative();
+  let rowsHtml = "";
+  stuList.forEach(stu => {
+    let pTotal = 0;
+    let cells = "";
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dd = String(d).padStart(2, '0');
+      const k = `${dd}.${mm}.${yy}`;
+      const isP = (appData.attendance[k] || []).includes(stu.id);
+      if (isP) pTotal++;
+      cells += `<td style="color:${isP ? '#15803d' : '#dc2626'};font-weight:700;">${isP ? 'P' : 'A'}</td>`;
     }
-  }
-
-  function saveMasterBackupPhone() {
-    if (window.AndroidBridge && window.AndroidBridge.saveMasterBackupToPhoneNative) {
-      window.AndroidBridge.saveMasterBackupToPhoneNative();
-    }
-  }
-
-  window.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('topSchoolLogoSlot').innerHTML = getSchoolLogoSVG(44);
-    selectedAdminDateKey = getTodayShort();
-    loadState();
-    updateDashboardStats();
+    rowsHtml += `
+      <tr>
+        <td>${formatRoll(stu.roll)}</td>
+        <td style="text-align:left;font-weight:700;">${stu.name}</td>
+        ${cells}
+        <td style="font-weight:800;">${pTotal}</td>
+      </tr>
+    `;
   });
+
+  const html = `
+    <html>
+    <head>
+      <style>
+        body { font-family: sans-serif; padding: 10px; }
+        h2, h4 { text-align: center; margin: 4px 0; }
+        table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 10px; }
+        th, td { border: 1px solid #334155; padding: 3px 2px; text-align: center; }
+        th { background: #e2e8f0; }
+      </style>
+    </head>
+    <body>
+      <h2>सर्वोदय मध्य विद्यालय, सोहसराय</h2>
+      <h4>मासिक उपस्थिति पंजी — कक्षा: ${cls} | माह: ${mm}/${yyyy}</h4>
+      <table>
+        <thead>
+          <tr><th>रोल</th><th>छात्र का नाम</th>${dayHeaders}<th>कुल</th></tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </body>
+    </html>
+  `;
+
+  if (window.AndroidBridge) {
+    AndroidBridge.printHtmlDocument(html, `Attendance_${cls}_${mm}_${yyyy}`);
+  }
+}
+
+function closeModal(id) {
+  document.getElementById(id).style.display = 'none';
+}
 </script>
 </body>
 </html>
