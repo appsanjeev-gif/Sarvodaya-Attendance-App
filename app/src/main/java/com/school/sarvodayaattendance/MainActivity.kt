@@ -113,13 +113,15 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // ✅ मुख्य स्कैनर स्क्रीन चालू रहने तक मोबाइल की स्क्रीन कभी बंद नहीं होगी
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
 
         FaceMatcherEngine.initEngine(this)
 
         payload = AppStorage.loadData(this)
         voiceManager = RealisticVoiceManager(this)
-        uiHandler.postDelayed({ voiceManager.speakStartupWelcome() }, 600)
+        uiHandler.postDelayed({ voiceManager.speakStartupWelcome() }, 1100)
 
         previewView = findViewById(R.id.previewView)
         tvHeaderDate = findViewById(R.id.tvHeaderDate)
@@ -192,39 +194,13 @@ class MainActivity : AppCompatActivity() {
             startCamera()
         }
 
+        // ✅ मुख्य स्क्रीन पर 🔊 बटन अब केवल Mute/Unmute करेगा (Long-Press पॉपअप यहाँ से पूरी तरह हटा दिया गया है)
         btnVoiceIcon.setOnClickListener {
             voiceManager.isVoiceEnabled = !voiceManager.isVoiceEnabled
             btnVoiceIcon.text = if (voiceManager.isVoiceEnabled) "🔊" else "🔇"
             btnVoiceIcon.backgroundTintList = ColorStateList.valueOf(
                 Color.parseColor(if (voiceManager.isVoiceEnabled) "#16A34A" else "#334155")
             )
-        }
-
-        // ✅ स्कैनर पैक वाले दूसरे शिक्षक के मोबाइल में (isScannerOnlyPack == true) यह पूरी तरह लॉक और अदृश्य रहेगा!
-        btnVoiceIcon.setOnLongClickListener {
-            if (payload.isScannerOnlyPack) {
-                return@setOnLongClickListener true
-            }
-            val keyInput = EditText(this).apply {
-                setText(voiceManager.getApiKey())
-                hint = "Key1, Key2, Key3..."
-                textSize = 15f
-                minLines = 3
-                maxLines = 8
-                setPadding(40, 35, 40, 35)
-            }
-            AlertDialog.Builder(this)
-                .setTitle("🎙️ Multi-API Keys (4-15)")
-                .setView(keyInput)
-                .setPositiveButton("सेव") { _, _ ->
-                    val newKeys = keyInput.text.toString().trim()
-                    voiceManager.saveCustomApiKey(newKeys)
-                    payload.sharedApiKeys = newKeys
-                    AppStorage.saveData(this, payload)
-                    Toast.makeText(this, "✔ सेव हो गया", Toast.LENGTH_SHORT).show()
-                }
-                .show()
-            true
         }
 
         btnAdminLock.setOnClickListener {
@@ -250,6 +226,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         FaceMatcherEngine.initEngine(this)
         payload = AppStorage.loadData(this)
         FaceMatcherEngine.clearCache()
@@ -285,7 +262,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ✅ VIP स्वागत कार्ड में अब "स.म.वि." वाला गोल स्कूल लोगो (ic_school_logo) और असली AI आवाज़ सेट है
     private fun speakAndShowVipWelcomeOnFaceDetected() {
         val todayKey = AppStorage.getTodayShortKey()
         val total = payload.students.size
