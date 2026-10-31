@@ -118,7 +118,6 @@
       <div class="action-tile" onclick="openReportsModal()"><div style="font-size:22px;">📊</div><div>रिपोर्ट्स</div></div>
       <div class="action-tile" onclick="openHolidayModal()"><div style="font-size:22px;">🏖️</div><div>छुट्टी</div></div>
       <div class="action-tile" onclick="openMultiDeviceModal()" style="background:#eff6ff;"><div style="font-size:22px;">🤝</div><div>पैक शेयर</div></div>
-      <!-- ✅ बदलाव 1: [🔑 पिन व सत्र] पर 2 सेकंड Long-Press से Multi-API Keys खुलेगा और सामान्य टैप से पिन व सत्र -->
       <div class="action-tile"
            onmousedown="handlePinTilePressStart()" onmouseup="handlePinTilePressEnd()"
            ontouchstart="handlePinTilePressStart()" ontouchend="handlePinTilePressEnd()"
@@ -227,27 +226,29 @@
       </div>
       <div class="modal-body">
         <input type="hidden" id="editStudentId" value="">
+        <!-- केवल लाल मार्क वाले फ़ील्ड्स में Red Star और अनिवार्य (Mandatory) -->
         <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">कक्षा *</label><select id="stuClass"><option value="6वीं">6वीं</option><option value="7वीं">7वीं</option><option value="8वीं">8वीं</option></select></div>
-          <div class="form-group"><label class="field-lbl">रोल नं. *</label><input type="number" id="stuRoll" placeholder="01"></div>
+          <div class="form-group"><label class="field-lbl">कक्षा <span style="color:#dc2626;">*</span></label><select id="stuClass"><option value="6वीं">6वीं</option><option value="7वीं">7वीं</option><option value="8वीं">8वीं</option></select></div>
+          <div class="form-group"><label class="field-lbl">रोल नं. <span style="color:#dc2626;">*</span></label><input type="number" id="stuRoll" placeholder="01"></div>
         </div>
-        <div class="form-group"><label class="field-lbl">छात्र का नाम *</label><input type="text" id="stuName" placeholder="नाम"></div>
+        <div class="form-group"><label class="field-lbl">छात्र का नाम <span style="color:#dc2626;">*</span></label><input type="text" id="stuName" placeholder="नाम"></div>
         <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">लिंग *</label><select id="stuGender"><option value="M">M</option><option value="F">F</option></select></div>
-          <div class="form-group"><label class="field-lbl">कोटि *</label><select id="stuCategory"><option value="EBC">EBC</option><option value="OBC">OBC</option><option value="SC">SC</option><option value="ST">ST</option><option value="GEN">GEN</option></select></div>
+          <div class="form-group"><label class="field-lbl">लिंग <span style="color:#dc2626;">*</span></label><select id="stuGender"><option value="M">M</option><option value="F">F</option></select></div>
+          <div class="form-group"><label class="field-lbl">कोटि <span style="color:#dc2626;">*</span></label><select id="stuCategory"><option value="EBC">EBC</option><option value="OBC">OBC</option><option value="SC">SC</option><option value="ST">ST</option><option value="GEN">GEN</option></select></div>
         </div>
-        <div class="form-group"><label class="field-lbl">आधार नं. (12 अंक) *</label><input type="tel" id="stuAadhaar" maxlength="12" inputmode="numeric"></div>
+        <!-- सभी हरे मार्क वाले फ़ील्ड्स से * हटाकर ऐच्छिक (Optional) कर दिया गया है -->
+        <div class="form-group"><label class="field-lbl">आधार नं. (12 अंक)</label><input type="tel" id="stuAadhaar" maxlength="12" inputmode="numeric"></div>
         <div class="form-row-2">
-          <div class="form-group"><label class="field-lbl">पिता का नाम *</label><input type="text" id="stuFather"></div>
-          <div class="form-group"><label class="field-lbl">माता का नाम *</label><input type="text" id="stuMother"></div>
+          <div class="form-group"><label class="field-lbl">पिता का नाम</label><input type="text" id="stuFather"></div>
+          <div class="form-group"><label class="field-lbl">माता का नाम</label><input type="text" id="stuMother"></div>
         </div>
         <div class="form-row-2">
           <div class="form-group"><label class="field-lbl">जन्म तिथि</label><input type="date" id="stuDob"></div>
-          <div class="form-group"><label class="field-lbl">मोबाइल *</label><input type="tel" id="stuMobile" maxlength="10" inputmode="numeric"></div>
+          <div class="form-group"><label class="field-lbl">मोबाइल</label><input type="tel" id="stuMobile" maxlength="10" inputmode="numeric"></div>
         </div>
         <div class="form-row-2">
           <div class="form-group"><label class="field-lbl">नामांकन सं.</label><input type="text" id="stuAdmNo"></div>
-          <div class="form-group"><label class="field-lbl">नामांकन तिथि *</label><input type="date" id="stuAdmDate"></div>
+          <div class="form-group"><label class="field-lbl">नामांकन तिथि</label><input type="date" id="stuAdmDate"></div>
         </div>
         <div class="form-group"><label class="field-lbl">पता</label><input type="text" id="stuAddress"></div>
 
@@ -372,7 +373,7 @@
   var pinTileTimer = null;
   var pinTileLongTriggered = false;
 
-  // ✅ बदलाव 1: [🔑 पिन व सत्र] पर 2 सेकंड (2000ms) Long-Press हैंडलर
+  // [🔑 पिन व सत्र] 2 सेकंड Long-Press से Multi-API Keys और सामान्य टैप से पिन चेंज
   function handlePinTilePressStart() {
     pinTileLongTriggered = false;
     clearTimeout(pinTileTimer);
@@ -391,6 +392,26 @@
   }
   function handlePinTilePressCancel() {
     clearTimeout(pinTileTimer);
+  }
+
+  // उम्र गणना सहायक फ़ंक्शन: (** वर्ष ** माह)
+  function calculateAgeYearsMonths(dobDotOrIso) {
+    if (!dobDotOrIso || dobDotOrIso === '-' || dobDotOrIso === 'उपलब्ध नहीं') return '';
+    var iso = formatDotToIso(dobDotOrIso);
+    if (!iso || iso.indexOf('-') === -1) return '';
+    var birthDate = new Date(iso + 'T00:00:00');
+    if (isNaN(birthDate.getTime())) return '';
+    var today = new Date();
+    var years = today.getFullYear() - birthDate.getFullYear();
+    var months = today.getMonth() - birthDate.getMonth();
+    var days = today.getDate() - birthDate.getDate();
+    if (days < 0) months--;
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+    if (years < 0) return '';
+    return '(' + years + ' वर्ष ' + months + ' माह)';
   }
 
   function getSchoolLogoSVG(sizePx) {
@@ -461,12 +482,12 @@
     return p[0].padStart(2, '0') + '.' + p[1].padStart(2, '0') + '.' + yyyy;
   }
   function formatIsoToDot(isoStr) {
-    if (!isoStr) return '-';
+    if (!isoStr) return '';
     if (isoStr.indexOf('-') !== -1) return isoStr.split('-').reverse().join('.');
     return isoStr;
   }
   function formatDotToIso(dotStr) {
-    if (!dotStr || dotStr === '-') return '';
+    if (!dotStr || dotStr === '-' || dotStr === 'उपलब्ध नहीं') return '';
     if (dotStr.indexOf('.') !== -1) {
       var parts = dotStr.split('.');
       if (parts.length === 3) {
@@ -747,7 +768,8 @@
     document.getElementById('tabBtnAbsent').className = (tab === 'absent') ? 'class-pill active' : 'class-pill';
     renderDateAttendanceModalList();
   }
-  // ✅ बदलाव 2: उपस्थित/अनुपस्थित सूची में रोल गोले या नाम पर Long-Press करने पर पूरा प्रोफाइल (openStudentFullDetailsModal) खुलेगा
+
+  // उपस्थिति/अनुपस्थित सूची में रोल गोले या नाम पर Long-Press करने पर छात्र प्रोफाइल खुलेगी
   function renderDateAttendanceModalList() {
     var activeDate = getActiveDateKey();
     var q = (document.getElementById('dateModalSearch').value || '').trim().toLowerCase();
@@ -785,7 +807,7 @@
     document.getElementById('stuDob').value = '';
     document.getElementById('stuMobile').value = '';
     document.getElementById('stuAdmNo').value = '';
-    document.getElementById('stuAdmDate').value = getTodayIso();
+    document.getElementById('stuAdmDate').value = ''; // खाली रहेगा
     document.getElementById('stuAddress').value = '';
     tempStudentPhotos = [];
     renderTempPhotos();
@@ -802,14 +824,14 @@
     document.getElementById('stuName').value = s.name || '';
     document.getElementById('stuGender').value = s.gender || 'M';
     document.getElementById('stuCategory').value = s.category || 'EBC';
-    document.getElementById('stuAadhaar').value = (s.aadhaar && s.aadhaar !== '-') ? s.aadhaar : '';
-    document.getElementById('stuFather').value = (s.father && s.father !== '-') ? s.father : '';
-    document.getElementById('stuMother').value = (s.mother && s.mother !== '-') ? s.mother : '';
+    document.getElementById('stuAadhaar').value = (s.aadhaar && s.aadhaar !== '-' && s.aadhaar !== 'उपलब्ध नहीं') ? s.aadhaar : '';
+    document.getElementById('stuFather').value = (s.father && s.father !== '-' && s.father !== 'उपलब्ध नहीं') ? s.father : '';
+    document.getElementById('stuMother').value = (s.mother && s.mother !== '-' && s.mother !== 'उपलब्ध नहीं') ? s.mother : '';
     document.getElementById('stuDob').value = formatDotToIso(s.dob);
-    document.getElementById('stuMobile').value = (s.mobile && s.mobile !== '-') ? s.mobile : '';
-    document.getElementById('stuAdmNo').value = (s.admNo && s.admNo !== '-') ? s.admNo : '';
+    document.getElementById('stuMobile').value = (s.mobile && s.mobile !== '-' && s.mobile !== 'उपलब्ध नहीं') ? s.mobile : '';
+    document.getElementById('stuAdmNo').value = (s.admNo && s.admNo !== '-' && s.admNo !== 'उपलब्ध नहीं') ? s.admNo : '';
     document.getElementById('stuAdmDate').value = formatDotToIso(s.admDate);
-    document.getElementById('stuAddress').value = (s.address && s.address !== '-') ? s.address : '';
+    document.getElementById('stuAddress').value = (s.address && s.address !== '-' && s.address !== 'उपलब्ध नहीं') ? s.address : '';
     tempStudentPhotos = s.photos ? s.photos.slice() : [];
     renderTempPhotos();
     document.getElementById('addStudentModal').classList.add('open');
@@ -851,6 +873,8 @@
     var name = document.getElementById('stuName').value.trim();
     var gender = document.getElementById('stuGender').value;
     var category = document.getElementById('stuCategory').value;
+
+    // ऐच्छिक फ़ील्ड्स
     var aadhaar = document.getElementById('stuAadhaar').value.trim();
     var father = document.getElementById('stuFather').value.trim();
     var mother = document.getElementById('stuMother').value.trim();
@@ -860,8 +884,11 @@
     var admDate = document.getElementById('stuAdmDate').value;
     var address = document.getElementById('stuAddress').value.trim();
 
+    // केवल अनिवार्य फ़ील्ड्स की जाँच (रोल और नाम)
     if (!roll || !name) { showToast('रोल और नाम भरें'); return; }
-    if (!isExactDigits(aadhaar, 12)) { showToast('❌ 12 अंकों का आधार डालें'); return; }
+
+    // ऐच्छिक होने पर: यदि भरा गया है तो ही अंकों की पुष्टि करें
+    if (aadhaar && !isExactDigits(aadhaar, 12)) { showToast('❌ 12 अंकों का आधार डालें'); return; }
     if (mobile && !isExactDigits(mobile, 10)) { showToast('❌ 10 अंकों का मोबाइल डालें'); return; }
 
     var duplicate = students.find(function(s) { return s.className === cls && Number(s.roll) === Number(roll) && s.id !== editId; });
@@ -874,14 +901,14 @@
       name: name,
       gender: gender || 'M',
       category: category || 'EBC',
-      aadhaar: aadhaar,
-      father: father || '-',
-      mother: mother || '-',
-      dob: dob ? formatIsoToDot(dob) : '-',
-      mobile: mobile || '-',
-      admNo: admNo || '-',
-      admDate: admDate ? formatIsoToDot(admDate) : getTodayShort(),
-      address: address || '-',
+      aadhaar: aadhaar || '',
+      father: father || '',
+      mother: mother || '',
+      dob: dob ? formatIsoToDot(dob) : '',
+      mobile: mobile || '',
+      admNo: admNo || '',
+      admDate: admDate ? formatIsoToDot(admDate) : '',
+      address: address || '',
       photos: tempStudentPhotos.slice()
     };
 
@@ -950,6 +977,7 @@
   }
   function handleDpPressEnd() { clearTimeout(dpPressTimer); }
 
+  // App के अंदर Save छात्र प्रोफाइल: उम्र (** वर्ष ** माह) और खाली बॉक्स
   function openStudentFullDetailsModal(stuId) {
     var s = students.find(function(x) { return x.id === stuId; });
     if (!s) return;
@@ -966,14 +994,21 @@
       return '<div class="att-history-row"><span>📅 ' + h.date + '</span><b>' + icon + '</b></div>';
     }).join('');
 
+    var ageText = calculateAgeYearsMonths(s.dob);
+    var dobDisplay = (s.dob && s.dob !== '-' && s.dob !== 'उपलब्ध नहीं') ? (s.dob + (ageText ? ' ' + ageText : '')) : '';
+    var admDisplay = (s.admNo && s.admNo !== '-' && s.admNo !== 'उपलब्ध नहीं') ? s.admNo : '';
+    if (s.admDate && s.admDate !== '-' && s.admDate !== 'उपलब्ध नहीं') {
+      admDisplay += (admDisplay ? ' (' + s.admDate + ')' : s.admDate);
+    }
+
     document.getElementById('fullDetailModalBody').innerHTML =
       '<div class="student-meta-grid">' +
         '<div class="meta-box-item"><b>नाम:</b> ' + s.name + '</div><div class="meta-box-item"><b>कक्षा/रोल:</b> ' + s.className + ' (' + formatRollTwoDigits(s.roll) + ')</div>' +
-        '<div class="meta-box-item"><b>लिंग/कोटि:</b> ' + (s.gender || 'M') + ' / ' + (s.category || '-') + '</div><div class="meta-box-item"><b>M:</b> ' + (s.mobile || '-') + '</div>' +
-        '<div class="meta-box-item" style="grid-column:span 2;"><b>A:</b> ' + (s.aadhaar || '-') + '</div>' +
-        '<div class="meta-box-item"><b>पिता:</b> ' + (s.father || '-') + '</div><div class="meta-box-item"><b>माता:</b> ' + (s.mother || '-') + '</div>' +
-        '<div class="meta-box-item"><b>DOB:</b> ' + (s.dob || '-') + '</div><div class="meta-box-item"><b>नामांकन:</b> ' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')</div>' +
-        '<div class="meta-box-item" style="grid-column:span 2;"><b>पता:</b> ' + (s.address || '-') + '</div>' +
+        '<div class="meta-box-item"><b>लिंग/कोटि:</b> ' + (s.gender || 'M') + ' / ' + (s.category || '') + '</div><div class="meta-box-item"><b>M:</b> ' + ((s.mobile && s.mobile !== '-' && s.mobile !== 'उपलब्ध नहीं') ? s.mobile : '') + '</div>' +
+        '<div class="meta-box-item" style="grid-column:span 2;"><b>A:</b> ' + ((s.aadhaar && s.aadhaar !== '-' && s.aadhaar !== 'उपलब्ध नहीं') ? s.aadhaar : '') + '</div>' +
+        '<div class="meta-box-item"><b>पिता:</b> ' + ((s.father && s.father !== '-' && s.father !== 'उपलब्ध नहीं') ? s.father : '') + '</div><div class="meta-box-item"><b>माता:</b> ' + ((s.mother && s.mother !== '-' && s.mother !== 'उपलब्ध नहीं') ? s.mother : '') + '</div>' +
+        '<div class="meta-box-item"><b>DOB:</b> ' + dobDisplay + '</div><div class="meta-box-item"><b>नामांकन:</b> ' + admDisplay + '</div>' +
+        '<div class="meta-box-item" style="grid-column:span 2;"><b>पता:</b> ' + ((s.address && s.address !== '-' && s.address !== 'उपलब्ध नहीं') ? s.address : '') + '</div>' +
       '</div>' +
       '<div class="att-summary-bar"><div style="font-weight:900;font-size:14.5px;color:#1e3a8a;">📊 उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div><div class="att-history-box">' + fullHistoryRows + '</div></div>' +
       '<div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn-edit-sm" onclick="closeModal(\'studentFullDetailsModal\');openEditStudentModal(\'' + s.id + '\')">✏️ सुधारें</button><button type="button" class="btn-danger" onclick="closeModal(\'studentFullDetailsModal\');deleteStudent(\'' + s.id + '\')">🗑️ हटाएं</button></div>';
@@ -1074,32 +1109,47 @@
     list.forEach(function(s) {
       var st = presentIds.indexOf(s.id) !== -1 ? 'उपस्थित' : 'अनुपस्थित';
       var stStats = getStudentAttendanceStats(s.id);
-      csv += '"' + formatRollTwoDigits(s.roll) + '","' + s.name + '","' + s.className + '","' + (s.gender || 'M') + '","' + (s.category || '-') + '","' + (s.aadhaar || '-') + '","' + (s.father || '-') + '","' + (s.mother || '-') + '","' + (s.dob || '-') + '","' + (s.mobile || '-') + '","' + (s.admNo || '-') + '","' + (s.admDate || '-') + '","' + (s.address || '-') + '","' + st + '","' + stStats.pct + '%"' + NL;
+      csv += '"' + formatRollTwoDigits(s.roll) + '","' + s.name + '","' + s.className + '","' + (s.gender || 'M') + '","' + (s.category || 'उपलब्ध नहीं') + '","' + (s.aadhaar || 'उपलब्ध नहीं') + '","' + (s.father || 'उपलब्ध नहीं') + '","' + (s.mother || 'उपलब्ध नहीं') + '","' + (s.dob || 'उपलब्ध नहीं') + '","' + (s.mobile || 'उपलब्ध नहीं') + '","' + (s.admNo || 'उपलब्ध नहीं') + '","' + (s.admDate || 'उपलब्ध नहीं') + '","' + (s.address || 'उपलब्ध नहीं') + '","' + st + '","' + stStats.pct + '%"' + NL;
     });
     shareOrSaveTextFile('Students_' + cls + '.csv', csv, 'text/csv');
   }
 
+  // ऑल स्टूडेंट्स PDF में प्रिंट डेट और खाली फ़ील्ड्स में "उपलब्ध नहीं"
   function exportAllStudentsFullPDF() {
     var cls = document.getElementById('exportSingleClassSelect').value;
     var activeDate = getActiveDateKey();
     var presentIds = attendance[activeDate] || [];
     var list = sortStudentsByRollAsc((cls === 'सभी') ? students : students.filter(function(s) { return s.className === cls; }));
     if (list.length === 0) { showToast('कोई छात्र नहीं'); return; }
+    var printDateStr = shortKeyToFullYearDot(getTodayShort());
     var rows = list.map(function(s) {
       var st = presentIds.indexOf(s.id) !== -1 ? '✅' : (isSundayOrHoliday(activeDate, s.className) ? '✔️' : '❌');
       var stStats = getStudentAttendanceStats(s.id);
       var photoHtml = (s.photos && s.photos.length > 0)
         ? '<img src="' + s.photos[0] + '" style="width:34px;height:34px;border-radius:50%;object-fit:cover;display:block;margin:2px auto 0;">'
         : '<div style="width:26px;height:26px;border-radius:50%;background:#dc2626;color:#fff;font-size:10px;line-height:26px;margin:2px auto 0;">🔴</div>';
+
+      var fName = (s.father && s.father !== '-' && s.father !== 'उपलब्ध नहीं') ? s.father : 'उपलब्ध नहीं';
+      var mName = (s.mother && s.mother !== '-' && s.mother !== 'उपलब्ध नहीं') ? s.mother : 'उपलब्ध नहीं';
+      var mobVal = (s.mobile && s.mobile !== '-' && s.mobile !== 'उपलब्ध नहीं') ? s.mobile : 'उपलब्ध नहीं';
+      var aadhVal = (s.aadhaar && s.aadhaar !== '-' && s.aadhaar !== 'उपलब्ध नहीं') ? s.aadhaar : 'उपलब्ध नहीं';
+      var ageCalc = calculateAgeYearsMonths(s.dob);
+      var dobVal = (s.dob && s.dob !== '-' && s.dob !== 'उपलब्ध नहीं') ? (s.dob + (ageCalc ? '<br><small>' + ageCalc + '</small>' : '')) : 'उपलब्ध नहीं';
+      var admVal = (s.admNo && s.admNo !== '-' && s.admNo !== 'उपलब्ध नहीं') ? s.admNo : 'उपलब्ध नहीं';
+      var admDateVal = (s.admDate && s.admDate !== '-' && s.admDate !== 'उपलब्ध नहीं') ? s.admDate : 'उपलब्ध नहीं';
+      var addrVal = (s.address && s.address !== '-' && s.address !== 'उपलब्ध नहीं') ? s.address : 'उपलब्ध नहीं';
+
       return '<tr><td style="text-align:center;"><b>' + formatRollTwoDigits(s.roll) + '</b>' + photoHtml + '</td>' +
-        '<td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || '-') + '</small></td>' +
-        '<td>' + (s.father || '-') + '<br>' + (s.mother || '-') + '</td>' +
-        '<td style="white-space:nowrap;"><b>M:</b> ' + (s.mobile || '-') + '<br><b>A:</b> ' + (s.aadhaar || '-') + '</td>' +
-        '<td>' + (s.dob || '-') + '<br>' + (s.admNo || '-') + '<br><small>(' + (s.admDate || '-') + ')</small></td>' +
-        '<td>' + (s.address || '-') + '</td>' +
+        '<td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || 'उपलब्ध नहीं') + '</small></td>' +
+        '<td>' + fName + '<br>' + mName + '</td>' +
+        '<td style="white-space:nowrap;"><b>M:</b> ' + mobVal + '<br><b>A:</b> ' + aadhVal + '</td>' +
+        '<td>' + dobVal + '<br>' + admVal + '<br><small>(' + admDateVal + ')</small></td>' +
+        '<td>' + addrVal + '</td>' +
         '<td style="text-align:center;">' + st + '<br><b>' + stStats.pct + '%</b><br><small>(' + stStats.presentDays + '/' + stStats.totalDays + ')</small></td></tr>';
     }).join('');
-    var headerHtml = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:10px;">' + getSchoolLogoSVG(48) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">छात्र प्रोफाइल एवं उपस्थिति सूची (कक्षा: ' + cls + ')</div></div></div>';
+    var headerHtml = '<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:10px;">' +
+      '<div style="display:flex;align-items:center;gap:12px;">' + getSchoolLogoSVG(48) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">छात्र प्रोफाइल एवं उपस्थिति सूची (कक्षा: ' + cls + ')</div></div></div>' +
+      '<div style="font-size:11px;color:#334155;border:1px solid #cbd5e1;padding:4px 8px;border-radius:6px;"><b>प्रिंट तिथि:</b> ' + printDateStr + '</div></div>';
     printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>@page{size:A4 portrait;margin:8mm;}body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;text-align:left;vertical-align:middle;}th{background:#f1f5f9;}</style></head><body>' + headerHtml + '<table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' + getOfficialPdfSignatureFooter() + '</body></html>', 'Profile_List_' + cls);
   }
 
@@ -1108,21 +1158,38 @@
     if (!s) return;
     var stStats = getStudentAttendanceStats(s.id);
     var NL = String.fromCharCode(10);
-    var csv = 'नाम,"' + s.name + '",रोल,"' + formatRollTwoDigits(s.roll) + '",कक्षा,"' + s.className + '",लिंग,"' + (s.gender || 'M') + '",कोटि,"' + (s.category || '-') + '"' + NL +
-      'पिता,"' + (s.father || '-') + '",माता,"' + (s.mother || '-') + '",मोबाइल,"' + (s.mobile || '-') + '",आधार,"' + (s.aadhaar || '-') + '"' + NL +
-      'जन्म तिथि,"' + (s.dob || '-') + '",नामांकन,"' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')",पता,"' + (s.address || '-') + '"' + NL + NL +
+    var csv = 'नाम,"' + s.name + '",रोल,"' + formatRollTwoDigits(s.roll) + '",कक्षा,"' + s.className + '",लिंग,"' + (s.gender || 'M') + '",कोटि,"' + (s.category || 'उपलब्ध नहीं') + '"' + NL +
+      'पिता,"' + (s.father || 'उपलब्ध नहीं') + '",माता,"' + (s.mother || 'उपलब्ध नहीं') + '",मोबाइल,"' + (s.mobile || 'उपलब्ध नहीं') + '",आधार,"' + (s.aadhaar || 'उपलब्ध नहीं') + '"' + NL +
+      'जन्म तिथि,"' + (s.dob || 'उपलब्ध नहीं') + '",नामांकन,"' + (s.admNo || 'उपलब्ध नहीं') + ' (' + (s.admDate || 'उपलब्ध नहीं') + ')",पता,"' + (s.address || 'उपलब्ध नहीं') + '"' + NL + NL +
       'तारीख,स्थिति' + NL;
     stStats.history.forEach(function(h) { csv += '"' + h.date + '","' + (h.present ? '✅ उपस्थित' : (h.holiday ? '✔️ अवकाश' : '❌ अनुपस्थित')) + '"' + NL; });
     shareOrSaveTextFile('Student_' + s.roll + '.csv', csv, 'text/csv');
   }
 
+  // छात्र व्यक्तिगत PDF: DP के पास प्रिंट डेट, खाली जगह "उपलब्ध नहीं" और DOB में उम्र
   function downloadStudentAttendancePDF(stuId) {
     var s = students.find(function(x) { return x.id === stuId; });
     if (!s) return;
     var stStats = getStudentAttendanceStats(s.id);
+    var printDateStr = shortKeyToFullYearDot(getTodayShort());
     var avatarHtml = (s.photos && s.photos.length > 0)
       ? '<img src="' + s.photos[0] + '" style="width:72px;height:72px;border-radius:10px;object-fit:cover;border:2px solid #1e3a8a;">'
       : '<div style="width:72px;height:72px;border-radius:10px;background:#fee2e2;color:#dc2626;display:flex;align-items:center;justify-content:center;font-weight:bold;border:2px solid #dc2626;">🔴</div>';
+
+    var ageText = calculateAgeYearsMonths(s.dob);
+    var pdfDobAge = (s.dob && s.dob !== '-' && s.dob !== 'उपलब्ध नहीं') ? (s.dob + (ageText ? ' ' + ageText : '')) : 'उपलब्ध नहीं';
+    var pdfFather = (s.father && s.father !== '-' && s.father !== 'उपलब्ध नहीं') ? s.father : 'उपलब्ध नहीं';
+    var pdfMother = (s.mother && s.mother !== '-' && s.mother !== 'उपलब्ध नहीं') ? s.mother : 'उपलब्ध नहीं';
+    var pdfMobile = (s.mobile && s.mobile !== '-' && s.mobile !== 'उपलब्ध नहीं') ? s.mobile : 'उपलब्ध नहीं';
+    var pdfAadhaar = (s.aadhaar && s.aadhaar !== '-' && s.aadhaar !== 'उपलब्ध नहीं') ? s.aadhaar : 'उपलब्ध नहीं';
+    var pdfAddress = (s.address && s.address !== '-' && s.address !== 'उपलब्ध नहीं') ? s.address : 'उपलब्ध नहीं';
+
+    var pdfAdmFull = '';
+    if (s.admNo && s.admNo !== '-' && s.admNo !== 'उपलब्ध नहीं') pdfAdmFull += s.admNo;
+    if (s.admDate && s.admDate !== '-' && s.admDate !== 'उपलब्ध नहीं') {
+      pdfAdmFull += (pdfAdmFull ? ' (' + s.admDate + ')' : s.admDate);
+    }
+    if (!pdfAdmFull) pdfAdmFull = 'उपलब्ध नहीं';
 
     var rows = stStats.history.map(function(h) {
       return '<tr><td>' + h.date + '</td><td style="text-align:center;">' + (h.present ? '✅ उपस्थित' : (h.holiday ? '✔️ अवकाश' : '❌ अनुपस्थित')) + '</td></tr>';
@@ -1131,7 +1198,7 @@
     var htmlDoc = '<html lang="hi"><head><meta charset="UTF-8"><style>' +
       '@page{size:A4 portrait;margin:10mm;}body{font-family:sans-serif;font-size:12px;color:#0f172a;}' +
       '.header-bar{display:flex;align-items:center;justify-content:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:12px;}' +
-      '.profile-top{display:flex;gap:14px;align-items:center;margin-bottom:12px;}' +
+      '.profile-top{display:flex;align-items:center;gap:16px;margin-bottom:12px;background:#f8fafc;padding:10px;border-radius:10px;border:1px solid #e2e8f0;}' +
       '.box-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;}' +
       '.info-box{border:1.5px solid #475569;border-radius:7px;padding:7px 10px;background:#f8fafc;}' +
       '.info-lbl{font-size:10.5px;color:#475569;font-weight:bold;display:block;margin-bottom:2px;}' +
@@ -1139,21 +1206,25 @@
       'table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #333;padding:6px 8px;text-align:left;}th{background:#e2e8f0;}' +
       '</style></head><body>' +
       '<div class="header-bar">' + getSchoolLogoSVG(50) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:13px;font-weight:bold;margin-top:3px;">छात्र व्यक्तिगत प्रोफाइल एवं उपस्थिति प्रतिवेदन</div></div></div>' +
-      '<div class="profile-top">' + avatarHtml +
-        '<div><h2 style="margin:0 0 4px 0;">' + s.name + ' (रोल: ' + formatRollTwoDigits(s.roll) + ')</h2>' +
-        '<div style="font-size:13px;font-weight:bold;color:#15803d;">उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div></div>' +
+      '<div class="profile-top">' +
+        avatarHtml +
+        '<div style="flex:1;">' +
+          '<h2 style="margin:0 0 3px 0;">' + s.name + ' (रोल: ' + formatRollTwoDigits(s.roll) + ')</h2>' +
+          '<div style="font-size:13px;font-weight:bold;color:#15803d;">उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div>' +
+          '<div style="font-size:11px;color:#475569;margin-top:4px;"><b>प्रिंट तिथि:</b> ' + printDateStr + '</div>' +
+        '</div>' +
       '</div>' +
       '<div class="box-grid">' +
         '<div class="info-box"><span class="info-lbl">नाम</span><span class="info-val">' + s.name + '</span></div>' +
         '<div class="info-box"><span class="info-lbl">कक्षा एवं रोल</span><span class="info-val">कक्षा ' + s.className + ' | रोल: ' + formatRollTwoDigits(s.roll) + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">लिंग एवं कोटि</span><span class="info-val">' + (s.gender || 'M') + ' / ' + (s.category || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">मोबाइल</span><span class="info-val">' + (s.mobile || '-') + '</span></div>' +
-        '<div class="info-box" style="grid-column:span 2;"><span class="info-lbl">आधार संख्या</span><span class="info-val">' + (s.aadhaar || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">पिता का नाम</span><span class="info-val">' + (s.father || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">माता का नाम</span><span class="info-val">' + (s.mother || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">जन्म तिथि</span><span class="info-val">' + (s.dob || '-') + '</span></div>' +
-        '<div class="info-box"><span class="info-lbl">नामांकन विवरण</span><span class="info-val">' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')</span></div>' +
-        '<div class="info-box" style="grid-column:span 2;"><span class="info-lbl">पता</span><span class="info-val">' + (s.address || '-') + '</span></div>' +
+        '<div class="info-box"><span class="info-lbl">लिंग एवं कोटि</span><span class="info-val">' + (s.gender || 'M') + ' / ' + (s.category || 'उपलब्ध नहीं') + '</span></div>' +
+        '<div class="info-box"><span class="info-lbl">मोबाइल</span><span class="info-val">' + pdfMobile + '</span></div>' +
+        '<div class="info-box" style="grid-column:span 2;"><span class="info-lbl">आधार संख्या</span><span class="info-val">' + pdfAadhaar + '</span></div>' +
+        '<div class="info-box"><span class="info-lbl">पिता का नाम</span><span class="info-val">' + pdfFather + '</span></div>' +
+        '<div class="info-box"><span class="info-lbl">माता का नाम</span><span class="info-val">' + pdfMother + '</span></div>' +
+        '<div class="info-box"><span class="info-lbl">जन्म तिथि (उम्र)</span><span class="info-val">' + pdfDobAge + '</span></div>' +
+        '<div class="info-box"><span class="info-lbl">नामांकन विवरण</span><span class="info-val">' + pdfAdmFull + '</span></div>' +
+        '<div class="info-box" style="grid-column:span 2;"><span class="info-lbl">पता</span><span class="info-val">' + pdfAddress + '</span></div>' +
       '</div>' +
       '<h3>📅 उपस्थिति विवरण</h3>' +
       '<table><thead><tr><th>तारीख</th><th style="text-align:center;">स्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' +
@@ -1245,7 +1316,7 @@
     var csv = 'रोल नं,नाम,कक्षा,लिंग,कोटि,आधार नं,पिता,माता,मोबाइल,उपस्थित/कार्यदिवस,उपस्थिति %' + NL;
     list.forEach(function(s) {
       var stStats = getStudentAttendanceStats(s.id, fromM, toM);
-      csv += '"' + formatRollTwoDigits(s.roll) + '","' + s.name + '","' + s.className + '","' + (s.gender || 'M') + '","' + (s.category || '-') + '","' + (s.aadhaar || '-') + '","' + (s.father || '-') + '","' + (s.mother || '-') + '","' + (s.mobile || '-') + '","' + stStats.presentDays + '/' + stStats.totalDays + '","' + stStats.pct + '%"' + NL;
+      csv += '"' + formatRollTwoDigits(s.roll) + '","' + s.name + '","' + s.className + '","' + (s.gender || 'M') + '","' + (s.category || 'उपलब्ध नहीं') + '","' + (s.aadhaar || 'उपलब्ध नहीं') + '","' + (s.father || 'उपलब्ध नहीं') + '","' + (s.mother || 'उपलब्ध नहीं') + '","' + (s.mobile || 'उपलब्ध नहीं') + '","' + stStats.presentDays + '/' + stStats.totalDays + '","' + stStats.pct + '%"' + NL;
     });
     shareOrSaveTextFile('Report_' + cls + '.csv', csv, 'text/csv');
   }
@@ -1258,7 +1329,17 @@
     if (list.length === 0) { showToast('कोई छात्र नहीं'); return; }
     var rows = list.map(function(s) {
       var stStats = getStudentAttendanceStats(s.id, fromM, toM);
-      return '<tr><td><b>' + formatRollTwoDigits(s.roll) + '</b></td><td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || '-') + '</small></td><td>' + (s.father || '-') + '<br>' + (s.mother || '-') + '</td><td><b>M:</b> ' + (s.mobile || '-') + '<br><b>A:</b> ' + (s.aadhaar || '-') + '</td><td>' + (s.dob || '-') + '<br>' + (s.admNo || '-') + ' (' + (s.admDate || '-') + ')</td><td>' + (s.address || '-') + '</td><td><b>' + stStats.pct + '%</b> (' + stStats.presentDays + '/' + stStats.totalDays + ')</td></tr>';
+      var fVal = (s.father && s.father !== '-' && s.father !== 'उपलब्ध नहीं') ? s.father : 'उपलब्ध नहीं';
+      var mVal = (s.mother && s.mother !== '-' && s.mother !== 'उपलब्ध नहीं') ? s.mother : 'उपलब्ध नहीं';
+      var mobVal = (s.mobile && s.mobile !== '-' && s.mobile !== 'उपलब्ध नहीं') ? s.mobile : 'उपलब्ध नहीं';
+      var aadhVal = (s.aadhaar && s.aadhaar !== '-' && s.aadhaar !== 'उपलब्ध नहीं') ? s.aadhaar : 'उपलब्ध नहीं';
+      var ageCalc = calculateAgeYearsMonths(s.dob);
+      var dobVal = (s.dob && s.dob !== '-' && s.dob !== 'उपलब्ध नहीं') ? (s.dob + (ageCalc ? '<br><small>' + ageCalc + '</small>' : '')) : 'उपलब्ध नहीं';
+      var admVal = (s.admNo && s.admNo !== '-' && s.admNo !== 'उपलब्ध नहीं') ? s.admNo : 'उपलब्ध नहीं';
+      var admDateVal = (s.admDate && s.admDate !== '-' && s.admDate !== 'उपलब्ध नहीं') ? s.admDate : 'उपलब्ध नहीं';
+      var addrVal = (s.address && s.address !== '-' && s.address !== 'उपलब्ध नहीं') ? s.address : 'उपलब्ध नहीं';
+
+      return '<tr><td><b>' + formatRollTwoDigits(s.roll) + '</b></td><td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || 'उपलब्ध नहीं') + '</small></td><td>' + fVal + '<br>' + mVal + '</td><td><b>M:</b> ' + mobVal + '<br><b>A:</b> ' + aadhVal + '</td><td>' + dobVal + '<br>' + admVal + ' (' + admDateVal + ')</td><td>' + addrVal + '</td><td><b>' + stStats.pct + '%</b> (' + stStats.presentDays + '/' + stStats.totalDays + ')</td></tr>';
     }).join('');
     var topHead = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:8px;">' + getSchoolLogoSVG(46) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">समेकित उपस्थिति प्रतिवेदन (' + cls + ' | ' + fromM + ' से ' + toM + ')</div></div></div>';
     printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;}</style></head><body>' + topHead + '<table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' + getOfficialPdfSignatureFooter() + '</body></html>', 'Class_Report_' + cls);
