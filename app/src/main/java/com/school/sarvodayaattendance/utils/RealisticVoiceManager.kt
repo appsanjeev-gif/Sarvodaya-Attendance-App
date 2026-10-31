@@ -11,18 +11,20 @@ import android.os.Looper
 import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.net.URLEncoder
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.util.Calendar
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.math.PI
+import kotlin.math.exp
+import kotlin.math.sin
 import kotlin.random.Random
 
 class RealisticVoiceManager(private val context: Context) {
@@ -41,39 +43,69 @@ class RealisticVoiceManager(private val context: Context) {
     private val geminiKeyIndex = AtomicInteger(0)
     private val elevenKeyIndex = AtomicInteger(0)
 
+    // ✅ बॉक्स 1: केवल Gemini Keys के लिए
+    fun getGeminiKeysString(): String {
+        val dedicated = prefs.getString("custom_gemini_only_keys", null)
+        if (dedicated != null) return dedicated
+        val legacy = prefs.getString("custom_gemini_api_key", "") ?: ""
+        return legacy.split(",", "\n", ";", " ")
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !it.startsWith("sk_", ignoreCase = true) }
+            .joinToString("\n")
+    }
+
+    // ✅ बॉक्स 2: केवल ElevenLabs Keys के लिए
+    fun getElevenLabsKeysString(): String {
+        val dedicated = prefs.getString("custom_eleven_only_keys", null)
+        if (dedicated != null) return dedicated
+        val legacy = prefs.getString("custom_gemini_api_key", "") ?: ""
+        return legacy.split(",", "\n", ";", " ")
+            .map { it.trim() }
+            .filter { it.startsWith("sk_", ignoreCase = true) || (it.length == 32 && it.all { ch -> ch.isLetterOrDigit() }) }
+            .joinToString("\n")
+    }
+
+    // ✅ दोनों अलग-अलग बॉक्स से Keys सेव करने का फंक्शन
+    fun saveSeparateApiKeys(geminiRaw: String, elevenRaw: String) {
+        val gClean = geminiRaw.trim()
+        val eClean = elevenRaw.trim()
+        val combined = listOf(gClean, eClean).filter { it.isNotEmpty() }.joinToString("\n")
+
+        prefs.edit()
+            .putString("custom_gemini_only_keys", gClean)
+            .putString("custom_eleven_only_keys", eClean)
+            .putString("custom_gemini_api_key", combined)
+            .apply()
+
+        maintainTwoHourRollingWelcomeCache()
+    }
+
+    // पैक इम्पोर्ट के साथ बैकवर्ड कम्पैटिबिलिटी के लिए
     fun getApiKey(): String {
         return prefs.getString("custom_gemini_api_key", "") ?: ""
     }
 
     fun saveCustomApiKey(newKey: String) {
-        prefs.edit().putString("custom_gemini_api_key", newKey.trim()).apply()
-        preWarmStartupWelcomesInBackground()
-    }
-
-    private fun parseAllSavedTokens(): List<String> {
-        val savedRaw = prefs.getString("custom_gemini_api_key", "") ?: ""
-        return savedRaw
-            .split(",", "\n", ";", " ")
-            .map { it.trim() }
-            .filter { it.length > 15 }
+        val tokens = newKey.split(",", "\n", ";", " ").map { it.trim() }.filter { it.length > 10 }
+        val gKeys = tokens.filter { !it.startsWith("sk_", ignoreCase = true) && !(it.length == 32 && it.all { c -> c.isLetterOrDigit() }) }.joinToString("\n")
+        val eKeys = tokens.filter { it.startsWith("sk_", ignoreCase = true) || (it.length == 32 && it.all { c -> c.isLetterOrDigit() }) }.joinToString("\n")
+        saveSeparateApiKeys(gKeys, eKeys)
     }
 
     private fun getGeminiKeyPool(): List<String> {
-        val all = parseAllSavedTokens()
-        val geminiList = all.filter {
-            it.startsWith("AQ.", ignoreCase = true) ||
-            it.startsWith("AIza", ignoreCase = true) ||
-            (!it.startsWith("sk_", ignoreCase = true) && it.length >= 35)
+        val raw = getGeminiKeysString()
+        val list = raw.split(",", "\n", ";", " ").map { it.trim() }.filter { it.length > 15 }
+        val hasCustomEleven = getElevenLabsKeyPool().isNotEmpty()
+        return when {
+            list.isNotEmpty() -> list
+            hasCustomEleven -> emptyList() // यदि यूजर ने केवल ElevenLabs Key रखी है, तो डिफ़ॉल्ट Gemini Key ट्रिगर नहीं होगी
+            else -> builtInGeminiKeys
         }
-        return if (geminiList.isNotEmpty()) geminiList else builtInGeminiKeys
     }
 
     private fun getElevenLabsKeyPool(): List<String> {
-        val all = parseAllSavedTokens()
-        return all.filter {
-            it.startsWith("sk_", ignoreCase = true) ||
-            (it.length == 32 && it.all { ch -> ch.isLetterOrDigit() })
-        }
+        val raw = getElevenLabsKeysString()
+        return raw.split(",", "\n", ";", " ").map { it.trim() }.filter { it.length > 15 }
     }
 
     private data class AiVoiceProfile(
@@ -82,23 +114,18 @@ class RealisticVoiceManager(private val context: Context) {
         val stylePrompt: String
     )
 
+    // ✅ रेडियो एंकर (RJ) जैसी जीवंत और ऊर्जावान टोन
     private val aiVoiceProfiles = listOf(
         AiVoiceProfile(
             name = "Sadachbia",
             elevenVoiceId = "pNInz6obpgDQGcFmaJgB",
-            stylePrompt = "Read aloud in a lively, warm, lower-pitch Indian Hindi male voice:"
+            stylePrompt = "Speak like an energetic, proud, warm Indian Hindi radio RJ host with a natural smile and lively pace:"
         ),
         AiVoiceProfile(
             name = "Autonoe",
             elevenVoiceId = "EXAVITQu4vr4xnSDxMaL",
-            stylePrompt = "Read aloud in a bright, clear, natural middle-pitch Indian Hindi female voice:"
+            stylePrompt = "Speak like a cheerful, bright, inspiring Indian Hindi female radio RJ announcer with warmth and pride:"
         )
-    )
-
-    private val startupWelcomeMessages = listOf(
-        "सुप्रभात! सर्वोदय मध्य विद्यालय, सोहसराय में आपका हार्दिक स्वागत है। स्मार्ट उपस्थिति प्रणाली अब तैयार है।",
-        "नमस्कार! सर्वोदय मध्य विद्यालय, सोहसराय के स्मार्ट कैंपस में आपका स्वागत है। आइए, आज की उपस्थिति शुरू करें।",
-        "नमस्कार! शिक्षा के मंदिर सर्वोदय मध्य विद्यालय, सोहसराय में आपका स्वागत है। कृपया कैमरे के सामने आकर अपनी उपस्थिति दर्ज कराएं।"
     )
 
     var isVoiceEnabled = true
@@ -109,7 +136,7 @@ class RealisticVoiceManager(private val context: Context) {
 
     private var unlockRunnable: Runnable? = null
     private val voiceExecutor = Executors.newSingleThreadExecutor()
-    private val preWarmExecutor = Executors.newSingleThreadExecutor()
+    private val rollingCacheExecutor = Executors.newSingleThreadExecutor()
     private var currentAudioTrack: AudioTrack? = null
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var mediaPlayer: MediaPlayer? = null
@@ -121,35 +148,152 @@ class RealisticVoiceManager(private val context: Context) {
     }
 
     init {
-        preWarmStartupWelcomesInBackground()
+        maintainTwoHourRollingWelcomeCache()
     }
 
-    // ✅ ऐप खुलते ही बैकग्राउंड में तीनों स्वागत संदेशों को स्थायी रूप से फोन में सेव कर लेता है
-    private fun preWarmStartupWelcomesInBackground() {
-        preWarmExecutor.execute {
+    // वर्तमान 2-घंटे के स्लॉट की गणना
+    private fun getCurrentTwoHourSlot(): Long {
+        return System.currentTimeMillis() / (2L * 60L * 60L * 1000L)
+    }
+
+    // ✅ हर 2 घंटे का रोलिंग कैश: केवल Current Slot और Next Slot ही फोन में सेव रहेगा, पिछला अपने-आप डिलीट होगा
+    private fun maintainTwoHourRollingWelcomeCache() {
+        rollingCacheExecutor.execute {
             try {
-                for (i in startupWelcomeMessages.indices) {
-                    val msg = startupWelcomeMessages[i]
-                    val fixedPcm = File(voiceCacheDir, "startup_welcome_fixed_$i.pcm")
-                    val fixedMp3 = File(voiceCacheDir, "startup_welcome_fixed_$i.mp3")
-                    if ((fixedPcm.exists() && fixedPcm.length() > 2000) ||
-                        (fixedMp3.exists() && fixedMp3.length() > 1500)) {
-                        continue
-                    }
-                    val profile = aiVoiceProfiles[i % aiVoiceProfiles.size]
-                    val geminiPool = getGeminiKeyPool()
-                    for (attempt in geminiPool.indices) {
-                        val idx = (geminiKeyIndex.getAndIncrement() % geminiPool.size).let { if (it < 0) it + geminiPool.size else it }
-                        val (pcm, code) = fetchGoogleAiStudioTtsPcm(msg, profile, geminiPool[idx])
-                        if (pcm != null && pcm.size > 2000) {
-                            writeFileAtomically(fixedPcm, pcm)
-                            break
+                val currentSlot = getCurrentTwoHourSlot()
+                val nextSlot = currentSlot + 1L
+
+                // 1. पुराने सभी स्लॉट्स के क्लिप तुरंत मिटा दें (केवल currentSlot और nextSlot ही बचेंगे)
+                voiceCacheDir.listFiles()?.forEach { file ->
+                    if (file.name.startsWith("welcome_slot_")) {
+                        val slotNum = file.name.removePrefix("welcome_slot_")
+                            .substringBefore(".")
+                            .toLongOrNull()
+                        if (slotNum == null || (slotNum != currentSlot && slotNum != nextSlot)) {
+                            try { file.delete() } catch (_: Exception) {}
                         }
-                        if (code != 429 && code != 400 && code != 403) break
+                    }
+                }
+
+                // 2. यदि इस घंटे (currentSlot) का क्लिप नहीं बना है, तो पहले उसे बनाएं
+                if (!isSlotAudioReady(currentSlot)) {
+                    generateAndCacheSlotAudio(currentSlot, isNextSlot = false)
+                }
+
+                // 3. अगले 2 घंटे बाद (nextSlot) का क्लिप अभी ही एडवांस में बनाकर सेव कर लें
+                if (!isSlotAudioReady(nextSlot)) {
+                    generateAndCacheSlotAudio(nextSlot, isNextSlot = true)
+                }
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun isSlotAudioReady(slotId: Long): Boolean {
+        val pcm = File(voiceCacheDir, "welcome_slot_$slotId.pcm")
+        val mp3 = File(voiceCacheDir, "welcome_slot_$slotId.mp3")
+        return (pcm.exists() && pcm.length() > 2000) || (mp3.exists() && mp3.length() > 1500)
+    }
+
+    private fun generateAndCacheSlotAudio(slotId: Long, isNextSlot: Boolean): Boolean {
+        val welcomeText = generateFreshAiWelcomeLineForSlot(slotId, isNextSlot)
+        val profile = aiVoiceProfiles[(slotId % aiVoiceProfiles.size).toInt().let { if (it < 0) -it else it }]
+        val targetPcm = File(voiceCacheDir, "welcome_slot_$slotId.pcm")
+        val targetMp3 = File(voiceCacheDir, "welcome_slot_$slotId.mp3")
+
+        // पहले Gemini Pool प्रयास करें
+        val geminiPool = getGeminiKeyPool()
+        for (attempt in geminiPool.indices) {
+            val idx = (geminiKeyIndex.getAndIncrement() % geminiPool.size).let { if (it < 0) it + geminiPool.size else it }
+            val (pcmBytes, code) = fetchGoogleAiStudioTtsPcm(welcomeText, profile, geminiPool[idx])
+            if (pcmBytes != null && pcmBytes.size > 2000) {
+                writeFileAtomically(targetPcm, pcmBytes)
+                return true
+            }
+            if (code != 429 && code != 400 && code != 403) break
+        }
+
+        // फिर ElevenLabs Pool प्रयास करें
+        val elevenPool = getElevenLabsKeyPool()
+        for (attempt in elevenPool.indices) {
+            val idx = (elevenKeyIndex.getAndIncrement() % elevenPool.size).let { if (it < 0) it + elevenPool.size else it }
+            val (mp3Bytes, code) = fetchElevenLabsMp3(welcomeText, profile.elevenVoiceId, elevenPool[idx])
+            if (mp3Bytes != null && mp3Bytes.size > 1500) {
+                writeFileAtomically(targetMp3, mp3Bytes)
+                return true
+            }
+            if (code != 429 && code != 401 && code != 403) break
+        }
+        return false
+    }
+
+    // ✅ AI से हर 2 घंटे के लिए सीमित शब्दों (20-25 शब्द) में अलग-अलग अंदाज़ का नया वाक्य जनरेट करवाना
+    private fun generateFreshAiWelcomeLineForSlot(slotId: Long, isNextSlot: Boolean): String {
+        val cal = Calendar.getInstance()
+        if (isNextSlot) cal.add(Calendar.HOUR_OF_DAY, 2)
+        val hour = cal.get(Calendar.HOUR_OF_DAY)
+        val greetingWord = when {
+            hour < 12 -> "सुप्रभात"
+            hour < 17 -> "नमस्कार"
+            else -> "शुभ संध्या"
+        }
+
+        val styles = listOf(
+            "प्रेरणादायक और जोशपूर्ण (Motivational & Energetic)",
+            "हाई-टेक डिजिटल स्मार्ट कैंपस (Modern Digital Campus)",
+            "बच्चों और शिक्षकों से आत्मीय संवाद (Warm Student-Teacher Connect)",
+            "अनुशासन, मुस्कान और गर्व से भरा (Proud & Disciplined)"
+        )
+        val chosenStyle = styles[(slotId % styles.size).toInt().let { if (it < 0) -it else it }]
+
+        val geminiPool = getGeminiKeyPool()
+        if (geminiPool.isNotEmpty()) {
+            try {
+                val apiKey = geminiPool[0]
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
+                val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 6000
+                    readTimeout = 8000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                }
+
+                val prompt = """
+                    विद्यालय का नाम: "सर्वोदय मध्य विद्यालय, सोहसराय"।
+                    अभिवादन शब्द: "$greetingWord"।
+                    अंदाज़: $chosenStyle।
+                    नियम: केवल 18 से 24 शब्दों में एक नया, आकर्षक रेडियो एंकर जैसा हिंदी स्वागत वाक्य लिखें जो छात्रों को कैमरे के सामने मुस्कुराकर स्मार्ट उपस्थिति दर्ज कराने के लिए प्रेरित करे। केवल शुद्ध वाक्य लौटाएं, कोई कोट्स या अतिरिक्त शब्द न लिखें। (Slot: $slotId)
+                """.trimIndent()
+
+                val payload = JSONObject().apply {
+                    put("contents", JSONArray().put(
+                        JSONObject().put("parts", JSONArray().put(JSONObject().put("text", prompt)))
+                    ))
+                }
+
+                conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                if (conn.responseCode == 200) {
+                    val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val text = JSONObject(resp)
+                        .optJSONArray("candidates")?.optJSONObject(0)
+                        ?.optJSONObject("content")?.optJSONArray("parts")?.optJSONObject(0)
+                        ?.optString("text", "")?.trim()
+                        ?.replace("\"", "")?.replace("*", "")?.replace("\n", " ") ?: ""
+                    if (text.length in 25..220 && text.contains("सर्वोदय")) {
+                        return text
                     }
                 }
             } catch (_: Exception) {}
         }
+
+        // यदि टेक्स्ट जनरेशन ऑफलाइन हो, तो समय और स्लॉट के अनुसार 4 अलग-अलग अंदाज़ के रेडीमेड वाक्य
+        val fallbackTemplates = listOf(
+            "$greetingWord! ज्ञान के मंदिर सर्वोदय मध्य विद्यालय, सोहसराय में आपका हार्दिक स्वागत है। नई ऊर्जा के साथ आइए आज की स्मार्ट उपस्थिति शुरू करें!",
+            "$greetingWord! सर्वोदय मध्य विद्यालय, सोहसराय के हाई-टेक डिजिटल कैंपस में आपका अभिनंदन है। हमारा एआई कैमरा तैयार है, कृपया मुस्कुराते हुए अपनी हाज़िरी लगाएं!",
+            "$greetingWord बच्चों और गुरुजनों! सर्वोदय मध्य विद्यालय, सोहसराय में एक और शानदार दिन की शुरुआत हो चुकी है। आइए, कैमरे के सामने आकर उपस्थिति दर्ज कराएं।",
+            "$greetingWord! शिक्षा और संस्कार के केंद्र सर्वोदय मध्य विद्यालय, सोहसराय में आपका स्वागत है। स्मार्ट अटेंडेंस सिस्टम अब लाइव है, चलिए आज का रिकॉर्ड बनाएं!"
+        )
+        return fallbackTemplates[(slotId % fallbackTemplates.size).toInt().let { if (it < 0) -it else it }]
     }
 
     private fun writeFileAtomically(targetFile: File, bytes: ByteArray) {
@@ -160,6 +304,7 @@ class RealisticVoiceManager(private val context: Context) {
                 fos.fd.sync()
             }
             if (tempFile.exists() && tempFile.length() > 1000) {
+                if (targetFile.exists()) targetFile.delete()
                 tempFile.renameTo(targetFile)
             }
         } catch (_: Exception) {}
@@ -173,32 +318,84 @@ class RealisticVoiceManager(private val context: Context) {
         mainHandler.postDelayed(r, durationMs)
     }
 
+    // ✅ मधुर स्टार्टअप चाइम (0.45 सेकंड की सॉफ्ट डिजिटल बेल)
+    private fun playSoftStartupChimeBlocking() {
+        try {
+            val sampleRate = 24000
+            val durationMs = 440
+            val totalSamples = (sampleRate * durationMs) / 1000
+            val pcmBytes = ByteArray(totalSamples * 2)
+            val buf = ByteBuffer.wrap(pcmBytes).order(ByteOrder.LITTLE_ENDIAN)
+
+            for (i in 0 until totalSamples) {
+                val t = i.toDouble() / sampleRate
+                val freq = if (i < totalSamples / 2) 587.33 else 880.0 // D5 -> A5 मधुर बेल टोन
+                val env = exp(-4.5 * (i.toDouble() / totalSamples))
+                val wave = sin(2.0 * PI * freq * t) * env * 0.38
+                val sample = (wave * Short.MAX_VALUE).toInt().coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt())
+                buf.putShort(sample.toShort())
+            }
+
+            val minBuf = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setBufferSizeInBytes(kotlin.math.max(minBuf, pcmBytes.size))
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .build()
+
+            track.write(pcmBytes, 0, pcmBytes.size)
+            track.play()
+            Thread.sleep(durationMs.toLong() + 40L)
+            track.stop()
+            track.release()
+        } catch (_: Exception) {}
+    }
+
     fun speakStartupWelcome() {
         if (!isVoiceEnabled) return
         voiceExecutor.execute {
-            val readyIndices = startupWelcomeMessages.indices.filter { idx ->
-                File(voiceCacheDir, "startup_welcome_fixed_$idx.pcm").let { it.exists() && it.length() > 2000 } ||
-                File(voiceCacheDir, "startup_welcome_fixed_$idx.mp3").let { it.exists() && it.length() > 1500 }
+            val currentSlot = getCurrentTwoHourSlot()
+            val slotPcm = File(voiceCacheDir, "welcome_slot_$currentSlot.pcm")
+            val slotMp3 = File(voiceCacheDir, "welcome_slot_$currentSlot.mp3")
+
+            // 1. यदि इस 2-घंटे के स्लॉट का क्लिप पहले से सेव है, तो बिना देरी के तुरंत चाइम + आवाज़ बजाएं
+            if (slotPcm.exists() && slotPcm.length() > 2000) {
+                playSoftStartupChimeBlocking()
+                playRawPcm24kHz(slotPcm.readBytes(), 1.55f)
+                maintainTwoHourRollingWelcomeCache()
+                return@execute
+            }
+            if (slotMp3.exists() && slotMp3.length() > 1500) {
+                playSoftStartupChimeBlocking()
+                playMp3File(slotMp3)
+                maintainTwoHourRollingWelcomeCache()
+                return@execute
             }
 
-            val chosenIdx = if (readyIndices.isNotEmpty()) {
-                readyIndices[Random.nextInt(readyIndices.size)]
-            } else {
-                Random.nextInt(startupWelcomeMessages.size)
+            // 2. यदि पहली बार ऐप खुला है और क्लिप नहीं बना है, तो अभी बनाकर सेव करें और बजाएं
+            if (generateAndCacheSlotAudio(currentSlot, isNextSlot = false)) {
+                if (slotPcm.exists() && slotPcm.length() > 2000) {
+                    playSoftStartupChimeBlocking()
+                    playRawPcm24kHz(slotPcm.readBytes(), 1.55f)
+                } else if (slotMp3.exists() && slotMp3.length() > 1500) {
+                    playSoftStartupChimeBlocking()
+                    playMp3File(slotMp3)
+                }
             }
-
-            val fixedPcm = File(voiceCacheDir, "startup_welcome_fixed_$chosenIdx.pcm")
-            if (fixedPcm.exists() && fixedPcm.length() > 2000) {
-                if (playRawPcm24kHz(fixedPcm.readBytes(), 1.55f)) return@execute
-            }
-
-            val fixedMp3 = File(voiceCacheDir, "startup_welcome_fixed_$chosenIdx.mp3")
-            if (fixedMp3.exists() && fixedMp3.length() > 1500) {
-                if (playMp3File(fixedMp3, isLowerPitchMale = false, isPureNeural = true)) return@execute
-            }
-
-            val welcomeLine = startupWelcomeMessages[chosenIdx]
-            speakHindiInternal(welcomeLine, boostFactor = 1.55f, fixedStartupIndex = chosenIdx)
+            // बैकग्राउंड में अगले 2 घंटे (Next Slot) का क्लिप भी तैयार करवा लें
+            maintainTwoHourRollingWelcomeCache()
         }
     }
 
@@ -225,33 +422,21 @@ class RealisticVoiceManager(private val context: Context) {
     fun speakHindi(text: String, boostFactor: Float = 1.35f) {
         if (!isVoiceEnabled || text.isBlank()) return
         voiceExecutor.execute {
-            speakHindiInternal(text, boostFactor, fixedStartupIndex = -1)
+            speakHindiInternal(text, boostFactor)
         }
     }
 
-    private fun speakHindiInternal(text: String, boostFactor: Float, fixedStartupIndex: Int) {
+    private fun speakHindiInternal(text: String, boostFactor: Float) {
         scheduleSpeakingUnlock(10000L)
 
         val chosenVoice = aiVoiceProfiles[Random.nextInt(aiVoiceProfiles.size)]
         val otherVoice = aiVoiceProfiles.first { it.name != chosenVoice.name }
 
-        val hash1 = md5Hash("${chosenVoice.name}_$text")
-        val file1 = if (fixedStartupIndex >= 0) {
-            File(voiceCacheDir, "startup_welcome_fixed_$fixedStartupIndex.pcm")
-        } else {
-            File(voiceCacheDir, "$hash1.pcm")
-        }
+        val file1 = File(voiceCacheDir, "${md5Hash("${chosenVoice.name}_$text")}.pcm")
+        val file2 = File(voiceCacheDir, "${md5Hash("${otherVoice.name}_$text")}.pcm")
+        val mp3CacheFile = File(voiceCacheDir, "${md5Hash("eleven_mp3_$text")}.mp3")
 
-        val hash2 = md5Hash("${otherVoice.name}_$text")
-        val file2 = File(voiceCacheDir, "$hash2.pcm")
-
-        val mp3CacheFile = if (fixedStartupIndex >= 0) {
-            File(voiceCacheDir, "startup_welcome_fixed_$fixedStartupIndex.mp3")
-        } else {
-            File(voiceCacheDir, "${md5Hash("ai_mp3_$text")}.mp3")
-        }
-
-        // 1. पहले से सेव AI Studio PCM चेक करें
+        // 1. पहले से सेव कैश चेक करें
         if (file1.exists() && file1.length() > 2000) {
             if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return
         }
@@ -259,7 +444,7 @@ class RealisticVoiceManager(private val context: Context) {
             if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return
         }
         if (mp3CacheFile.exists() && mp3CacheFile.length() > 1500) {
-            if (playMp3File(mp3CacheFile, chosenVoice.name == "Sadachbia", isPureNeural = true)) return
+            if (playMp3File(mp3CacheFile)) return
         }
 
         // 2. Multi-Gemini Key Pool (AQ.Ab8... / AIza...)
@@ -274,9 +459,7 @@ class RealisticVoiceManager(private val context: Context) {
                     writeFileAtomically(file1, pcmBytes)
                     if (playRawPcm24kHz(pcmBytes, boostFactor)) return
                 }
-                if (errCode != 429 && errCode != 400 && errCode != 403) {
-                    break
-                }
+                if (errCode != 429 && errCode != 400 && errCode != 403) break
             }
         }
 
@@ -290,17 +473,13 @@ class RealisticVoiceManager(private val context: Context) {
                 val (mp3Bytes, errCode) = fetchElevenLabsMp3(text, chosenVoice.elevenVoiceId, candidateKey)
                 if (mp3Bytes != null && mp3Bytes.size > 1500) {
                     writeFileAtomically(mp3CacheFile, mp3Bytes)
-                    if (playMp3File(mp3CacheFile, chosenVoice.name == "Sadachbia", isPureNeural = true)) return
+                    if (playMp3File(mp3CacheFile)) return
                 }
-                if (errCode != 429 && errCode != 401 && errCode != 403) {
-                    break
-                }
+                if (errCode != 429 && errCode != 401 && errCode != 403) break
             }
         }
 
-        // 4. Online Natural Neural Stream (No Quota Limit, Never Boring System TTS)
-        if (tryPlayChunkedNeuralMp3(text, chosenVoice.name == "Sadachbia", mp3CacheFile)) return
-
+        // ✅ 4. कोई भी बोरिंग रोबोटिक TTS या Google Translate स्ट्रीम यहाँ नहीं चलेगा। आवाज न आए तो शांत रहेगा।
         isCurrentlySpeaking = false
     }
 
@@ -376,10 +555,10 @@ class RealisticVoiceManager(private val context: Context) {
             val endpoint = "https://api.elevenlabs.io/v1/text-to-speech/$voiceId"
             val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
                 requestMethod = "POST"
-                connectTimeout = 8000
-                readTimeout = 12000
+                connectTimeout = 9000
+                readTimeout = 14000
                 doOutput = true
-                setRequestProperty("xi-api-key", elevenApiKey)
+                setRequestProperty("xi-api-key", elevenApiKey.trim())
                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 setRequestProperty("Accept", "audio/mpeg")
             }
@@ -388,8 +567,8 @@ class RealisticVoiceManager(private val context: Context) {
                 put("text", hindiText)
                 put("model_id", "eleven_multilingual_v2")
                 put("voice_settings", JSONObject().apply {
-                    put("stability", 0.55)
-                    put("similarity_boost", 0.80)
+                    put("stability", 0.50)
+                    put("similarity_boost", 0.82)
                 })
             }
 
@@ -408,40 +587,7 @@ class RealisticVoiceManager(private val context: Context) {
         return Pair(null, httpCode)
     }
 
-    private fun tryPlayChunkedNeuralMp3(text: String, isLowerPitchMale: Boolean, outFile: File): Boolean {
-        return try {
-            val sentences = text.split(Regex("(?<=[।!?])")).map { it.trim() }.filter { it.isNotEmpty() }
-            val combinedStream = ByteArrayOutputStream()
-
-            for (sentence in sentences) {
-                val encoded = URLEncoder.encode(sentence, "UTF-8")
-                val urlStr = "https://translate.googleapis.com/translate_tts?ie=UTF-8&q=$encoded&tl=hi&client=tw-ob"
-                val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 5000
-                    readTimeout = 7000
-                    setRequestProperty("User-Agent", "Mozilla/5.0")
-                }
-                if (conn.responseCode == 200) {
-                    val chunkBytes = conn.inputStream.readBytes()
-                    if (chunkBytes.isNotEmpty()) {
-                        combinedStream.write(chunkBytes)
-                    }
-                }
-            }
-
-            val finalBytes = combinedStream.toByteArray()
-            if (finalBytes.size > 1500) {
-                writeFileAtomically(outFile, finalBytes)
-                playMp3File(outFile, isLowerPitchMale, isPureNeural = false)
-            } else {
-                false
-            }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    private fun playMp3File(mp3File: File, isLowerPitchMale: Boolean, isPureNeural: Boolean): Boolean {
+    private fun playMp3File(mp3File: File): Boolean {
         return try {
             stopCurrentAudio()
             FileInputStream(mp3File).use { fis ->
@@ -461,10 +607,6 @@ class RealisticVoiceManager(private val context: Context) {
                             enabled = true
                         }
                     } catch (_: Exception) {}
-                    if (!isPureNeural && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                        val targetPitch = if (isLowerPitchMale) 0.90f else 1.02f
-                        playbackParams = playbackParams.setPitch(targetPitch).setSpeed(1.0f)
-                    }
                     val dur = duration.toLong().coerceAtLeast(3500L)
                     scheduleSpeakingUnlock(dur + 450L)
                     setOnCompletionListener {
@@ -475,6 +617,7 @@ class RealisticVoiceManager(private val context: Context) {
             }
             true
         } catch (e: Exception) {
+            isCurrentlySpeaking = false
             false
         }
     }
