@@ -8,7 +8,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -18,7 +21,6 @@ import android.print.PrintManager
 import android.provider.MediaStore
 import android.util.Base64
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
@@ -30,6 +32,7 @@ import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
@@ -339,29 +342,80 @@ class AdminActivity : AppCompatActivity() {
             }
         }
 
-        // ✅ [🔑 पिन व सत्र] पर 2 सेकंड Long-Press करने पर खुलने वाला Multi-API Keys (Gemini + ElevenLabs) पॉपअप
+        // ✅ [🔑 पिन व सत्र] पर 2 सेकंड Long-Press करने पर खुलने वाले दो अलग-अलग छोटे बॉक्स (Gemini और ElevenLabs के लिए)
         @JavascriptInterface
         fun openMultiApiKeyDialog() {
             runOnUiThread {
                 val vm = RealisticVoiceManager(this@AdminActivity)
-                val keyInput = EditText(this@AdminActivity).apply {
-                    setText(vm.getApiKey())
-                    hint = "Gemini (AQ.Ab8... / AIza...) या ElevenLabs (sk_...) Keys कॉमा या नई लाइन से डालें"
-                    textSize = 14.5f
-                    minLines = 4
-                    maxLines = 10
-                    setPadding(42, 36, 42, 36)
+
+                val container = LinearLayout(this@AdminActivity).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(45, 30, 45, 16)
                 }
+
+                val lblGemini = TextView(this@AdminActivity).apply {
+                    text = "🔹 Google AI Studio (Gemini) Keys:"
+                    textSize = 13.5f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#1E3A8A"))
+                    setPadding(0, 0, 0, 10)
+                }
+
+                val inputGemini = EditText(this@AdminActivity).apply {
+                    setText(vm.getGeminiKeysString())
+                    hint = "AQ.Ab8... या AIza... (कॉमा या नई लाइन से)"
+                    textSize = 13.5f
+                    minLines = 2
+                    maxLines = 4
+                    setPadding(28, 22, 28, 22)
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#F8FAFC"))
+                        cornerRadius = 18f
+                        setStroke(2, Color.parseColor("#CBD5E1"))
+                    }
+                }
+
+                val lblEleven = TextView(this@AdminActivity).apply {
+                    text = "🔸 ElevenLabs API Keys:"
+                    textSize = 13.5f
+                    setTypeface(null, Typeface.BOLD)
+                    setTextColor(Color.parseColor("#15803D"))
+                    setPadding(0, 28, 0, 10)
+                }
+
+                val inputEleven = EditText(this@AdminActivity).apply {
+                    setText(vm.getElevenLabsKeysString())
+                    hint = "sk_... वाली Keys यहाँ डालें"
+                    textSize = 13.5f
+                    minLines = 2
+                    maxLines = 4
+                    setPadding(28, 22, 28, 22)
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#F0FDF4"))
+                        cornerRadius = 18f
+                        setStroke(2, Color.parseColor("#86EFAC"))
+                    }
+                }
+
+                container.addView(lblGemini)
+                container.addView(inputGemini)
+                container.addView(lblEleven)
+                container.addView(inputEleven)
+
                 AlertDialog.Builder(this@AdminActivity)
-                    .setTitle("🎙️ Multi-API Keys (Gemini + ElevenLabs)")
-                    .setView(keyInput)
+                    .setTitle("🎙️ AI Voice API Keys प्रबंधन")
+                    .setView(container)
                     .setPositiveButton("✔ सेव करें") { _, _ ->
-                        val newKeys = keyInput.text.toString().trim()
-                        vm.saveCustomApiKey(newKeys)
+                        val gKeys = inputGemini.text.toString().trim()
+                        val eKeys = inputEleven.text.toString().trim()
+                        vm.saveSeparateApiKeys(gKeys, eKeys)
+
+                        val combined = listOf(gKeys, eKeys).filter { it.isNotEmpty() }.joinToString("\n")
                         val currentPayload = AppStorage.loadData(this@AdminActivity)
-                        currentPayload.sharedApiKeys = newKeys
+                        currentPayload.sharedApiKeys = combined
                         AppStorage.saveData(this@AdminActivity, currentPayload)
-                        Toast.makeText(this@AdminActivity, "✔ सभी API Keys सुरक्षित सेव हो गईं", Toast.LENGTH_SHORT).show()
+
+                        Toast.makeText(this@AdminActivity, "✔ दोनों बॉक्स की Keys सुरक्षित सेव हो गईं", Toast.LENGTH_SHORT).show()
                     }
                     .setNegativeButton("रद्द करें", null)
                     .show()
