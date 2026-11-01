@@ -8,7 +8,6 @@ import android.graphics.Rect
 import android.util.Base64
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
-import com.google.mlkit.vision.face.FaceContour
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
@@ -45,7 +44,6 @@ object FaceMatcherEngine {
 
     private val templateCache = ConcurrentHashMap<String, StudentBiometricTemplate>()
 
-    // 99.8% सटीकता के लिए सख्त मानक (Strict Biometric Thresholds)
     const val STRICT_PASS_DISTANCE = 10.5f
     const val BORDERLINE_MAX_DISTANCE = 13.0f
     const val MIN_MARGIN_GAP = 1.35f
@@ -54,7 +52,6 @@ object FaceMatcherEngine {
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
-            .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
             .setMinFaceSize(0.18f)
             .build()
@@ -62,7 +59,7 @@ object FaceMatcherEngine {
     }
 
     fun initEngine(context: Context) {
-        // Pure Android + ML Kit Biometric Engine (No external dependency required)
+        // Pure Android & ML Kit Biometric Engine
     }
 
     fun clearCache() {
@@ -79,13 +76,12 @@ object FaceMatcherEngine {
         }.start()
     }
 
-    // ✅ चेहरा पंजीकरण (FRS KYC) के समय सख्त गुणवत्ता जाँच
     fun validateKycFaceQuality(face: Face, frameBmp: Bitmap): Pair<Boolean, String> {
         val box = face.boundingBox
         if (box.width() < 90 || box.height() < 90) {
             return Pair(false, "⚠️ कृपया कैमरा चेहरे के थोड़ा और पास लाएं")
         }
-        if (abs(face.headEulerAngleY) > 16f || abs(face.headEulerAngleZ) > 15f || abs(face.headEulerAngleX) > 16f) {
+        if (abs(face.headEulerAngleY) > 16f || abs(face.headEulerAngleZ) > 15f) {
             return Pair(false, "⚠️ कृपया चेहरा बिल्कुल सीधा रखें (तिरछा न करें)")
         }
         val leftEyeOpen = face.leftEyeOpenProbability ?: 1.0f
@@ -101,7 +97,6 @@ object FaceMatcherEngine {
         return Pair(true, "OK")
     }
 
-    // ✅ Auto Eye-Alignment + Tight Inner Face Crop (पीछे की दीवार और कपड़े हटाने के लिए)
     fun alignAndCropFaceBitmap(source: Bitmap, face: Face): Bitmap {
         var workingBmp = source
         val box = face.boundingBox
@@ -119,7 +114,7 @@ object FaceMatcherEngine {
                 val matrix = Matrix().apply { postRotate(-angleDeg, cx, cy) }
                 try {
                     workingBmp = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     workingBmp = source
                 }
             }
@@ -127,7 +122,6 @@ object FaceMatcherEngine {
         return cropFaceBitmap(workingBmp, box)
     }
 
-    // बायोमेट्रिक टाइट क्रॉप: बाहरी बैकग्राउंड हटाकर केवल आँख, नाक, मुँह और जबड़े पर फोकस
     fun cropFaceBitmap(source: Bitmap, boundingBox: Rect): Bitmap {
         val w = boundingBox.width()
         val h = boundingBox.height()
@@ -149,7 +143,6 @@ object FaceMatcherEngine {
             val clean = base64Str.substringAfter("base64,", base64Str)
             val bytes = Base64.decode(clean, Base64.DEFAULT)
             val rawBmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-            // पहले से सेव फोटो के बाहरी किनारों से 5% अंदर का हिस्सा लें ताकि बैकग्राउंड का असर न रहे
             val w = rawBmp.width
             val h = rawBmp.height
             if (w > 60 && h > 60) {
@@ -160,12 +153,11 @@ object FaceMatcherEngine {
             } else {
                 Bitmap.createScaledBitmap(rawBmp, 160, 160, true)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             null
         }
     }
 
-    // ✅ Multi-Scale Illumination-Invariant Biometric Embedding (HOG + Local Binary Contrast + Color Chromaticity)
     fun computeEmbedding(faceBmp: Bitmap): FloatArray {
         val size = 64
         val scaled = Bitmap.createScaledBitmap(faceBmp, size, size, true)
@@ -200,7 +192,6 @@ object FaceMatcherEngine {
             gray[i] /= std
         }
 
-        // 8x8 सेल में 8-दिशा ग्रेडिएंट हिस्टोग्राम (HOG) + क्षेत्रीय कंट्रास्ट + स्किन क्रोमैटिसिटी = 768 डायमेंशन
         val cellSize = 8
         val gridCount = size / cellSize
         val features = FloatArray(gridCount * gridCount * 12)
@@ -299,7 +290,6 @@ object FaceMatcherEngine {
         )
     }
 
-    // ✅ मुख्य पहचान इंजन: 1st बनाम 2nd Best Match की तुलना और Strict Margin नियम
     fun findBestMatchDetailed(liveFaceBmp: Bitmap, candidates: List<Student>): MatchResult {
         if (candidates.isEmpty()) {
             return MatchResult(null, 999f, 1f, false, false)
@@ -361,7 +351,6 @@ object FaceMatcherEngine {
         return Pair(detailed.student, detailed.distance)
     }
 
-    // ✅ Online Gemini Vision AI 1-to-1 Verifier (लड़का/लड़की क्रॉस-चेक + दो चेहरों का ऑनलाइन AI मिलान)
     fun verifyMatchWithGeminiVisionBlocking(
         context: Context,
         liveFaceBmp: Bitmap,
@@ -426,7 +415,7 @@ object FaceMatcherEngine {
                     ?.optString("text", "")?.trim()?.uppercase() ?: ""
                 return answer.startsWith("YES")
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
         return false
     }
 }
