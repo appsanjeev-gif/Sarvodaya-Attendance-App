@@ -3,15 +3,12 @@ package com.school.sarvodayaattendance.utils
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Matrix
-import android.graphics.Paint
-import android.graphics.PointF
 import android.graphics.Rect
 import android.util.Base64
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceContour
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
@@ -19,24 +16,13 @@ import com.google.mlkit.vision.face.FaceLandmark
 import com.school.sarvodayaattendance.data.Student
 import org.json.JSONArray
 import org.json.JSONObject
-import org.tensorflow.lite.Interpreter
 import java.io.ByteArrayOutputStream
-import java.io.FileInputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.atan2
-import kotlin.math.cos
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 object FaceMatcherEngine {
@@ -57,20 +43,18 @@ object FaceMatcherEngine {
         val primaryPhotoBase64: String
     )
 
-    private var tfliteInterpreter: Interpreter? = null
-    private var embeddingDim: Int = 192
-    private var inputImageSize: Int = 112
     private val templateCache = ConcurrentHashMap<String, StudentBiometricTemplate>()
 
     // 99.8% सटीकता के लिए सख्त मानक (Strict Biometric Thresholds)
-    const val STRICT_PASS_DISTANCE = 10.8f       // सीधा पास होने के लिए बेहद सख्त दूरी
-    const val BORDERLINE_MAX_DISTANCE = 13.2f    // इसके बीच होने पर Online Gemini AI या डबल-फ्रेम चेक करेगा
-    const val MIN_MARGIN_GAP = 1.45f             // 1st और 2nd मैच के बीच कम से कम इतना अंतर होना अनिवार्य है
+    const val STRICT_PASS_DISTANCE = 10.5f
+    const val BORDERLINE_MAX_DISTANCE = 13.0f
+    const val MIN_MARGIN_GAP = 1.35f
 
     val detector: FaceDetector by lazy {
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+            .setContourMode(FaceDetectorOptions.CONTOUR_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
             .setMinFaceSize(0.18f)
             .build()
@@ -78,27 +62,7 @@ object FaceMatcherEngine {
     }
 
     fun initEngine(context: Context) {
-        if (tfliteInterpreter != null) return
-        val modelNames = listOf("mobile_face_net.tflite", "facenet.tflite", "face_embedding.tflite")
-        for (name in modelNames) {
-            try {
-                val afd = context.assets.openFd(name)
-                val fis = FileInputStream(afd.fileDescriptor)
-                val mapped: MappedByteBuffer = fis.channel.map(
-                    FileChannel.MapMode.READ_ONLY,
-                    afd.startOffset,
-                    afd.declaredLength
-                )
-                val opts = Interpreter.Options().apply { setNumThreads(4) }
-                val interp = Interpreter(mapped, opts)
-                val inShape = interp.getInputTensor(0).shape()
-                if (inShape.size >= 3) inputImageSize = inShape[1]
-                val outShape = interp.getOutputTensor(0).shape()
-                if (outShape.isNotEmpty()) embeddingDim = outShape.last()
-                tfliteInterpreter = interp
-                break
-            } catch (_: Exception) {}
-        }
+        // Pure Android + ML Kit Biometric Engine (No external dependency required)
     }
 
     fun clearCache() {
@@ -115,14 +79,13 @@ object FaceMatcherEngine {
         }.start()
     }
 
-    // ✅ चेहरा पंजीकरण (FRS KYC) के समय जाँच: चेहरा सीधा, साफ और पर्याप्त रोशनी में है या नहीं
+    // ✅ चेहरा पंजीकरण (FRS KYC) के समय सख्त गुणवत्ता जाँच
     fun validateKycFaceQuality(face: Face, frameBmp: Bitmap): Pair<Boolean, String> {
         val box = face.boundingBox
-        if (box.width() < 95 || box.height() < 95) {
+        if (box.width() < 90 || box.height() < 90) {
             return Pair(false, "⚠️ कृपया कैमरा चेहरे के थोड़ा और पास लाएं")
         }
-        // सिर ज्यादा बाएं-दाएं या ऊपर-नीचे न झुका हो
-        if (abs(face.headEulerAngleY) > 18f || abs(face.headEulerAngleZ) > 16f || abs(face.headEulerAngleX) > 18f) {
+        if (abs(face.headEulerAngleY) > 16f || abs(face.headEulerAngleZ) > 15f || abs(face.headEulerAngleX) > 16f) {
             return Pair(false, "⚠️ कृपया चेहरा बिल्कुल सीधा रखें (तिरछा न करें)")
         }
         val leftEyeOpen = face.leftEyeOpenProbability ?: 1.0f
@@ -141,7 +104,7 @@ object FaceMatcherEngine {
     // ✅ Auto Eye-Alignment + Tight Inner Face Crop (पीछे की दीवार और कपड़े हटाने के लिए)
     fun alignAndCropFaceBitmap(source: Bitmap, face: Face): Bitmap {
         var workingBmp = source
-        var box = face.boundingBox
+        val box = face.boundingBox
 
         val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
@@ -149,8 +112,8 @@ object FaceMatcherEngine {
         if (leftEye != null && rightEye != null) {
             val dy = (rightEye.y - leftEye.y).toDouble()
             val dx = (rightEye.x - leftEye.x).toDouble()
-            var angleDeg = Math.toDegrees(atan2(dy, dx)).toFloat()
-            if (abs(angleDeg) in 2.0f..28.0f) {
+            val angleDeg = Math.toDegrees(atan2(dy, dx)).toFloat()
+            if (abs(angleDeg) in 1.8f..28.0f) {
                 val cx = (leftEye.x + rightEye.x) / 2f
                 val cy = (leftEye.y + rightEye.y) / 2f
                 val matrix = Matrix().apply { postRotate(-angleDeg, cx, cy) }
@@ -161,18 +124,16 @@ object FaceMatcherEngine {
                 }
             }
         }
-
         return cropFaceBitmap(workingBmp, box)
     }
 
-    // बायोमेट्रिक टाइट क्रॉप: बाहरी बैकग्राउंड को हटाकर केवल माथे, आँख, नाक, मुँह और ठोड़ी पर फोकस
+    // बायोमेट्रिक टाइट क्रॉप: बाहरी बैकग्राउंड हटाकर केवल आँख, नाक, मुँह और जबड़े पर फोकस
     fun cropFaceBitmap(source: Bitmap, boundingBox: Rect): Bitmap {
         val w = boundingBox.width()
         val h = boundingBox.height()
-        // बाहर जाने के बजाय 4% अंदर की तरफ टाइट क्रॉप ताकि पीछे की दीवार बिल्कुल न आए
-        val insetX = (w * 0.04f).toInt()
-        val insetTop = (h * 0.06f).toInt()
-        val insetBottom = (h * 0.02f).toInt()
+        val insetX = (w * 0.05f).toInt()
+        val insetTop = (h * 0.07f).toInt()
+        val insetBottom = (h * 0.03f).toInt()
 
         val left = (boundingBox.left + insetX).coerceIn(0, max(0, source.width - 1))
         val top = (boundingBox.top + insetTop).coerceIn(0, max(0, source.height - 1))
@@ -183,92 +144,48 @@ object FaceMatcherEngine {
         return Bitmap.createScaledBitmap(cropped, 160, 160, true)
     }
 
-    // पुराना सेव किया गया KYC फोटो लोड करते समय भी चेहरे को ऑटो-क्रॉप व अलाइन करना
-    private fun decodeAndTightenStoredPhoto(base64Str: String): Bitmap? {
-        try {
+    private fun decodeStoredPhoto(base64Str: String): Bitmap? {
+        return try {
             val clean = base64Str.substringAfter("base64,", base64Str)
             val bytes = Base64.decode(clean, Base64.DEFAULT)
             val rawBmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
-
-            var alignedBmp: Bitmap? = null
-            val latch = CountDownLatch(1)
-            detector.process(InputImage.fromBitmap(rawBmp, 0))
-                .addOnSuccessListener { faces ->
-                    if (faces.isNotEmpty()) {
-                        val primary = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
-                        alignedBmp = alignAndCropFaceBitmap(rawBmp, primary)
-                    }
-                    latch.countDown()
-                }
-                .addOnFailureListener {
-                    latch.countDown()
-                }
-            latch.await(900, TimeUnit.MILLISECONDS)
-            return alignedBmp ?: Bitmap.createScaledBitmap(rawBmp, 160, 160, true)
+            // पहले से सेव फोटो के बाहरी किनारों से 5% अंदर का हिस्सा लें ताकि बैकग्राउंड का असर न रहे
+            val w = rawBmp.width
+            val h = rawBmp.height
+            if (w > 60 && h > 60) {
+                val ix = (w * 0.05f).toInt()
+                val iy = (h * 0.05f).toInt()
+                val sub = Bitmap.createBitmap(rawBmp, ix, iy, w - ix * 2, h - iy * 2)
+                Bitmap.createScaledBitmap(sub, 160, 160, true)
+            } else {
+                Bitmap.createScaledBitmap(rawBmp, 160, 160, true)
+            }
         } catch (_: Exception) {
-            return null
+            null
         }
     }
 
-    // ✅ Hybrid Embedding: TFLite Deep Vector + Illumination-Invariant Structural Biometric Signature
+    // ✅ Multi-Scale Illumination-Invariant Biometric Embedding (HOG + Local Binary Contrast + Color Chromaticity)
     fun computeEmbedding(faceBmp: Bitmap): FloatArray {
-        val structVec = computeStructuralBiometricVector(faceBmp)
-        val interp = tfliteInterpreter
-        if (interp != null) {
-            try {
-                val scaled = Bitmap.createScaledBitmap(faceBmp, inputImageSize, inputImageSize, true)
-                val byteBuffer = ByteBuffer.allocateDirect(1 * inputImageSize * inputImageSize * 3 * 4)
-                byteBuffer.order(ByteOrder.nativeOrder())
-                val pixels = IntArray(inputImageSize * inputImageSize)
-                scaled.getPixels(pixels, 0, inputImageSize, 0, 0, inputImageSize, inputImageSize)
-
-                // Zero-Mean Unit-Variance Illumination Normalization
-                var sum = 0.0
-                var sumSq = 0.0
-                val totalChannels = pixels.size * 3
-                for (px in pixels) {
-                    val r = (px shr 16 and 0xFF).toDouble()
-                    val g = (px shr 8 and 0xFF).toDouble()
-                    val b = (px and 0xFF).toDouble()
-                    sum += r + g + b
-                    sumSq += r * r + g * g + b * b
-                }
-                val mean = sum / totalChannels
-                val std = max(sqrt((sumSq / totalChannels) - (mean * mean)), 1.0)
-
-                for (px in pixels) {
-                    byteBuffer.putFloat(((px shr 16 and 0xFF) - mean).toFloat() / std.toFloat())
-                    byteBuffer.putFloat(((px shr 8 and 0xFF) - mean).toFloat() / std.toFloat())
-                    byteBuffer.putFloat(((px and 0xFF) - mean).toFloat() / std.toFloat())
-                }
-
-                val output = Array(1) { FloatArray(embeddingDim) }
-                synchronized(interp) {
-                    interp.run(byteBuffer, output)
-                }
-                val deepVec = l2Normalize(output[0])
-                return combineVectors(deepVec, structVec, 0.78f, 0.22f)
-            } catch (_: Exception) {}
-        }
-        return structVec
-    }
-
-    // यदि TFLite के साथ संरचनात्मक मिलान भी हो: 16x16 Multi-Scale Gradient + Gabor-like Edge Orientation
-    private fun computeStructuralBiometricVector(bmp: Bitmap): FloatArray {
         val size = 64
-        val scaled = Bitmap.createScaledBitmap(bmp, size, size, true)
+        val scaled = Bitmap.createScaledBitmap(faceBmp, size, size, true)
         val gray = FloatArray(size * size)
+        val rgDiff = FloatArray(size * size)
+        val byDiff = FloatArray(size * size)
         val pixels = IntArray(size * size)
         scaled.getPixels(pixels, 0, size, 0, 0, size, size)
 
         var mean = 0f
         for (i in pixels.indices) {
             val px = pixels[i]
-            val r = (px shr 16) and 0xFF
-            val g = (px shr 8) and 0xFF
-            val b = px and 0xFF
+            val r = ((px shr 16) and 0xFF).toFloat()
+            val g = ((px shr 8) and 0xFF).toFloat()
+            val b = (px and 0xFF).toFloat()
             val lum = 0.299f * r + 0.587f * g + 0.114f * b
             gray[i] = lum
+            val sumRgb = max(r + g + b, 1f)
+            rgDiff[i] = (r - g) / sumRgb
+            byDiff[i] = (b - 0.5f * (r + g)) / sumRgb
             mean += lum
         }
         mean /= gray.size
@@ -283,20 +200,29 @@ object FaceMatcherEngine {
             gray[i] /= std
         }
 
-        // 8x8 सेल में 8-दिशा ग्रेडिएंट हिस्टोग्राम (HOG) + क्षेत्रीय अनुपात = 576 डायमेंशन का सख्त फिंगरप्रिंट
+        // 8x8 सेल में 8-दिशा ग्रेडिएंट हिस्टोग्राम (HOG) + क्षेत्रीय कंट्रास्ट + स्किन क्रोमैटिसिटी = 768 डायमेंशन
         val cellSize = 8
         val gridCount = size / cellSize
-        val features = FloatArray(gridCount * gridCount * 9)
+        val features = FloatArray(gridCount * gridCount * 12)
         var featIdx = 0
 
         for (cy in 0 until gridCount) {
             for (cx in 0 until gridCount) {
                 val bins = FloatArray(8)
                 var cellMean = 0f
+                var cellAbsDev = 0f
+                var cellRg = 0f
+                var cellBy = 0f
+
                 for (y in (cy * cellSize) until ((cy + 1) * cellSize)) {
                     for (x in (cx * cellSize) until ((cx + 1) * cellSize)) {
                         val idx = y * size + x
-                        cellMean += gray[idx]
+                        val v = gray[idx]
+                        cellMean += v
+                        cellAbsDev += abs(v)
+                        cellRg += rgDiff[idx]
+                        cellBy += byDiff[idx]
+
                         if (x in 1 until (size - 1) && y in 1 until (size - 1)) {
                             val gx = gray[y * size + (x + 1)] - gray[y * size + (x - 1)]
                             val gy = gray[(y + 1) * size + x] - gray[(y - 1) * size + x]
@@ -308,18 +234,15 @@ object FaceMatcherEngine {
                         }
                     }
                 }
-                for (b in 0 until 8) features[featIdx++] = bins[b]
-                features[featIdx++] = cellMean / (cellSize * cellSize)
+                val count = (cellSize * cellSize).toFloat()
+                for (b in 0 until 8) features[featIdx++] = bins[b] / count
+                features[featIdx++] = cellMean / count
+                features[featIdx++] = cellAbsDev / count
+                features[featIdx++] = (cellRg / count) * 2.5f
+                features[featIdx++] = (cellBy / count) * 2.5f
             }
         }
         return l2Normalize(features)
-    }
-
-    private fun combineVectors(v1: FloatArray, v2: FloatArray, w1: Float, w2: Float): FloatArray {
-        val out = FloatArray(v1.size + v2.size)
-        for (i in v1.indices) out[i] = v1[i] * w1
-        for (i in v2.indices) out[v1.size + i] = v2[i] * w2
-        return l2Normalize(out)
     }
 
     private fun l2Normalize(vec: FloatArray): FloatArray {
@@ -343,7 +266,6 @@ object FaceMatcherEngine {
         return l2Normalize(avg)
     }
 
-    // L2 + Cosine Combined Biometric Distance (0 = हूबहू एक जैसा, कम संख्या = बेहतर मैच)
     private fun calculateBiometricDistance(v1: FloatArray, v2: FloatArray): Float {
         if (v1.isEmpty() || v1.size != v2.size) return 999f
         var dot = 0f
@@ -361,7 +283,7 @@ object FaceMatcherEngine {
         if (student.photos.isEmpty()) return null
         val embeddings = mutableListOf<FloatArray>()
         for (b64 in student.photos) {
-            val bmp = decodeAndTightenStoredPhoto(b64)
+            val bmp = decodeStoredPhoto(b64)
             if (bmp != null) {
                 embeddings.add(computeEmbedding(bmp))
             }
@@ -394,7 +316,6 @@ object FaceMatcherEngine {
                 buildStudentTemplate(stu) ?: continue
             }
 
-            // सबसे नजदीकी पोज़ और सेंट्रॉइड दोनों से मिलान
             var minPoseDist = 999f
             for (poseVec in template.poseEmbeddings) {
                 val d = calculateBiometricDistance(liveVec, poseVec)
@@ -423,12 +344,10 @@ object FaceMatcherEngine {
             2.0f
         }
 
-        // 1. उच्च विश्वास (High Confidence): दूरी बहुत कम है और दूसरे छात्र से स्पष्ट अंतर है
         val isHighConf = (bestDistance <= STRICT_PASS_DISTANCE) &&
                 (marginGap >= MIN_MARGIN_GAP || marginRatio >= 1.15f)
 
-        // 2. बॉर्डरलाइन (Borderline): चेहरा करीब है, लेकिन पुष्टि के लिए Online Gemini Vision AI या अतिरिक्त जाँच चाहिए
-        val isBorderline = !isHighConf && (bestDistance <= BORDERLINE_MAX_DISTANCE) && (marginGap >= 0.65f)
+        val isBorderline = !isHighConf && (bestDistance <= BORDERLINE_MAX_DISTANCE) && (marginGap >= 0.55f)
 
         return if (isHighConf || isBorderline) {
             MatchResult(bestStudent, bestDistance, marginRatio, isHighConf, isBorderline)
@@ -437,7 +356,6 @@ object FaceMatcherEngine {
         }
     }
 
-    // पिछली कॉल्स के साथ संगतता (Backward Compatibility)
     fun findBestMatch(liveFaceBmp: Bitmap, candidates: List<Student>): Pair<Student?, Float> {
         val detailed = findBestMatchDetailed(liveFaceBmp, candidates)
         return Pair(detailed.student, detailed.distance)
@@ -453,7 +371,9 @@ object FaceMatcherEngine {
         try {
             val vm = RealisticVoiceManager(context)
             val rawKeys = vm.getGeminiKeysString()
-            val keyPool = rawKeys.split(",", "\n", ";", " ").map { it.trim() }.filter { it.length > 15 }
+            val keyPool = rawKeys.split(",", "\n", ";", " ")
+                .map { it.trim() }
+                .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
             val apiKey = keyPool.firstOrNull() ?: return false
 
             val baos = ByteArrayOutputStream()
