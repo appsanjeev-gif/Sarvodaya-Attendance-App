@@ -15,9 +15,15 @@ import com.google.mlkit.vision.face.FaceLandmark
 import com.school.sarvodayaattendance.data.Student
 import org.json.JSONArray
 import org.json.JSONObject
+import org.tensorflow.lite.Interpreter
 import java.io.ByteArrayOutputStream
+import java.io.FileInputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import java.nio.MappedByteBuffer
+import java.nio.channels.FileChannel
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -41,6 +47,9 @@ object FaceMatcherEngine {
         val primaryPhotoBase64: String
     )
 
+    private var tfliteInterpreter: Interpreter? = null
+    private var embeddingDim: Int = 192
+    private var inputImageSize: Int = 112
     private val templateCache = ConcurrentHashMap<String, StudentBiometricTemplate>()
 
     const val STRICT_PASS_DISTANCE = 10.5f
@@ -58,7 +67,27 @@ object FaceMatcherEngine {
     }
 
     fun initEngine(context: Context) {
-        // Pure Android & ML Kit Biometric Engine
+        if (tfliteInterpreter != null) return
+        val modelNames = listOf("mobile_face_net.tflite", "facenet.tflite", "face_embedding.tflite")
+        for (name in modelNames) {
+            try {
+                val afd = context.assets.openFd(name)
+                val fis = FileInputStream(afd.fileDescriptor)
+                val mapped: MappedByteBuffer = fis.channel.map(
+                    FileChannel.MapMode.READ_ONLY,
+                    afd.startOffset,
+                    afd.declaredLength
+                )
+                val opts = Interpreter.Options().apply { setNumThreads(4) }
+                val interp = Interpreter(mapped, opts)
+                val inShape = interp.getInputTensor(0).shape()
+                if (inShape.size >= 3) inputImageSize = inShape[1]
+                val outShape = interp.getOutputTensor(0).shape()
+                if (outShape.isNotEmpty()) embeddingDim = outShape.last()
+                tfliteInterpreter = interp
+                break
+            } catch (e: Exception) {}
+        }
     }
 
     fun clearCache() {
@@ -69,7 +98,10 @@ object FaceMatcherEngine {
         Thread {
             for (stu in students) {
                 if (stu.photos.isNotEmpty() && !templateCache.containsKey(stu.id)) {
-                    buildStudentTemplate(stu)?.let { templateCache[stu.id] = it }
+                    val built = buildStudentTemplate(stu)
+                    if (built != null) {
+                        templateCache[stu.id] = built
+                    }
                 }
             }
         }.start()
@@ -158,6 +190,47 @@ object FaceMatcherEngine {
     }
 
     fun computeEmbedding(faceBmp: Bitmap): FloatArray {
+        val structVec = computeStructuralBiometricVector(faceBmp)
+        val interp = tfliteInterpreter
+        if (interp != null) {
+            try {
+                val scaled = Bitmap.createScaledBitmap(faceBmp, inputImageSize, inputImageSize, true)
+                val byteBuffer = ByteBuffer.allocateDirect(1 * inputImageSize * inputImageSize * 3 * 4)
+                byteBuffer.order(ByteOrder.nativeOrder())
+                val pixels = IntArray(inputImageSize * inputImageSize)
+                scaled.getPixels(pixels, 0, inputImageSize, 0, 0, inputImageSize, inputImageSize)
+
+                var sum = 0.0
+                var sumSq = 0.0
+                val totalChannels = pixels.size * 3
+                for (px in pixels) {
+                    val r = (px shr 16 and 0xFF).toDouble()
+                    val g = (px shr 8 and 0xFF).toDouble()
+                    val b = (px and 0xFF).toDouble()
+                    sum += r + g + b
+                    sumSq += r * r + g * g + b * b
+                }
+                val mean = sum / totalChannels
+                val std = max(sqrt((sumSq / totalChannels) - (mean * mean)), 1.0)
+
+                for (px in pixels) {
+                    byteBuffer.putFloat(((px shr 16 and 0xFF) - mean).toFloat() / std.toFloat())
+                    byteBuffer.putFloat(((px shr 8 and 0xFF) - mean).toFloat() / std.toFloat())
+                    byteBuffer.putFloat(((px and 0xFF) - mean).toFloat() / std.toFloat())
+                }
+
+                val output = Array(1) { FloatArray(embeddingDim) }
+                synchronized(interp) {
+                    interp.run(byteBuffer, output)
+                }
+                val deepVec = l2Normalize(output[0])
+                return combineVectors(deepVec, structVec, 0.78f, 0.22f)
+            } catch (e: Exception) {}
+        }
+        return structVec
+    }
+
+    private fun computeStructuralBiometricVector(faceBmp: Bitmap): FloatArray {
         val size = 64
         val scaled = Bitmap.createScaledBitmap(faceBmp, size, size, true)
         val gray = FloatArray(size * size)
@@ -235,6 +308,13 @@ object FaceMatcherEngine {
         return l2Normalize(features)
     }
 
+    private fun combineVectors(v1: FloatArray, v2: FloatArray, w1: Float, w2: Float): FloatArray {
+        val out = FloatArray(v1.size + v2.size)
+        for (i in v1.indices) out[i] = v1[i] * w1
+        for (i in v2.indices) out[v1.size + i] = v2[i] * w2
+        return l2Normalize(out)
+    }
+
     private fun l2Normalize(vec: FloatArray): FloatArray {
         var sumSq = 0f
         for (v in vec) sumSq += v * v
@@ -288,6 +368,7 @@ object FaceMatcherEngine {
         )
     }
 
+    // ✅ फिक्स: inline lambda के अंदर continue हटाया गया ताकि Kotlin 100% बिना एरर कंपाइल हो
     fun findBestMatchDetailed(liveFaceBmp: Bitmap, candidates: List<Student>): MatchResult {
         if (candidates.isEmpty()) {
             return MatchResult(null, 999f, 1f, false, false)
@@ -300,9 +381,14 @@ object FaceMatcherEngine {
 
         for (stu in candidates) {
             if (stu.photos.isEmpty()) continue
-            val template = templateCache.getOrPut(stu.id) {
-                buildStudentTemplate(stu) ?: continue
+            var template = templateCache[stu.id]
+            if (template == null) {
+                template = buildStudentTemplate(stu)
+                if (template != null) {
+                    templateCache[stu.id] = template
+                }
             }
+            if (template == null) continue
 
             var minPoseDist = 999f
             for (poseVec in template.poseEmbeddings) {
