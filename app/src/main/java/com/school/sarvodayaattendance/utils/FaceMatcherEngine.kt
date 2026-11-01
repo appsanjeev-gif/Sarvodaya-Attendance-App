@@ -36,7 +36,6 @@ object FaceMatcherEngine {
 
     private data class StudentBiometricTemplate(
         val studentId: String,
-        val gender: String,
         val poseEmbeddings: List<FloatArray>,
         val centroidEmbedding: FloatArray,
         val primaryPhotoBase64: String
@@ -283,7 +282,6 @@ object FaceMatcherEngine {
         val centroid = averageEmbeddings(embeddings)
         return StudentBiometricTemplate(
             studentId = student.id,
-            gender = student.gender.ifBlank { "M" },
             poseEmbeddings = embeddings,
             centroidEmbedding = centroid,
             primaryPhotoBase64 = student.photos.first()
@@ -371,7 +369,6 @@ object FaceMatcherEngine {
             val liveB64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
             val storedB64 = candidate.photos.first().substringAfter("base64,")
-            val expectedGender = if (candidate.gender.equals("F", ignoreCase = true)) "FEMALE (Girl)" else "MALE (Boy)"
 
             val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$apiKey"
             val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
@@ -384,9 +381,9 @@ object FaceMatcherEngine {
 
             val prompt = """
                 You are a strict school biometric face verification system.
-                Image 1 is the stored KYC photo of student "${candidate.name}" whose registered gender is $expectedGender.
+                Image 1 is the stored KYC photo of student "${candidate.name}".
                 Image 2 is the live camera capture.
-                Rule 1: If the person in Image 2 does NOT match the gender $expectedGender, immediately return NO.
+                Rule 1: If the person in Image 1 and Image 2 do NOT have the same gender (boy vs girl), immediately return NO.
                 Rule 2: Compare facial bone structure, eyes, nose, and mouth. If Image 1 and Image 2 are definitely the SAME child, reply ONLY with "YES". Otherwise reply ONLY with "NO".
             """.trimIndent()
 
