@@ -163,6 +163,24 @@ class AdminActivity : AppCompatActivity() {
             )
         )
 
+        val topGuideBanner = TextView(this).apply {
+            text = "🎯 FRS KYC गाइड: चेहरे पर पर्याप्त रोशनी हो और छात्र बिल्कुल सीधा देखे (बेहतर पहचान के लिए 2-3 फोटो लें)"
+            setTextColor(Color.WHITE)
+            textSize = 13.5f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(30, 36, 30, 26)
+            setBackgroundColor(0xAA0F172A.toInt())
+        }
+        overlay.addView(
+            topGuideBanner,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            )
+        )
+
         val bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -259,12 +277,17 @@ class AdminActivity : AppCompatActivity() {
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
                 if (faces.isEmpty()) {
-                    Toast.makeText(this, "❌ चेहरा साफ नहीं दिखा! सीधे देखें", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "❌ चेहरा साफ नहीं दिखा! सीधे कैमरे में देखें", Toast.LENGTH_SHORT).show()
                     return@addOnSuccessListener
                 }
                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
-                val cropped = FaceMatcherEngine.cropFaceBitmap(frameBmp, primaryFace.boundingBox)
-                showKycPhotoConfirmDialog(cropped, rootContainer, overlay)
+                val (isValid, qualityMsg) = FaceMatcherEngine.validateKycFaceQuality(primaryFace, frameBmp)
+                if (!isValid) {
+                    Toast.makeText(this, qualityMsg, Toast.LENGTH_LONG).show()
+                    return@addOnSuccessListener
+                }
+                val alignedCropped = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
+                showKycPhotoConfirmDialog(alignedCropped, rootContainer, overlay)
             }
             .addOnFailureListener {
                 Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
@@ -298,12 +321,12 @@ class AdminActivity : AppCompatActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("📸 KYC फोटो पुष्टि")
+            .setTitle("📸 FRS बायोमेट्रिक फोटो पुष्टि")
             .setView(box)
             .setPositiveButton("✔ यह फोटो जोड़ें") { _, _ ->
                 val scaled = Bitmap.createScaledBitmap(workingBmp, 240, 240, true)
                 val baos = ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, 82, baos)
+                scaled.compress(Bitmap.CompressFormat.JPEG, 86, baos)
                 val base64Str = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
                 rootContainer.removeView(overlay)
@@ -342,7 +365,6 @@ class AdminActivity : AppCompatActivity() {
             }
         }
 
-        // ✅ [🔑 पिन व सत्र] पर 2 सेकंड Long-Press करने पर खुलने वाले दो अलग-अलग छोटे बॉक्स (Gemini और ElevenLabs के लिए)
         @JavascriptInterface
         fun openMultiApiKeyDialog() {
             runOnUiThread {
