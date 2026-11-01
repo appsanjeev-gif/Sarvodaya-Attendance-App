@@ -42,7 +42,6 @@ class RealisticVoiceManager(private val context: Context) {
     private val geminiKeyIndex = AtomicInteger(0)
     private val elevenKeyIndex = AtomicInteger(0)
 
-    // ✅ बॉक्स 1: केवल Gemini Keys के लिए
     fun getGeminiKeysString(): String {
         val dedicated = prefs.getString("custom_gemini_only_keys", null)
         if (dedicated != null) return dedicated
@@ -53,7 +52,6 @@ class RealisticVoiceManager(private val context: Context) {
             .joinToString("\n")
     }
 
-    // ✅ बॉक्स 2: केवल ElevenLabs Keys के लिए
     fun getElevenLabsKeysString(): String {
         val dedicated = prefs.getString("custom_eleven_only_keys", null)
         if (dedicated != null) return dedicated
@@ -64,7 +62,6 @@ class RealisticVoiceManager(private val context: Context) {
             .joinToString("\n")
     }
 
-    // ✅ दोनों अलग-अलग बॉक्स से Keys सेव करने और तुरंत नया ऑडियो तैयार करने का फंक्शन
     fun saveSeparateApiKeys(geminiRaw: String, elevenRaw: String) {
         val gClean = geminiRaw.trim()
         val eClean = elevenRaw.trim()
@@ -76,15 +73,14 @@ class RealisticVoiceManager(private val context: Context) {
             .putString("custom_gemini_api_key", combined)
             .apply()
 
-        // पुरानी वेलकम क्लिप्स साफ़ करें ताकि नई Key (जैसे ElevenLabs) से तुरंत ताज़ा आवाज़ बने
         rollingCacheExecutor.execute {
             try {
                 voiceCacheDir.listFiles()?.forEach { file ->
                     if (file.name.startsWith("welcome_slot_")) {
-                        try { file.delete() } catch (_: Exception) {}
+                        try { file.delete() } catch (e: Exception) {}
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
             maintainTwoHourRollingWelcomeCache()
         }
     }
@@ -108,7 +104,7 @@ class RealisticVoiceManager(private val context: Context) {
         val hasCustomEleven = getElevenLabsKeyPool().isNotEmpty()
         return when {
             list.isNotEmpty() -> list
-            hasCustomEleven -> emptyList() // केवल ElevenLabs Key होने पर बिल्ट-इन मृत Gemini Key को स्किप करें
+            hasCustomEleven -> emptyList()
             else -> builtInGeminiKeys
         }
     }
@@ -126,23 +122,22 @@ class RealisticVoiceManager(private val context: Context) {
         val stylePrompt: String
     )
 
-    // ✅ रेडियो एंकर (RJ) जैसी जीवंत टोन + ElevenLabs के सभी फ्री व डिफ़ॉल्ट अकाउंट्स पर चलने वाली मल्टीलिंगुअल Voice IDs
     private val aiVoiceProfiles = listOf(
         AiVoiceProfile(
             name = "Sadachbia",
             elevenVoiceIds = listOf(
-                "JBFqnCBsd6RMkjVDRZzb", // George (ElevenLabs Default Multilingual - Always active on Free Tier)
-                "pNInz6obpgDQGcFmaJgB", // Adam
-                "onwK4e9ZLuTAKqWW03F9"  // Daniel
+                "JBFqnCBsd6RMkjVDRZzb",
+                "pNInz6obpgDQGcFmaJgB",
+                "onwK4e9ZLuTAKqWW03F9"
             ),
             stylePrompt = "Speak like an energetic, proud, warm Indian Hindi radio RJ host with a natural smile and lively pace:"
         ),
         AiVoiceProfile(
             name = "Autonoe",
             elevenVoiceIds = listOf(
-                "EXAVITQu4vr4xnSDxMaL", // Sarah (ElevenLabs Default Multilingual - Always active on Free Tier)
-                "Xb7hH8MSUJpSbSDYk0k2", // Alice
-                "21m00Tcm4TlvDq8ikWAM"  // Rachel
+                "EXAVITQu4vr4xnSDxMaL",
+                "Xb7hH8MSUJpSbSDYk0k2",
+                "21m00Tcm4TlvDq8ikWAM"
             ),
             stylePrompt = "Speak like a cheerful, bright, inspiring Indian Hindi female radio RJ announcer with warmth and pride:"
         )
@@ -175,21 +170,19 @@ class RealisticVoiceManager(private val context: Context) {
         return System.currentTimeMillis() / (2L * 60L * 60L * 1000L)
     }
 
-    // ✅ हर 2 घंटे का स्मार्ट रोलिंग कैश (केवल Current Clip + Next Clip फोन में सेव रहेगा)
     private fun maintainTwoHourRollingWelcomeCache() {
         rollingCacheExecutor.execute {
             try {
                 val currentSlot = getCurrentTwoHourSlot()
                 val nextSlot = currentSlot + 1L
 
-                // पिछला पुराना क्लिप अपने-आप मिटा दें
                 voiceCacheDir.listFiles()?.forEach { file ->
                     if (file.name.startsWith("welcome_slot_")) {
                         val slotNum = file.name.removePrefix("welcome_slot_")
                             .substringBefore(".")
                             .toLongOrNull()
                         if (slotNum == null || (slotNum != currentSlot && slotNum != nextSlot)) {
-                            try { file.delete() } catch (_: Exception) {}
+                            try { file.delete() } catch (e: Exception) {}
                         }
                     }
                 }
@@ -201,7 +194,7 @@ class RealisticVoiceManager(private val context: Context) {
                 if (!isSlotAudioReady(nextSlot)) {
                     generateAndCacheSlotAudio(nextSlot, isNextSlot = true)
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
     }
 
@@ -217,7 +210,6 @@ class RealisticVoiceManager(private val context: Context) {
         val targetPcm = File(voiceCacheDir, "welcome_slot_$slotId.pcm")
         val targetMp3 = File(voiceCacheDir, "welcome_slot_$slotId.mp3")
 
-        // 1. पहले Gemini Pool प्रयास करें (यदि उपलब्ध हो)
         val geminiPool = getGeminiKeyPool()
         for (attempt in geminiPool.indices) {
             val idx = (geminiKeyIndex.getAndIncrement() % geminiPool.size).let { if (it < 0) it + geminiPool.size else it }
@@ -229,7 +221,6 @@ class RealisticVoiceManager(private val context: Context) {
             if (code != 429 && code != 400 && code != 403) break
         }
 
-        // 2. फिर ElevenLabs Pool प्रयास करें (सभी sk_... Keys के लिए)
         val elevenPool = getElevenLabsKeyPool()
         for (attempt in elevenPool.indices) {
             val idx = (elevenKeyIndex.getAndIncrement() % elevenPool.size).let { if (it < 0) it + elevenPool.size else it }
@@ -299,7 +290,7 @@ class RealisticVoiceManager(private val context: Context) {
                         return text
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
 
         val fallbackTemplates = listOf(
@@ -322,7 +313,7 @@ class RealisticVoiceManager(private val context: Context) {
                 if (targetFile.exists()) targetFile.delete()
                 tempFile.renameTo(targetFile)
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     private fun scheduleSpeakingUnlock(durationMs: Long) {
@@ -374,7 +365,7 @@ class RealisticVoiceManager(private val context: Context) {
             Thread.sleep(durationMs.toLong() + 40L)
             track.stop()
             track.release()
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     fun speakStartupWelcome() {
@@ -410,7 +401,6 @@ class RealisticVoiceManager(private val context: Context) {
         }
     }
 
-    // ✅ फिक्स: जब किसी छात्र की हाज़िरी नहीं लगी हो (00/38), तब बिल्कुल सटीक वाक्य बोलेगा, कभी भी गलत 38/38 नहीं बोलेगा
     fun speakVipInspectionWelcome(presentCount: Int, totalCount: Int) {
         if (!isVoiceEnabled) return
         val safeTotal = totalCount.coerceAtLeast(0)
@@ -461,7 +451,6 @@ class RealisticVoiceManager(private val context: Context) {
         val file2 = File(voiceCacheDir, "${md5Hash("${otherVoice.name}_$text")}.pcm")
         val mp3CacheFile = File(voiceCacheDir, "${md5Hash("eleven_mp3_$text")}.mp3")
 
-        // 1. पहले से सेव कैश चेक करें
         if (file1.exists() && file1.length() > 2000) {
             if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return
         }
@@ -472,7 +461,6 @@ class RealisticVoiceManager(private val context: Context) {
             if (playMp3File(mp3CacheFile)) return
         }
 
-        // 2. Multi-Gemini Key Pool (AQ.Ab8... / AIza...)
         val geminiPool = getGeminiKeyPool()
         if (geminiPool.isNotEmpty()) {
             val poolSize = geminiPool.size
@@ -488,7 +476,6 @@ class RealisticVoiceManager(private val context: Context) {
             }
         }
 
-        // 3. Multi-ElevenLabs Key Pool (sk_... के लिए)
         val elevenPool = getElevenLabsKeyPool()
         if (elevenPool.isNotEmpty()) {
             val poolSize = elevenPool.size
@@ -504,7 +491,6 @@ class RealisticVoiceManager(private val context: Context) {
             }
         }
 
-        // 4. कोई बोरिंग सिस्टम TTS नहीं बजेगा
         isCurrentlySpeaking = false
     }
 
@@ -565,12 +551,11 @@ class RealisticVoiceManager(private val context: Context) {
                 } else if (lastHttpCode == 400 || lastHttpCode == 403 || lastHttpCode == 429) {
                     break
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
         }
         return Pair(null, lastHttpCode)
     }
 
-    // ✅ ElevenLabs Multi-Voice & Model Fallback (Free और Paid दोनों टियर के लिए 100% कम्पैटिबल)
     private fun fetchElevenLabsMp3WithFallback(
         hindiText: String,
         voiceIds: List<String>,
@@ -614,10 +599,9 @@ class RealisticVoiceManager(private val context: Context) {
                             return Pair(bytes, 200)
                         }
                     } else if (lastCode == 401 || lastCode == 429) {
-                        // यदि Key गलत है या कोटा खत्म है, तो तुरंत बाहर निकलें
                         return Pair(null, lastCode)
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {}
             }
         }
         return Pair(null, lastCode)
@@ -641,7 +625,7 @@ class RealisticVoiceManager(private val context: Context) {
                         setTargetGain(650)
                         enabled = true
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) {}
                 val dur = duration.toLong().coerceAtLeast(3200L)
                 scheduleSpeakingUnlock(dur + 450L)
                 setOnCompletionListener {
@@ -707,7 +691,7 @@ class RealisticVoiceManager(private val context: Context) {
                     setTargetGain(600)
                     enabled = true
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {}
 
             val exactDurationMs = (boostedData.size * 1000L) / (sampleRate * 2)
             scheduleSpeakingUnlock(exactDurationMs + 450L)
@@ -726,7 +710,7 @@ class RealisticVoiceManager(private val context: Context) {
         try {
             loudnessEnhancer?.release()
             loudnessEnhancer = null
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
 
         try {
             currentAudioTrack?.let {
@@ -734,7 +718,7 @@ class RealisticVoiceManager(private val context: Context) {
                 it.release()
             }
             currentAudioTrack = null
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
 
         try {
             mediaPlayer?.let {
@@ -742,7 +726,7 @@ class RealisticVoiceManager(private val context: Context) {
                 it.release()
             }
             mediaPlayer = null
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
     }
 
     private fun md5Hash(input: String): String {
