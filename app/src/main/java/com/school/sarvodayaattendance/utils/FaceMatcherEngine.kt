@@ -107,6 +107,17 @@ object FaceMatcherEngine {
         }.start()
     }
 
+    // ✅ रिजल्ट कार्ड में छात्र का फोटो दिखाने के लिए ओरिजिनल हेल्पर फंक्शन
+    fun decodeBase64Bitmap(base64Str: String): Bitmap? {
+        return try {
+            val clean = base64Str.substringAfter("base64,", base64Str)
+            val bytes = Base64.decode(clean, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     fun validateKycFaceQuality(face: Face, frameBmp: Bitmap): Pair<Boolean, String> {
         val box = face.boundingBox
         if (box.width() < 90 || box.height() < 90) {
@@ -171,9 +182,7 @@ object FaceMatcherEngine {
 
     private fun decodeStoredPhoto(base64Str: String): Bitmap? {
         return try {
-            val clean = base64Str.substringAfter("base64,", base64Str)
-            val bytes = Base64.decode(clean, Base64.DEFAULT)
-            val rawBmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+            val rawBmp = decodeBase64Bitmap(base64Str) ?: return null
             val w = rawBmp.width
             val h = rawBmp.height
             if (w > 60 && h > 60) {
@@ -368,7 +377,6 @@ object FaceMatcherEngine {
         )
     }
 
-    // ✅ फिक्स: inline lambda के अंदर continue हटाया गया ताकि Kotlin 100% बिना एरर कंपाइल हो
     fun findBestMatchDetailed(liveFaceBmp: Bitmap, candidates: List<Student>): MatchResult {
         if (candidates.isEmpty()) {
             return MatchResult(null, 999f, 1f, false, false)
