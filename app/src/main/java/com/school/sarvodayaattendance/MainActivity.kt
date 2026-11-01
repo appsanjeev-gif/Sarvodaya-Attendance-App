@@ -1,221 +1,103 @@
 package com.school.sarvodayaattendance
 
 import android.Manifest
-import android.animation.ObjectAnimator
-import android.animation.ValueAnimator
 import android.annotation.SuppressLint
-import android.content.ClipData
-import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.text.Editable
-import android.text.InputFilter
 import android.text.InputType
-import android.text.TextWatcher
+import android.util.Size
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.inputmethod.InputMethodManager
 import android.widget.Button
 import android.widget.EditText
 import android.widget.FrameLayout
-import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.ImageProxy
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.core.content.FileProvider
-import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
 import com.school.sarvodayaattendance.data.AppStorage
 import com.school.sarvodayaattendance.data.BackupPayload
 import com.school.sarvodayaattendance.data.Student
 import com.school.sarvodayaattendance.utils.FaceMatcherEngine
 import com.school.sarvodayaattendance.utils.RealisticVoiceManager
-import java.io.BufferedReader
-import java.io.File
-import java.io.FileOutputStream
-import java.io.InputStreamReader
-import kotlin.math.roundToInt
+import java.util.concurrent.Executors
+import kotlin.math.abs
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var previewView: PreviewView
-    private lateinit var tvHeaderDate: TextView
-    private lateinit var tvLiveStatus: TextView
-    private lateinit var tvLiveTickerCount: TextView
-    private lateinit var tvScannerOnlyBanner: TextView
-    private lateinit var btnAdminLock: Button
-    private lateinit var btnTorchIcon: Button
-    private lateinit var btnSwitchCamIcon: Button
-    private lateinit var btnVoiceIcon: Button
-    private lateinit var resultCardBox: LinearLayout
-    private lateinit var ivResultStudentPhoto: ImageView
-    private lateinit var tvResultLogo: TextView
-    private lateinit var tvResultDate: TextView
-    private lateinit var tvResultName: TextView
-    private lateinit var tvResultMeta: TextView
-    private lateinit var tvResultSubNote: TextView
-    private lateinit var logoVipTrigger: FrameLayout
+    private lateinit var statusBanner: TextView
+    private lateinit var statsChip: TextView
+    private lateinit var classFilterBtn: Button
+    private lateinit var torchBtn: Button
+    private lateinit var voiceBtn: Button
 
     private lateinit var voiceManager: RealisticVoiceManager
-    private lateinit var payload: BackupPayload
+    private val cameraExecutor = Executors.newSingleThreadExecutor()
+    private val aiVerifyExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
-    private var camera: Camera? = null
     private var lensFacing = CameraSelector.LENS_FACING_FRONT
+    private var activeCamera: Camera? = null
     private var isTorchOn = false
+
+    private val classOptions = listOf("सभी", "6वीं", "7वीं", "8वीं")
+    private var selectedClassFilter = "सभी"
+
+    private var currentPayload: BackupPayload = BackupPayload()
+
+    @Volatile
     private var isProcessingFrame = false
-    private var lastScanTimestamp = 0L
+    private var lastFrameCheckMs = 0L
 
-    private var isVipInspectionModeActive = false
-    private var hasSpokenVipForCurrentFace = false
-    private var vipHoldRunnable: Runnable? = null
+    private var lastRecognizedId: String? = null
+    private var lastRecognizedTimeMs = 0L
+    private var samePersonStreak = 0
+    private var lastUnknownVoiceTimeMs = 0L
 
-    private var lastSpokenStudentId: String? = null
-    private var sameStudentScanStreak: Int = 0
-    private var emptyFrameCount: Int = 0
+    // ✅ लगातार 2 फ्रेम की पुष्टि (2-Frame Consecutive Confirmation) के लिए वेरिएबल्स
+    private var pendingCandidateId: String? = null
+    private var pendingCandidateHits: Int = 0
+    private var pendingCandidateLastSeenMs: Long = 0L
 
-    private val uiHandler = Handler(Looper.getMainLooper())
-    private var hideCardRunnable: Runnable? = null
+    @Volatile
+    private var isOnlineAiVerifying = false
 
-    private val packFilePicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        if (uri != null) {
-            importBackupFromUri(uri)
-        }
-    }
-
-    private val autoScanLoop = object : Runnable {
-        override fun run() {
-            performLiveFrameCheck(false)
-            uiHandler.postDelayed(this, 650)
-        }
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // ✅ मुख्य स्कैनर स्क्रीन चालू रहने तक मोबाइल की स्क्रीन कभी बंद नहीं होगी
+
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        setContentView(R.layout.activity_main)
 
         FaceMatcherEngine.initEngine(this)
-
-        payload = AppStorage.loadData(this)
         voiceManager = RealisticVoiceManager(this)
-        uiHandler.postDelayed({ voiceManager.speakStartupWelcome() }, 1100)
 
-        previewView = findViewById(R.id.previewView)
-        tvHeaderDate = findViewById(R.id.tvHeaderDate)
-        tvLiveStatus = findViewById(R.id.tvLiveStatus)
-        tvLiveTickerCount = findViewById(R.id.tvLiveTickerCount)
-        tvScannerOnlyBanner = findViewById(R.id.tvScannerOnlyBanner)
-        btnAdminLock = findViewById(R.id.btnAdminLock)
-        btnTorchIcon = findViewById(R.id.btnTorchIcon)
-        btnSwitchCamIcon = findViewById(R.id.btnSwitchCamIcon)
-        btnVoiceIcon = findViewById(R.id.btnVoiceIcon)
-        resultCardBox = findViewById(R.id.resultCardBox)
-        ivResultStudentPhoto = findViewById(R.id.ivResultStudentPhoto)
-        tvResultLogo = findViewById(R.id.tvResultLogo)
-        tvResultDate = findViewById(R.id.tvResultDate)
-        tvResultName = findViewById(R.id.tvResultName)
-        tvResultMeta = findViewById(R.id.tvResultMeta)
-        tvResultSubNote = findViewById(R.id.tvResultSubNote)
-        logoVipTrigger = findViewById(R.id.logoVipTrigger)
+        buildScannerScreenUI()
+        reloadPayloadAndRefreshUI()
 
-        tvHeaderDate.text = AppStorage.getTodayFullDot()
-
-        findViewById<View>(R.id.laserScanLine)?.let { laser ->
-            ObjectAnimator.ofFloat(laser, "translationY", 0f, 190f).apply {
-                duration = 1400
-                repeatMode = ValueAnimator.REVERSE
-                repeatCount = ValueAnimator.INFINITE
-                start()
-            }
-        }
-
-        logoVipTrigger.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    vipHoldRunnable?.let { uiHandler.removeCallbacks(it) }
-                    vipHoldRunnable = Runnable {
-                        toggleVipInspectionModeSilent()
-                    }
-                    uiHandler.postDelayed(vipHoldRunnable!!, 2000L)
-                    true
-                }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    vipHoldRunnable?.let { uiHandler.removeCallbacks(it) }
-                    true
-                }
-                else -> false
-            }
-        }
-
-        refreshScannerModeUI()
-        updateLiveSchoolTicker()
-
-        findViewById<Button>(R.id.btnManualScanTrigger).setOnClickListener {
-            performLiveFrameCheck(true)
-        }
-
-        btnTorchIcon.setOnClickListener {
-            isTorchOn = !isTorchOn
-            camera?.cameraControl?.enableTorch(isTorchOn)
-            btnTorchIcon.backgroundTintList = ColorStateList.valueOf(
-                Color.parseColor(if (isTorchOn) "#16A34A" else "#334155")
-            )
-        }
-
-        btnSwitchCamIcon.setOnClickListener {
-            lensFacing = if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
-                CameraSelector.LENS_FACING_BACK
-            } else {
-                CameraSelector.LENS_FACING_FRONT
-            }
-            startCamera()
-        }
-
-        // ✅ मुख्य स्क्रीन पर 🔊 बटन अब केवल Mute/Unmute करेगा (Long-Press पॉपअप यहाँ से पूरी तरह हटा दिया गया है)
-        btnVoiceIcon.setOnClickListener {
-            voiceManager.isVoiceEnabled = !voiceManager.isVoiceEnabled
-            btnVoiceIcon.text = if (voiceManager.isVoiceEnabled) "🔊" else "🔇"
-            btnVoiceIcon.backgroundTintList = ColorStateList.valueOf(
-                Color.parseColor(if (voiceManager.isVoiceEnabled) "#16A34A" else "#334155")
-            )
-        }
-
-        btnAdminLock.setOnClickListener {
-            if (!payload.isScannerOnlyPack) {
-                showRoyalPinDialog()
-            }
-        }
-
-        findViewById<Button>(R.id.btnShareTodayAtt).setOnClickListener {
-            shareTodayAttendanceDirect()
-        }
-
-        findViewById<Button>(R.id.btnLoadPack).setOnClickListener {
-            packFilePicker.launch("*/*")
-        }
+        mainHandler.postDelayed({
+            voiceManager.speakStartupWelcome()
+        }, 700)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             startCamera()
@@ -226,74 +108,283 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        FaceMatcherEngine.initEngine(this)
-        payload = AppStorage.loadData(this)
-        FaceMatcherEngine.clearCache()
-        FaceMatcherEngine.warmUpCache(payload.students)
-        refreshScannerModeUI()
-        updateLiveSchoolTicker()
-        uiHandler.postDelayed(autoScanLoop, 800)
+        reloadPayloadAndRefreshUI()
     }
 
-    override fun onPause() {
-        super.onPause()
-        uiHandler.removeCallbacks(autoScanLoop)
+    override fun onDestroy() {
+        super.onDestroy()
+        cameraExecutor.shutdown()
+        aiVerifyExecutor.shutdown()
+        voiceManager.shutdown()
     }
 
-    private fun updateLiveSchoolTicker() {
-        val todayKey = AppStorage.getTodayShortKey()
-        val total = payload.students.size
-        val presentIds = payload.attendance[todayKey] ?: emptyList()
-        val present = payload.students.count { presentIds.contains(it.id) }
-        val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
-        tvLiveTickerCount.text = "📊 उपस्थित: $present/$total ($pct%)"
+    private fun reloadPayloadAndRefreshUI() {
+        currentPayload = AppStorage.loadData(this)
+        if (currentPayload.sharedApiKeys.isNotBlank() && voiceManager.getApiKey().isBlank()) {
+            voiceManager.saveCustomApiKey(currentPayload.sharedApiKeys)
+        }
+        FaceMatcherEngine.warmUpCache(currentPayload.students)
+        updateStatsBar()
     }
 
-    private fun toggleVipInspectionModeSilent() {
-        isVipInspectionModeActive = !isVipInspectionModeActive
-        hasSpokenVipForCurrentFace = false
-
-        if (isVipInspectionModeActive) {
-            logoVipTrigger.setBackgroundResource(R.drawable.bg_vip_glow)
+    private fun getFilteredCandidateStudents(): List<Student> {
+        return if (selectedClassFilter == "सभी") {
+            currentPayload.students
         } else {
-            logoVipTrigger.background = null
-            resultCardBox.visibility = View.GONE
+            currentPayload.students.filter { it.className == selectedClassFilter }
         }
     }
 
-    private fun speakAndShowVipWelcomeOnFaceDetected() {
+    // ✅ सटीक उपस्थिति गिनती: केवल वही आईडी गिनी जाएंगी जो वास्तव में वर्तमान छात्र सूची में मौजूद हैं
+    private fun getAccuratePresentAndTotalCount(studentsList: List<Student>): Pair<Int, Int> {
         val todayKey = AppStorage.getTodayShortKey()
-        val total = payload.students.size
-        val presentIds = payload.attendance[todayKey] ?: emptyList()
-        val present = payload.students.count { presentIds.contains(it.id) }
-        val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
-
-        ivResultStudentPhoto.visibility = View.VISIBLE
-        ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
-        tvResultLogo.text = "✨"
-        tvResultDate.text = AppStorage.getTodayFullDot()
-        tvResultName.text = "माननीय अधिकारी एवं अतिथि महोदय"
-        tvResultMeta.text = "हार्दिक अभिनंदन एवं स्वागत"
-        tvResultSubNote.setTextColor(Color.parseColor("#1E3A8A"))
-        tvResultSubNote.text = "आज की लाइव उपस्थिति: $present / $total ($pct%)"
-
-        resultCardBox.visibility = View.VISIBLE
-        hideCardRunnable?.let { uiHandler.removeCallbacks(it) }
-        hideCardRunnable = Runnable { resultCardBox.visibility = View.GONE }
-        uiHandler.postDelayed(hideCardRunnable!!, 8000)
-
-        voiceManager.speakVipInspectionWelcome(present, total)
+        val presentSet = (currentPayload.attendance[todayKey] ?: emptyList()).toSet()
+        val validPresentCount = studentsList.count { presentSet.contains(it.id) }
+        return Pair(validPresentCount, studentsList.size)
     }
 
-    private fun refreshScannerModeUI() {
-        if (payload.isScannerOnlyPack) {
-            tvScannerOnlyBanner.visibility = View.VISIBLE
-            btnAdminLock.visibility = View.GONE
-        } else {
-            tvScannerOnlyBanner.visibility = View.GONE
-            btnAdminLock.visibility = View.VISIBLE
+    private fun updateStatsBar() {
+        val list = getFilteredCandidateStudents()
+        val (presentCount, totalCount) = getAccuratePresentAndTotalCount(list)
+        val pStr = presentCount.toString().padStart(2, '0')
+        val tStr = totalCount.toString().padStart(2, '0')
+        statsChip.text = "📊 $selectedClassFilter: $pStr / $tStr उपस्थित"
+    }
+
+    private fun buildScannerScreenUI() {
+        val root = FrameLayout(this).apply {
+            setBackgroundColor(Color.parseColor("#0F172A"))
         }
+
+        previewView = PreviewView(this).apply {
+            implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+            scaleType = PreviewView.ScaleType.FILL_CENTER
+        }
+        root.addView(
+            previewView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val topOverlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(28, 42, 28, 22)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0xDD0F172A.toInt(), 0x000F172A)
+            )
+        }
+
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        val titleView = TextView(this).apply {
+            text = "सर्वोदय मध्य विद्यालय, सोहसराय"
+            setTextColor(Color.WHITE)
+            textSize = 16.5f
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setOnLongClickListener {
+                val (presentCount, totalCount) = getAccuratePresentAndTotalCount(currentPayload.students)
+                voiceManager.speakVipInspectionWelcome(presentCount, totalCount)
+                Toast.makeText(this@MainActivity, "🎙️ VIP निरीक्षण स्वागत...", Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
+
+        val adminBtn = Button(this).apply {
+            text = "⚙️ एडमिन"
+            setTextColor(Color.WHITE)
+            textSize = 13.5f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(30, 12, 30, 12)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1E3A8A"))
+                cornerRadius = 999f
+                setStroke(2, Color.parseColor("#93C5FD"))
+            }
+            setOnClickListener {
+                promptAdminPinAndOpen()
+            }
+        }
+
+        headerRow.addView(titleView)
+        headerRow.addView(adminBtn)
+
+        val subRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 18, 0, 0)
+        }
+
+        statsChip = TextView(this).apply {
+            text = "📊 सभी: 00 / 00 उपस्थित"
+            setTextColor(Color.parseColor("#FDE047"))
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+
+        classFilterBtn = Button(this).apply {
+            text = "कक्षा: सभी ▾"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(26, 10, 26, 10)
+            background = GradientDrawable().apply {
+                setColor(0x55FFFFFF)
+                cornerRadius = 999f
+            }
+            setOnClickListener {
+                val nextIdx = (classOptions.indexOf(selectedClassFilter) + 1) % classOptions.size
+                selectedClassFilter = classOptions[nextIdx]
+                text = "कक्षा: $selectedClassFilter ▾"
+                pendingCandidateId = null
+                pendingCandidateHits = 0
+                updateStatsBar()
+            }
+        }
+
+        subRow.addView(statsChip)
+        subRow.addView(classFilterBtn)
+
+        topOverlay.addView(headerRow)
+        topOverlay.addView(subRow)
+
+        root.addView(
+            topOverlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP
+            )
+        )
+
+        val bottomOverlay = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(32, 24, 32, 46)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(0xEE0F172A.toInt(), 0x000F172A)
+            )
+        }
+
+        statusBanner = TextView(this).apply {
+            text = "📷 कैमरे के सामने सीधे देखें..."
+            setTextColor(Color.WHITE)
+            textSize = 16.5f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(36, 26, 36, 26)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#1E293B"))
+                cornerRadius = 32f
+                setStroke(3, Color.parseColor("#38BDF8"))
+            }
+        }
+
+        val controlsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, 26, 0, 0)
+        }
+
+        val flipCamBtn = createControlPillButton("🔄 कैमरा पलटें") {
+            lensFacing = if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+                CameraSelector.LENS_FACING_BACK
+            } else {
+                CameraSelector.LENS_FACING_FRONT
+            }
+            isTorchOn = false
+            startCamera()
+        }
+
+        torchBtn = createControlPillButton("🔦 फ्लैश: बंद") {
+            val cam = activeCamera ?: return@createControlPillButton
+            if (cam.cameraInfo.hasFlashUnit()) {
+                isTorchOn = !isTorchOn
+                cam.cameraControl.enableTorch(isTorchOn)
+                torchBtn.text = if (isTorchOn) "🔦 फ्लैश: चालू" else "🔦 फ्लैश: बंद"
+            } else {
+                Toast.makeText(this, "इस कैमरे में फ्लैश नहीं है", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        voiceBtn = createControlPillButton("🔊 आवाज़: चालू") {
+            voiceManager.isVoiceEnabled = !voiceManager.isVoiceEnabled
+            voiceBtn.text = if (voiceManager.isVoiceEnabled) "🔊 आवाज़: चालू" else "🔇 आवाज़: बंद"
+        }
+
+        controlsRow.addView(flipCamBtn)
+        controlsRow.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(18, 1) })
+        controlsRow.addView(torchBtn)
+        controlsRow.addView(View(this).apply { layoutParams = LinearLayout.LayoutParams(18, 1) })
+        controlsRow.addView(voiceBtn)
+
+        bottomOverlay.addView(
+            statusBanner,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        bottomOverlay.addView(controlsRow)
+
+        root.addView(
+            bottomOverlay,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+            )
+        )
+
+        setContentView(root)
+    }
+
+    private fun createControlPillButton(label: String, onClick: () -> Unit): Button {
+        return Button(this).apply {
+            text = label
+            setTextColor(Color.WHITE)
+            textSize = 12.5f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(28, 16, 28, 16)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#334155"))
+                cornerRadius = 999f
+                setStroke(2, Color.parseColor("#64748B"))
+            }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    private fun promptAdminPinAndOpen() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            hint = "6 अंकों का पिन डालें"
+            gravity = Gravity.CENTER
+            textSize = 18f
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("🔒 एडमिन लॉगिन")
+            .setView(input)
+            .setPositiveButton("खोलें") { _, _ ->
+                val entered = input.text.toString().trim()
+                val savedPin = currentPayload.adminPin.ifBlank { "123456" }
+                if (entered == savedPin) {
+                    startActivity(Intent(this, AdminActivity::class.java))
+                } else {
+                    Toast.makeText(this, "❌ गलत पिन!", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .setNegativeButton("रद्द करें", null)
+            .show()
     }
 
     private fun startCamera() {
@@ -304,301 +395,211 @@ class MainActivity : AppCompatActivity() {
                 val preview = Preview.Builder().build().also {
                     it.setSurfaceProvider(previewView.surfaceProvider)
                 }
+
+                val analyzer = ImageAnalysis.Builder()
+                    .setTargetResolution(Size(640, 480))
+                    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                    .build()
+                    .also { analysis ->
+                        analysis.setAnalyzer(cameraExecutor) { imageProxy ->
+                            processCameraFrame(imageProxy)
+                        }
+                    }
+
                 val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
                 provider.unbindAll()
-                camera = provider.bindToLifecycle(this, selector, preview)
+                activeCamera = provider.bindToLifecycle(this, selector, preview, analyzer)
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun performLiveFrameCheck(isManualTap: Boolean) {
-        if (isProcessingFrame) return
+    @SuppressLint("UnsafeOptInUsageError")
+    private fun processCameraFrame(imageProxy: ImageProxy) {
         val now = System.currentTimeMillis()
-        if (!isManualTap && (now - lastScanTimestamp < 1600)) return
+        if (isProcessingFrame || isOnlineAiVerifying || now - lastFrameCheckMs < 300) {
+            imageProxy.close()
+            return
+        }
 
-        val frameBmp: Bitmap = previewView.bitmap ?: return
+        val mediaImage = imageProxy.image
+        if (mediaImage == null) {
+            imageProxy.close()
+            return
+        }
+
         isProcessingFrame = true
+        lastFrameCheckMs = now
 
-        val inputImage = InputImage.fromBitmap(frameBmp, 0)
+        val rotation = imageProxy.imageInfo.rotationDegrees
+        val inputImage = InputImage.fromMediaImage(mediaImage, rotation)
+
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
-                if (faces.isNotEmpty()) {
-                    emptyFrameCount = 0
-                    val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
-                    val croppedFace = FaceMatcherEngine.cropFaceBitmap(frameBmp, primaryFace.boundingBox)
-                    val (matchedStudent, score) = FaceMatcherEngine.findBestMatch(croppedFace, payload.students)
+                if (faces.isEmpty()) {
+                    pendingCandidateId = null
+                    pendingCandidateHits = 0
+                    isProcessingFrame = false
+                    imageProxy.close()
+                    return@addOnSuccessListener
+                }
 
-                    if (matchedStudent != null && score <= 19.0f) {
-                        if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
-                            isProcessingFrame = false
-                            return@addOnSuccessListener
-                        }
-                        if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (now - lastScanTimestamp < 4200)) {
-                            isProcessingFrame = false
-                            return@addOnSuccessListener
-                        }
+                val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
 
-                        lastScanTimestamp = System.currentTimeMillis()
-                        handleMatchedStudent(matchedStudent)
-                    } else if (isVipInspectionModeActive) {
-                        if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
-                            hasSpokenVipForCurrentFace = true
-                            lastScanTimestamp = System.currentTimeMillis()
-                            speakAndShowVipWelcomeOnFaceDetected()
-                        }
-                    } else if (isManualTap) {
-                        lastScanTimestamp = System.currentTimeMillis()
-                        if (payload.students.isEmpty()) {
-                            showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
-                        } else {
-                            showResultBanner("error", null, "चेहरा मैच नहीं हुआ!", 2000)
-                            voiceManager.speakGreeting("error", "")
-                        }
+                // चेहरा बहुत ज़्यादा तिरछा हो तो गलत पहचान रोकने के लिए सीधा देखने को कहें
+                if (abs(primaryFace.headEulerAngleY) > 22f || abs(primaryFace.headEulerAngleZ) > 20f) {
+                    mainHandler.post {
+                        updateBanner("👀 कृपया कैमरे की तरफ सीधा देखें...", "#334155", "#94A3B8")
                     }
-                } else {
-                    emptyFrameCount++
-                    if (emptyFrameCount >= 5) {
-                        lastSpokenStudentId = null
-                        sameStudentScanStreak = 0
-                        hasSpokenVipForCurrentFace = false
-                    }
-                    if (isManualTap) {
-                        showResultBanner("error", null, "कैमरे में चेहरा नहीं दिखा!", 2000)
+                    isProcessingFrame = false
+                    imageProxy.close()
+                    return@addOnSuccessListener
+                }
+
+                mainHandler.post {
+                    val frameBmp = previewView.bitmap
+                    if (frameBmp != null && primaryFace.boundingBox.width() >= 65) {
+                        val alignedFaceBmp = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
+                        val candidates = getFilteredCandidateStudents()
+
+                        cameraExecutor.execute {
+                            val matchResult = FaceMatcherEngine.findBestMatchDetailed(alignedFaceBmp, candidates)
+                            handleStrictBiometricMatchResult(matchResult, alignedFaceBmp)
+                            isProcessingFrame = false
+                        }
+                    } else {
+                        isProcessingFrame = false
                     }
                 }
-                isProcessingFrame = false
+                imageProxy.close()
             }
             .addOnFailureListener {
                 isProcessingFrame = false
+                imageProxy.close()
             }
     }
 
-    private fun handleMatchedStudent(stu: Student) {
-        val todayKey = AppStorage.getTodayShortKey()
-        if (AppStorage.isSundayOrHoliday(payload, todayKey, stu.className)) {
-            Toast.makeText(this, "🏖️ अवकाश", Toast.LENGTH_SHORT).show()
-            return
-        }
+    // ✅ 2-Frame Consecutive Confirmation + Online Gemini Vision AI Gender/Identity Double-Check
+    private fun handleStrictBiometricMatchResult(
+        result: FaceMatcherEngine.MatchResult,
+        liveFaceBmp: Bitmap
+    ) {
+        val now = System.currentTimeMillis()
+        val matchedStudent = result.student
 
-        if (lastSpokenStudentId == stu.id) {
-            sameStudentScanStreak++
-        } else {
-            lastSpokenStudentId = stu.id
-            sameStudentScanStreak = 1
-        }
-
-        val list = payload.attendance.getOrPut(todayKey) { mutableListOf() }
-        if (!list.contains(stu.id)) {
-            list.add(stu.id)
-            AppStorage.saveData(this, payload)
-            updateLiveSchoolTicker()
-            showResultBanner("success", stu, "✔ उपस्थित दर्ज", 4000)
-            voiceManager.speakGreeting("success", stu.name)
-        } else {
-            if (sameStudentScanStreak >= 3) {
-                val firstName = stu.name.trim().substringBefore(" ")
-                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName!", 4200)
-                voiceManager.speakGreeting("move_away", stu.name)
+        if (matchedStudent != null) {
+            if (pendingCandidateId == matchedStudent.id && (now - pendingCandidateLastSeenMs) < 2200L) {
+                pendingCandidateHits++
             } else {
-                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है", 3500)
-                voiceManager.speakGreeting("warning", stu.name)
+                pendingCandidateId = matchedStudent.id
+                pendingCandidateHits = 1
             }
-        }
-    }
+            pendingCandidateLastSeenMs = now
 
-    private fun showResultBanner(type: String, stu: Student?, note: String, durationMs: Long) {
-        tvResultDate.text = AppStorage.getTodayFullDot()
-
-        if (stu != null && stu.photos.isNotEmpty()) {
-            val bmp = FaceMatcherEngine.decodeBase64Bitmap(stu.photos[0])
-            if (bmp != null) {
-                ivResultStudentPhoto.setImageBitmap(bmp)
-                ivResultStudentPhoto.visibility = View.VISIBLE
-            } else {
-                ivResultStudentPhoto.visibility = View.GONE
+            // पहले फ्रेम पर केवल "जाँच हो रही है..." दिखाएं, तुक्के से तुरंत नाम लॉक न करें
+            if (pendingCandidateHits < 2) {
+                mainHandler.post {
+                    updateBanner("🔍 चेहरे की पुष्टि हो रही है... स्थिर रहें", "#1E3A8A", "#60A5FA")
+                }
+                return
             }
-        } else {
-            ivResultStudentPhoto.visibility = View.GONE
-        }
 
-        when (type) {
-            "success" -> {
-                tvResultLogo.text = "✅"
-                tvResultName.text = stu?.name ?: ""
-                tvResultMeta.text = "कक्षा: ${stu?.className ?: ""} | रोल: ${AppStorage.formatRoll(stu?.roll ?: "")}"
-                tvResultSubNote.setTextColor(Color.parseColor("#15803D"))
-                tvResultSubNote.text = note
-            }
-            "warning" -> {
-                tvResultLogo.text = "⚠️"
-                tvResultName.text = stu?.name ?: ""
-                tvResultMeta.text = "कक्षा: ${stu?.className ?: ""} | रोल: ${AppStorage.formatRoll(stu?.roll ?: "")}"
-                tvResultSubNote.setTextColor(Color.parseColor("#B45309"))
-                tvResultSubNote.text = note
-            }
-            else -> {
-                tvResultLogo.text = "❌"
-                tvResultName.text = note
-                tvResultMeta.text = ""
-                tvResultSubNote.text = ""
-            }
-        }
-
-        resultCardBox.visibility = View.VISIBLE
-        hideCardRunnable?.let { uiHandler.removeCallbacks(it) }
-        hideCardRunnable = Runnable {
-            resultCardBox.visibility = View.GONE
-        }
-        uiHandler.postDelayed(hideCardRunnable!!, durationMs)
-    }
-
-    private fun showRoyalPinDialog() {
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setPadding(55, 50, 55, 55)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#0F172A"))
-                cornerRadius = 42f
-                setStroke(3, Color.parseColor("#38BDF8"))
-            }
-        }
-
-        val titleTv = TextView(this).apply {
-            text = "🔐 6 अंक पिन"
-            textSize = 20f
-            setTypeface(null, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-            setPadding(0, 0, 0, 30)
-        }
-
-        val input = EditText(this).apply {
-            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            filters = arrayOf(InputFilter.LengthFilter(6))
-            hint = "• • • • • •"
-            setHintTextColor(Color.parseColor("#64748B"))
-            setTextColor(Color.parseColor("#38BDF8"))
-            textAlignment = View.TEXT_ALIGNMENT_CENTER
-            textSize = 28f
-            setTypeface(null, Typeface.BOLD)
-            setPadding(30, 24, 30, 24)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#1E293B"))
-                cornerRadius = 24f
-                setStroke(2, Color.parseColor("#475569"))
-            }
-        }
-
-        container.addView(titleTv)
-        container.addView(input)
-
-        val dialog = AlertDialog.Builder(this)
-            .setView(container)
-            .setCancelable(true)
-            .create()
-
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
-
-        input.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                if (s != null && s.length == 6) {
-                    if (s.toString() == payload.adminPin) {
-                        dialog.dismiss()
-                        startActivity(Intent(this@MainActivity, AdminActivity::class.java))
-                    } else {
-                        Toast.makeText(this@MainActivity, "❌ गलत पिन", Toast.LENGTH_SHORT).show()
-                        s.clear()
+            // यदि 2 लगातार फ्रेम में वही छात्र आया है:
+            // यदि यह बॉर्डरलाइन केस है या बहुत हाई-कॉन्फिडेंस नहीं है, तो Online Gemini Vision AI से लड़का/लड़की और चेहरे की 1-to-1 पुष्टि करें
+            if (result.isBorderlineForAiCheck || result.distance > 8.8f) {
+                val hasGeminiKey = voiceManager.getGeminiKeysString().trim().length > 15
+                if (hasGeminiKey && !isOnlineAiVerifying) {
+                    isOnlineAiVerifying = true
+                    mainHandler.post {
+                        updateBanner("🤖 AI से चेहरे की सटीक जाँच हो रही है...", "#1E3A8A", "#38BDF8")
+                    }
+                    val frozenBmp = liveFaceBmp.copy(Bitmap.Config.ARGB_8888, false)
+                    aiVerifyExecutor.execute {
+                        val verified = FaceMatcherEngine.verifyMatchWithGeminiVisionBlocking(
+                            this@MainActivity,
+                            frozenBmp,
+                            matchedStudent
+                        )
+                        isOnlineAiVerifying = false
+                        if (verified) {
+                            mainHandler.post {
+                                confirmAndMarkStudentAttendance(matchedStudent)
+                            }
+                        } else {
+                            pendingCandidateId = null
+                            pendingCandidateHits = 0
+                            mainHandler.post {
+                                updateBanner("⚠️ चेहरा मेल नहीं खाया, कृपया सीधे देखें", "#7F1D1D", "#F87171")
+                            }
+                        }
+                    }
+                    return
+                } else if (!result.isHighConfidence) {
+                    // यदि ऑफलाइन है और हाई-कॉन्फिडेंस नहीं है, तो कम से कम 3 लगातार फ्रेम की सख्त पुष्टि मांगें
+                    if (pendingCandidateHits < 3) {
+                        return
                     }
                 }
             }
-        })
 
-        dialog.show()
-        input.requestFocus()
-        input.postDelayed({
-            val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
-            imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT)
-        }, 120)
-    }
-
-    private fun shareTodayAttendanceDirect() {
-        val todayKey = AppStorage.getTodayShortKey()
-        val presentIds = payload.attendance[todayKey] ?: emptyList()
-        if (presentIds.isEmpty()) {
-            Toast.makeText(this, "⚠️ आज कोई उपस्थिति नहीं है", Toast.LENGTH_SHORT).show()
-            return
-        }
-        val exportMap = mapOf(
-            "type" to "DAILY_ATTENDANCE_SYNC",
-            "dateKey" to todayKey,
-            "presentStudentIds" to presentIds
-        )
-        val json = Gson().toJson(exportMap)
-        try {
-            val fileName = "Attendance_${todayKey.replace(".", "_")}.txt"
-            val outFile = File(cacheDir, fileName)
-            FileOutputStream(outFile).use { fos ->
-                fos.write(json.toByteArray(Charsets.UTF_8))
+            // 100% पुष्टि होने पर हाज़िरी दर्ज करें
+            pendingCandidateHits = 0
+            mainHandler.post {
+                confirmAndMarkStudentAttendance(matchedStudent)
             }
-            val contentUri = FileProvider.getUriForFile(
-                this,
-                "${applicationContext.packageName}.fileprovider",
-                outFile
-            )
-            val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                type = "text/plain"
-                putExtra(Intent.EXTRA_STREAM, contentUri)
-                clipData = ClipData.newRawUri(fileName, contentUri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            startActivity(Intent.createChooser(sendIntent, "हाज़िरी भेजें"))
-        } catch (e: Exception) {
-            Toast.makeText(this, "❌ शेयर त्रुटि", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun importBackupFromUri(uri: Uri) {
-        try {
-            val sb = StringBuilder()
-            contentResolver.openInputStream(uri)?.use { stream ->
-                BufferedReader(InputStreamReader(stream)).use { reader ->
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        sb.append(line).append("\n")
-                    }
+        } else {
+            pendingCandidateId = null
+            pendingCandidateHits = 0
+            mainHandler.post {
+                if (now - lastUnknownVoiceTimeMs > 6500L && !voiceManager.isCurrentlySpeaking) {
+                    lastUnknownVoiceTimeMs = now
+                    updateBanner("❓ चेहरा पहचाना नहीं गया, सीधे देखें", "#7F1D1D", "#F87171")
                 }
             }
-            val ok = AppStorage.importFromHtmlOrJson(this, sb.toString())
-            if (ok) {
-                payload = AppStorage.loadData(this)
-                FaceMatcherEngine.clearCache()
-                FaceMatcherEngine.warmUpCache(payload.students)
-                refreshScannerModeUI()
-                updateLiveSchoolTicker()
-                Toast.makeText(this, "✔ पैक लोड हो गया (${payload.students.size} छात्र)", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "❌ अमान्य फ़ाइल", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun confirmAndMarkStudentAttendance(matched: Student) {
+        val now = System.currentTimeMillis()
+        val todayKey = AppStorage.getTodayShortKey()
+        val todayList = currentPayload.attendance.getOrPut(todayKey) { mutableListOf() }
+        val alreadyMarked = todayList.contains(matched.id)
+
+        if (matched.id == lastRecognizedId && now - lastRecognizedTimeMs < 3800L) {
+            samePersonStreak++
+            if (samePersonStreak >= 3 && !voiceManager.isCurrentlySpeaking) {
+                voiceManager.speakGreeting("move_away", matched.name)
+                updateBanner("😊 ${matched.name}, अब अगले छात्र को आने दें!", "#854D0E", "#FACC15")
+                samePersonStreak = 0
             }
-        } catch (e: Exception) {
-            Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        lastRecognizedId = matched.id
+        lastRecognizedTimeMs = now
+        samePersonStreak = 1
+
+        if (!alreadyMarked) {
+            todayList.add(matched.id)
+            AppStorage.saveData(this, currentPayload)
+            updateStatsBar()
+            updateBanner("✅ ${matched.name} (${matched.className} - रोल ${matched.roll}) उपस्थित!", "#14532D", "#4ADE80")
+            voiceManager.speakGreeting("success", matched.name)
+        } else {
+            updateBanner("ℹ️ ${matched.name} की हाज़िरी पहले ही लग चुकी है", "#1E3A8A", "#60A5FA")
+            if (!voiceManager.isCurrentlySpeaking) {
+                voiceManager.speakGreeting("warning", matched.name)
+            }
         }
     }
 
-    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 101 && grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            startCamera()
+    private fun updateBanner(msg: String, bgHex: String, borderHex: String) {
+        statusBanner.text = msg
+        statusBanner.background = GradientDrawable().apply {
+            setColor(Color.parseColor(bgHex))
+            cornerRadius = 32f
+            setStroke(3, Color.parseColor(borderHex))
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        voiceManager.shutdown()
     }
 }
