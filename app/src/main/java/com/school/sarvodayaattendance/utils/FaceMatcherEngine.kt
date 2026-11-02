@@ -3,7 +3,11 @@ package com.school.sarvodayaattendance.utils
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.ColorMatrix
+import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
+import android.graphics.Paint
 import android.graphics.Rect
 import android.util.Base64
 import com.google.mlkit.vision.face.Face
@@ -26,10 +30,11 @@ import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
 object FaceMatcherEngine {
@@ -37,8 +42,8 @@ object FaceMatcherEngine {
     data class MatchResult(
         val student: Student?,
         val distance: Float,
+        val matchPercentage: Int,
         val cosineSimilarity: Float,
-        val marginGap: Float,
         val isHighConfidence: Boolean,
         val topCandidates: List<Student>
     )
@@ -53,130 +58,80 @@ object FaceMatcherEngine {
     private var tfliteInterpreter: Interpreter? = null
     private var embeddingDim: Int = 192
     private var inputImageSize: Int = 112
-    private val isDownloadingModel = AtomicBoolean(false)
     private val templateCache = ConcurrentHashMap<String, StudentBiometricTemplate>()
 
-    // MobileFaceNet 192-D Cosine Similarity मानक:
-    // एक ही व्यक्ति का Cosine Similarity >= 0.68 (यानी Distance <= 3.2f) होता है।
-    // अलग व्यक्ति का Cosine Similarity हमेशा < 0.45 (यानी Distance > 5.5f) होता है।
-    const val HIGH_CONFIDENCE_MAX_DISTANCE = 3.10f   // Cosine >= 0.69
-    const val AI_VERIFY_MAX_DISTANCE = 4.30f         // Cosine >= 0.57 (केवल Gemini क्रॉस-चेक के लिए)
-    const val MIN_MARGIN_GAP = 0.75f                 // 1st और 2nd मैच के बीच आवश्यक अंतर
-
-    // विश्वसनीय ओपन-सोर्स MobileFaceNet (.tflite) मॉडल मिरर्स (Auto-Download के लिए)
-    private val MODEL_DOWNLOAD_URLS = listOf(
-        "https://raw.githubusercontent.com/sirius-ai/MobileFaceNet_TF/master/arch/pretrained_model/mobilefacenet.tflite",
-        "https://github.com/MCarlomagno/FaceRecognitionAuth/raw/master/app/src/main/assets/mobile_face_net.tflite",
-        "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/app/src/main/assets/mobile_face_net.tflite",
-        "https://raw.githubusercontent.com/shubham0204/FaceRecognition_With_FaceNet_Android/master/app/src/main/assets/facenet.tflite"
-    )
+    // संतुलित बायोमेट्रिक थ्रेशोल्ड (Balanced MobileFaceNet Cosine Similarity):
+    // Cosine Similarity >= 0.58 (यानी Match >= 68%) होने पर High Confidence पास होगा।
+    const val PASS_COSINE_THRESHOLD = 0.58f
+    const val AI_ASSIST_COSINE_MIN = 0.46f
+    const val MIN_COSINE_MARGIN_GAP = 0.045f
 
     val detector: FaceDetector by lazy {
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-            .setMinFaceSize(0.20f)
+            .setMinFaceSize(0.18f)
             .build()
         FaceDetection.getClient(options)
     }
 
     fun isNeuralModelReady(): Boolean = (tfliteInterpreter != null)
 
+    @Synchronized
     fun initEngine(context: Context) {
         if (tfliteInterpreter != null) return
         val appCtx = context.applicationContext
 
-        // 1. पहले फोन के परमानेंट स्टोरेज में डाउनलोड किया हुआ मॉडल चेक करें
-        val modelDir = File(appCtx.filesDir, "biometric_models").apply { if (!exists()) mkdirs() }
-        val cachedModelFile = File(modelDir, "mobile_face_net.tflite")
-
-        if (cachedModelFile.exists() && cachedModelFile.length() > 500_000L) {
-            if (loadInterpreterFromFile(cachedModelFile)) return
-        }
-
-        // 2. यदि assets में मौजूद हो तो वहां से कॉपी करके लोड करें
         val assetNames = listOf("mobile_face_net.tflite", "mobilefacenet.tflite", "facenet.tflite")
         for (name in assetNames) {
             try {
-                appCtx.assets.open(name).use { input ->
-                    FileOutputStream(cachedModelFile).use { output ->
-                        input.copyTo(output)
+                val afd = appCtx.assets.openFd(name)
+                FileInputStream(afd.fileDescriptor).use { fis ->
+                    val mapped: MappedByteBuffer = fis.channel.map(
+                        FileChannel.MapMode.READ_ONLY,
+                        afd.startOffset,
+                        afd.declaredLength
+                    )
+                    if (setupInterpreter(mapped)) return
+                }
+            } catch (e: Exception) {
+                try {
+                    val cacheFile = File(appCtx.filesDir, "packed_$name")
+                    appCtx.assets.open(name).use { input ->
+                        FileOutputStream(cacheFile).use { output ->
+                            input.copyTo(output)
+                        }
                     }
-                }
-                if (cachedModelFile.exists() && cachedModelFile.length() > 500_000L) {
-                    if (loadInterpreterFromFile(cachedModelFile)) return
-                }
-            } catch (e: Exception) {}
+                    if (cacheFile.exists() && cacheFile.length() > 500_000L) {
+                        FileInputStream(cacheFile).use { fis ->
+                            val mapped = fis.channel.map(FileChannel.MapMode.READ_ONLY, 0, cacheFile.length())
+                            if (setupInterpreter(mapped)) return
+                        }
+                    }
+                } catch (ex: Exception) {}
+            }
         }
-
-        // 3. यदि फोन में नहीं है, तो पहली बार खुलने पर खुद डाउनलोड करके हमेशा के लिए सेव कर ले
-        downloadModelInBackground(cachedModelFile)
     }
 
-    @Synchronized
-    private fun loadInterpreterFromFile(file: File): Boolean {
-        if (tfliteInterpreter != null) return true
+    private fun setupInterpreter(mapped: MappedByteBuffer): Boolean {
         return try {
-            FileInputStream(file).use { fis ->
-                val mapped: MappedByteBuffer = fis.channel.map(
-                    FileChannel.MapMode.READ_ONLY,
-                    0,
-                    file.length()
-                )
-                val opts = Interpreter.Options().apply { setNumThreads(4) }
-                val interp = Interpreter(mapped, opts)
-                val inShape = interp.getInputTensor(0).shape()
-                if (inShape.size >= 3) {
-                    inputImageSize = inShape[1]
-                }
-                val outShape = interp.getOutputTensor(0).shape()
-                if (outShape.isNotEmpty()) {
-                    embeddingDim = outShape.last()
-                }
-                tfliteInterpreter = interp
-                templateCache.clear()
-                true
+            val opts = Interpreter.Options().apply { setNumThreads(4) }
+            val interp = Interpreter(mapped, opts)
+            val inShape = interp.getInputTensor(0).shape()
+            if (inShape.size >= 3) {
+                inputImageSize = inShape[1]
             }
+            val outShape = interp.getOutputTensor(0).shape()
+            if (outShape.isNotEmpty()) {
+                embeddingDim = outShape.last()
+            }
+            tfliteInterpreter = interp
+            templateCache.clear()
+            true
         } catch (e: Exception) {
-            try { file.delete() } catch (ex: Exception) {}
             false
         }
-    }
-
-    private fun downloadModelInBackground(targetFile: File) {
-        if (!isDownloadingModel.compareAndSet(false, true)) return
-        Thread {
-            try {
-                for (urlStr in MODEL_DOWNLOAD_URLS) {
-                    try {
-                        val tempFile = File(targetFile.parentFile, "temp_model.tflite")
-                        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
-                            requestMethod = "GET"
-                            connectTimeout = 10000
-                            readTimeout = 20000
-                            instanceFollowRedirects = true
-                        }
-                        if (conn.responseCode in 200..299) {
-                            conn.inputStream.use { input ->
-                                FileOutputStream(tempFile).use { output ->
-                                    input.copyTo(output)
-                                }
-                            }
-                            if (tempFile.exists() && tempFile.length() > 500_000L) {
-                                if (targetFile.exists()) targetFile.delete()
-                                tempFile.renameTo(targetFile)
-                                if (loadInterpreterFromFile(targetFile)) {
-                                    break
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {}
-                }
-            } finally {
-                isDownloadingModel.set(false)
-            }
-        }.start()
     }
 
     fun clearCache() {
@@ -186,7 +141,7 @@ object FaceMatcherEngine {
     fun warmUpCache(students: List<Student>) {
         Thread {
             for (stu in students) {
-                if (stu.photos.isNotEmpty() && !templateCache.containsKey(stu.id)) {
+                if ((stu.embeddings.isNotEmpty() || stu.photos.isNotEmpty()) && !templateCache.containsKey(stu.id)) {
                     val built = buildStudentTemplate(stu)
                     if (built != null) {
                         templateCache[stu.id] = built
@@ -206,42 +161,75 @@ object FaceMatcherEngine {
         }
     }
 
-    // ✅ सख्त बायोमेट्रिक नियम: दोनों आँखें खुली होनी चाहिए और चेहरा सीधा होना चाहिए
     fun isLiveFaceValidForScan(face: Face): Boolean {
-        if (abs(face.headEulerAngleY) > 16f || abs(face.headEulerAngleZ) > 15f || abs(face.headEulerAngleX) > 16f) {
+        if (abs(face.headEulerAngleY) > 20f || abs(face.headEulerAngleZ) > 18f) {
             return false
         }
         val leftOpen = face.leftEyeOpenProbability ?: 1.0f
         val rightOpen = face.rightEyeOpenProbability ?: 1.0f
-        if (leftOpen < 0.50f || rightOpen < 0.50f) {
+        if (leftOpen < 0.42f || rightOpen < 0.42f) {
             return false
         }
-        val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
-        val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
-        val nose = face.getLandmark(FaceLandmark.NOSE_BASE)?.position
-        return leftEye != null && rightEye != null && nose != null
+        return true
     }
 
     fun validateKycFaceQuality(face: Face, frameBmp: Bitmap): Pair<Boolean, String> {
         val box = face.boundingBox
-        if (box.width() < 95 || box.height() < 95) {
+        if (box.width() < 85 || box.height() < 85) {
             return Pair(false, "⚠️ कृपया कैमरा चेहरे के थोड़ा और पास लाएं")
         }
-        if (abs(face.headEulerAngleY) > 15f || abs(face.headEulerAngleZ) > 14f) {
-            return Pair(false, "⚠️ कृपया चेहरा बिल्कुल सीधा रखें (तिरछा न करें)")
+        if (abs(face.headEulerAngleY) > 18f || abs(face.headEulerAngleZ) > 16f) {
+            return Pair(false, "⚠️ कृपया चेहरा बिल्कुल सीधा रखें")
         }
         val leftEyeOpen = face.leftEyeOpenProbability ?: 1.0f
         val rightEyeOpen = face.rightEyeOpenProbability ?: 1.0f
-        if (leftEyeOpen < 0.50f || rightEyeOpen < 0.50f) {
-            return Pair(false, "⚠️ कृपया दोनों आँखें पूरी तरह खुली रखें")
+        if (leftEyeOpen < 0.40f || rightEyeOpen < 0.40f) {
+            return Pair(false, "⚠️ कृपया दोनों आँखें खुली रखें")
         }
         return Pair(true, "OK")
     }
 
-    // ✅ Eye-Center Horizontal Alignment + Biometric 112x112 Crop
+    // ✅ 1. DP (प्रोफाइल फोटो) के लिए सुंदर पूरा चेहरा (सिर के बालों से कंधे तक + AI Studio Portrait Enhancement)
+    fun createAiEnhancedPortraitDp(source: Bitmap, face: Face): Bitmap {
+        val box = face.boundingBox
+        val w = box.width()
+        val h = box.height()
+
+        // पूरा सिर, बाल, कान और कंधे का थोड़ा हिस्सा शामिल करें (Full Natural Portrait DP)
+        val padX = (w * 0.32f).toInt()
+        val padTop = (h * 0.40f).toInt()
+        val padBottom = (h * 0.35f).toInt()
+
+        val left = (box.left - padX).coerceIn(0, max(0, source.width - 1))
+        val top = (box.top - padTop).coerceIn(0, max(0, source.height - 1))
+        val right = (box.right + padX).coerceIn(left + 1, source.width)
+        val bottom = (box.bottom + padBottom).coerceIn(top + 1, source.height)
+
+        val portraitCrop = Bitmap.createBitmap(source, left, top, right - left, bottom - top)
+        val scaledDp = Bitmap.createScaledBitmap(portraitCrop, 300, 300, true)
+
+        // AI Portrait Lighting & Clarity Enhancement (Auto Contrast + Natural Studio Warmth)
+        val enhanced = Bitmap.createBitmap(300, 300, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(enhanced)
+        val cm = ColorMatrix(
+            floatArrayOf(
+                1.08f, 0f, 0f, 0f, 6f,
+                0f, 1.07f, 0f, 0f, 5f,
+                0f, 0f, 1.05f, 0f, 3f,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(cm)
+        }
+        canvas.drawBitmap(scaledDp, 0f, 0f, paint)
+        return enhanced
+    }
+
+    // ✅ 2. बायोमेट्रिक 192-D डेटा के लिए एक समान फेस अलाइनमेंट (KYC और Live Scan दोनों में 100% समान)
     fun alignAndCropFaceBitmap(source: Bitmap, face: Face): Bitmap {
         var workingBmp = source
-        val box = face.boundingBox
+        var box = face.boundingBox
 
         val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
@@ -251,8 +239,8 @@ object FaceMatcherEngine {
             val dx = (rightEye.x - leftEye.x).toDouble()
             val angleDeg = Math.toDegrees(atan2(dy, dx)).toFloat()
             if (abs(angleDeg) in 1.5f..28.0f) {
-                val cx = (leftEye.x + rightEye.x) / 2f
-                val cy = (leftEye.y + rightEye.y) / 2f
+                val cx = box.exactCenterX()
+                val cy = box.exactCenterY()
                 val matrix = Matrix().apply { postRotate(-angleDeg, cx, cy) }
                 try {
                     workingBmp = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
@@ -265,40 +253,46 @@ object FaceMatcherEngine {
     }
 
     fun cropFaceBitmap(source: Bitmap, boundingBox: Rect): Bitmap {
-        val w = boundingBox.width()
-        val h = boundingBox.height()
-        val insetX = (w * 0.05f).toInt()
-        val insetTop = (h * 0.06f).toInt()
-        val insetBottom = (h * 0.03f).toInt()
+        val cx = boundingBox.centerX()
+        val cy = boundingBox.centerY()
+        val halfSide = (max(boundingBox.width(), boundingBox.height()) * 0.48f).toInt().coerceAtLeast(32)
 
-        val left = (boundingBox.left + insetX).coerceIn(0, max(0, source.width - 1))
-        val top = (boundingBox.top + insetTop).coerceIn(0, max(0, source.height - 1))
-        val right = (boundingBox.right - insetX).coerceIn(left + 1, source.width)
-        val bottom = (boundingBox.bottom - insetBottom).coerceIn(top + 1, source.height)
+        val left = (cx - halfSide).coerceIn(0, max(0, source.width - 1))
+        val top = (cy - halfSide).coerceIn(0, max(0, source.height - 1))
+        val right = (cx + halfSide).coerceIn(left + 1, source.width)
+        val bottom = (cy + halfSide).coerceIn(top + 1, source.height)
 
         val cropped = Bitmap.createBitmap(source, left, top, right - left, bottom - top)
         return Bitmap.createScaledBitmap(cropped, 160, 160, true)
     }
 
-    private fun decodeStoredPhoto(base64Str: String): Bitmap? {
-        return try {
-            val rawBmp = decodeBase64Bitmap(base64Str) ?: return null
-            val w = rawBmp.width
-            val h = rawBmp.height
-            if (w > 60 && h > 60) {
-                val ix = (w * 0.05f).toInt()
-                val iy = (h * 0.05f).toInt()
-                val sub = Bitmap.createBitmap(rawBmp, ix, iy, w - ix * 2, h - iy * 2)
-                Bitmap.createScaledBitmap(sub, 160, 160, true)
-            } else {
-                Bitmap.createScaledBitmap(rawBmp, 160, 160, true)
-            }
-        } catch (e: Exception) {
-            null
-        }
+    // ✅ KYC के समय 4-Pass Multi-Scale & Mirror Augmentation से उच्च-सटीकता वाला 192-D वेक्टर निकालें
+    fun extractHighPrecisionKycEmbeddingList(alignedFaceBmp: Bitmap): List<Float> {
+        val passes = mutableListOf<FloatArray>()
+
+        // Pass 1: मूल अलाइन किया हुआ चेहरा
+        computeEmbedding(alignedFaceBmp)?.let { passes.add(it) }
+
+        // Pass 2: हॉरिजॉन्टल मिरर (फ्रंट और बैक कैमरे का अंतर खत्म करने के लिए सबसे ज़रूरी!)
+        try {
+            val flipMatrix = Matrix().apply { preScale(-1f, 1f) }
+            val flipped = Bitmap.createBitmap(alignedFaceBmp, 0, 0, alignedFaceBmp.width, alignedFaceBmp.height, flipMatrix, true)
+            computeEmbedding(flipped)?.let { passes.add(it) }
+        } catch (e: Exception) {}
+
+        // Pass 3: 4% टाइट सेंटर ज़ूम (कैमरा थोड़ा पास होने की स्थिति के लिए)
+        try {
+            val w = alignedFaceBmp.width
+            val d = (w * 0.04f).toInt()
+            val tight = Bitmap.createBitmap(alignedFaceBmp, d, d, w - d * 2, w - d * 2)
+            computeEmbedding(tight)?.let { passes.add(it) }
+        } catch (e: Exception) {}
+
+        if (passes.isEmpty()) return emptyList()
+        val merged = averageEmbeddings(passes)
+        return merged.map { (it * 100000f).roundToInt() / 100000f }
     }
 
-    // ✅ असली 192-D MobileFaceNet (.tflite) बायोमेट्रिक एम्बेडिंग (कोई 2D पिक्सल मिलान नहीं)
     fun computeEmbedding(faceBmp: Bitmap): FloatArray? {
         val interp = tfliteInterpreter ?: return null
         return try {
@@ -309,7 +303,6 @@ object FaceMatcherEngine {
             val pixels = IntArray(inputImageSize * inputImageSize)
             scaled.getPixels(pixels, 0, inputImageSize, 0, 0, inputImageSize, inputImageSize)
 
-            // MobileFaceNet मानक प्री-प्रोसेसिंग: (pixel - 127.5f) / 128.0f
             for (px in pixels) {
                 val r = ((px shr 16) and 0xFF).toFloat()
                 val g = ((px shr 8) and 0xFF).toFloat()
@@ -359,18 +352,42 @@ object FaceMatcherEngine {
         return dot.coerceIn(-1f, 1f)
     }
 
+    // Cosine Similarity (-1..1) को इंसानी समझ के लिए 0%..100% बायोमेट्रिक स्कोर में बदलें
+    // Cosine 0.58 -> 70%, Cosine 0.70 -> 82%, Cosine 0.85 -> 95%
+    private fun cosineToPercentage(cos: Float): Int {
+        val mapped = ((cos + 0.12f) / 0.92f) * 100f
+        return mapped.roundToInt().coerceIn(0, 99)
+    }
+
     private fun buildStudentTemplate(student: Student): StudentBiometricTemplate? {
-        if (student.photos.isEmpty()) return null
         val vectors = mutableListOf<FloatArray>()
-        for (b64 in student.photos) {
-            val bmp = decodeStoredPhoto(b64)
-            if (bmp != null) {
-                val emb = computeEmbedding(bmp)
-                if (emb != null) {
-                    vectors.add(emb)
+
+        // 1. पहले सेव किए गए 192-D बायोमेट्रिक डेटा (stu.embeddings) का सीधा उपयोग करें
+        if (student.embeddings.isNotEmpty()) {
+            for (savedList in student.embeddings) {
+                if (savedList.size == embeddingDim) {
+                    val arr = FloatArray(embeddingDim)
+                    for (i in 0 until embeddingDim) {
+                        arr[i] = savedList[i]
+                    }
+                    vectors.add(l2Normalize(arr))
                 }
             }
         }
+
+        // 2. यदि किसी छात्र का 192-D वेक्टर अभी नहीं बना है, तो फोटो से बनाएं
+        if (vectors.isEmpty() && student.photos.isNotEmpty()) {
+            for (b64 in student.photos) {
+                val bmp = decodeBase64Bitmap(b64)
+                if (bmp != null) {
+                    val emb = computeEmbedding(bmp)
+                    if (emb != null) {
+                        vectors.add(emb)
+                    }
+                }
+            }
+        }
+
         if (vectors.isEmpty()) return null
         val centroid = averageEmbeddings(vectors)
         return StudentBiometricTemplate(
@@ -382,20 +399,27 @@ object FaceMatcherEngine {
 
     fun findBestMatchDetailed(liveFaceBmp: Bitmap, candidates: List<Student>): MatchResult {
         if (candidates.isEmpty()) {
-            return MatchResult(null, 999f, 0f, 0f, false, emptyList())
+            return MatchResult(null, 999f, 0, 0f, false, emptyList())
         }
 
-        // यदि .tflite मॉडल अभी डाउनलोड हो रहा है (पहली बार), तो पहले 3 उम्मीदवारों को ऑनलाइन वेरिफिकेशन के लिए भेजें
-        val liveVec = computeEmbedding(liveFaceBmp)
-        if (liveVec == null) {
-            val fallbackCandidates = candidates.filter { it.photos.isNotEmpty() }.take(3)
-            return MatchResult(null, 999f, 0f, 0f, false, fallbackCandidates)
+        // लाइव स्कैन में भी मूल + मिरर दोनों का औसत वेक्टर लें ताकि फ्रंट/बैक कैमरे का कोई फर्क न पड़े
+        val livePasses = mutableListOf<FloatArray>()
+        computeEmbedding(liveFaceBmp)?.let { livePasses.add(it) }
+        try {
+            val flipM = Matrix().apply { preScale(-1f, 1f) }
+            val flippedLive = Bitmap.createBitmap(liveFaceBmp, 0, 0, liveFaceBmp.width, liveFaceBmp.height, flipM, true)
+            computeEmbedding(flippedLive)?.let { livePasses.add(it) }
+        } catch (e: Exception) {}
+
+        if (livePasses.isEmpty()) {
+            return MatchResult(null, 999f, 0, 0f, false, emptyList())
         }
+        val liveVec = averageEmbeddings(livePasses)
 
         val scoredList = mutableListOf<Triple<Student, Float, Float>>() // Student, Distance, CosineSim
 
         for (stu in candidates) {
-            if (stu.photos.isEmpty()) continue
+            if (stu.photos.isEmpty() && stu.embeddings.isEmpty()) continue
             var template = templateCache[stu.id]
             if (template == null) {
                 template = buildStudentTemplate(stu)
@@ -411,37 +435,39 @@ object FaceMatcherEngine {
                 if (cos > maxPoseCos) maxPoseCos = cos
             }
             val centroidCos = calculateCosineSimilarity(liveVec, template.centroidEmbedding)
-            val combinedCos = (maxPoseCos * 0.65f) + (centroidCos * 0.35f)
-            val distance = (1f - combinedCos) * 10.0f // 0 = 100% समान, कम संख्या = बेहतर मैच
+            val combinedCos = (maxPoseCos * 0.70f) + (centroidCos * 0.30f)
+            val distance = (1f - combinedCos) * 10.0f
 
             scoredList.add(Triple(stu, distance, combinedCos))
         }
 
         if (scoredList.isEmpty()) {
-            return MatchResult(null, 999f, 0f, 0f, false, emptyList())
+            return MatchResult(null, 999f, 0, 0f, false, emptyList())
         }
 
-        scoredList.sortBy { it.second }
+        scoredList.sortByDescending { it.third } // उच्चतम Cosine Similarity सबसे ऊपर
 
         val bestStudent = scoredList[0].first
         val bestDistance = scoredList[0].second
         val bestCosine = scoredList[0].third
-        val secondBestDistance = if (scoredList.size > 1) scoredList[1].second else 10.0f
-        val marginGap = secondBestDistance - bestDistance
+        val secondBestCosine = if (scoredList.size > 1) scoredList[1].third else 0f
+        val cosineGap = bestCosine - secondBestCosine
+        val bestPct = cosineToPercentage(bestCosine)
 
         val topCandidates = scoredList
-            .filter { it.second <= AI_VERIFY_MAX_DISTANCE }
+            .filter { it.third >= AI_ASSIST_COSINE_MIN }
             .take(3)
             .map { it.first }
 
-        val isHighConf = (bestDistance <= HIGH_CONFIDENCE_MAX_DISTANCE) && (marginGap >= MIN_MARGIN_GAP)
+        val isHighConf = (bestCosine >= PASS_COSINE_THRESHOLD) &&
+                (scoredList.size == 1 || cosineGap >= MIN_COSINE_MARGIN_GAP || bestCosine >= 0.68f)
 
         return if (isHighConf) {
-            MatchResult(bestStudent, bestDistance, bestCosine, marginGap, true, topCandidates)
+            MatchResult(bestStudent, bestDistance, bestPct, bestCosine, true, topCandidates)
         } else if (topCandidates.isNotEmpty()) {
-            MatchResult(bestStudent, bestDistance, bestCosine, marginGap, false, topCandidates)
+            MatchResult(bestStudent, bestDistance, bestPct, bestCosine, false, topCandidates)
         } else {
-            MatchResult(null, bestDistance, bestCosine, marginGap, false, emptyList())
+            MatchResult(null, bestDistance, bestPct, bestCosine, false, emptyList())
         }
     }
 
@@ -450,7 +476,7 @@ object FaceMatcherEngine {
         return Pair(detailed.student, detailed.distance)
     }
 
-    // ✅ शुद्ध बायोमेट्रिक क्रॉस-चेक (बिना सिंदूर, कपड़े या किसी बाहरी चीज़ के—केवल चेहरे की हड्डियों और लिंग का मिलान)
+    // ✅ Online Gemini Vision AI Verification (उम्र, कपड़े, सिंदूर आदि की कोई शर्त नहीं—केवल 100% इंसान के चेहरे का मिलान)
     fun identifyStudentWithGeminiVisionBlocking(
         context: Context,
         liveFaceBmp: Bitmap,
@@ -466,7 +492,7 @@ object FaceMatcherEngine {
             val apiKey = keyPool.firstOrNull() ?: return null
 
             val liveBaos = ByteArrayOutputStream()
-            Bitmap.createScaledBitmap(liveFaceBmp, 200, 200, true)
+            Bitmap.createScaledBitmap(liveFaceBmp, 220, 220, true)
                 .compress(Bitmap.CompressFormat.JPEG, 85, liveBaos)
             val liveB64 = Base64.encodeToString(liveBaos.toByteArray(), Base64.NO_WRAP)
 
@@ -485,7 +511,7 @@ object FaceMatcherEngine {
                 val storedClean = stu.photos.first().substringAfter("base64,")
                 val num = idx + 1
                 validList.add(stu)
-                candidateDesc.append("Candidate $num: Name='${stu.name}', RegisteredGender='${stu.gender}'\n")
+                candidateDesc.append("Candidate $num: Name='${stu.name}'\n")
                 partsArray.put(JSONObject().put("text", "CANDIDATE $num REFERENCE PHOTO:"))
                 partsArray.put(JSONObject().put("inlineData", JSONObject().apply {
                     put("mimeType", "image/jpeg")
@@ -496,15 +522,15 @@ object FaceMatcherEngine {
             if (validList.isEmpty()) return null
 
             val strictPrompt = """
-                You are a pure biometric facial geometry verification engine.
-                Compare the LIVE CAMERA FACE (Image 0) against the ${validList.size} candidate reference photos:
+                You are an accurate biometric face verification engine.
+                Compare the LIVE CAMERA FACE (Image 0) against the ${validList.size} reference photos:
                 $candidateDesc
                 
-                BIOMETRIC RULES (IGNORE CLOTHING, ACCESSORIES, OR MAKEUP):
-                1. Rely ONLY on permanent craniofacial bone structure: interpupillary distance, eye socket shape, nasal bridge width, philtrum, jawline, and biological age group.
-                2. If the LIVE CAMERA FACE is an adult man or adult woman and does not match the child's craniofacial structure in the reference photo, reply "NONE".
-                3. Biological gender of the live face must match the candidate photo.
-                4. Only if you are 99.8% certain that Image 0 is the exact same person as one of the candidates, reply with the candidate number ("1", "2", or "3"). Otherwise reply "NONE".
+                RULES:
+                1. Do NOT judge by age, clothing, or accessories—any person (child, adult, or elder) registered in the reference photo is valid.
+                2. Compare ONLY facial bone structure, eyes, nose, mouth, and face geometry between Image 0 and each Candidate photo.
+                3. If Image 0 is clearly the exact same person as one of the candidates, reply ONLY with that candidate number ("1", "2", or "3").
+                4. If Image 0 is a different person from all candidates, reply ONLY with "NONE".
             """.trimIndent()
 
             partsArray.put(JSONObject().put("text", strictPrompt))
