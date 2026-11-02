@@ -46,6 +46,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
 import com.school.sarvodayaattendance.data.AppStorage
 import com.school.sarvodayaattendance.data.BackupPayload
 import com.school.sarvodayaattendance.utils.FaceMatcherEngine
@@ -163,24 +164,6 @@ class AdminActivity : AppCompatActivity() {
             )
         )
 
-        val topGuideBanner = TextView(this).apply {
-            text = "🎯 FRS KYC गाइड: चेहरे पर पर्याप्त रोशनी हो और छात्र बिल्कुल सीधा देखे (बेहतर पहचान के लिए 2-3 फोटो लें)"
-            setTextColor(Color.WHITE)
-            textSize = 13.5f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(30, 36, 30, 26)
-            setBackgroundColor(0xAA0F172A.toInt())
-        }
-        overlay.addView(
-            topGuideBanner,
-            FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-                Gravity.TOP
-            )
-        )
-
         val bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -277,7 +260,7 @@ class AdminActivity : AppCompatActivity() {
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
                 if (faces.isEmpty()) {
-                    Toast.makeText(this, "❌ चेहरा साफ नहीं दिखा! सीधे कैमरे में देखें", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "❌ चेहरा साफ नहीं दिखा! सीधे देखें", Toast.LENGTH_SHORT).show()
                     return@addOnSuccessListener
                 }
                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
@@ -286,18 +269,30 @@ class AdminActivity : AppCompatActivity() {
                     Toast.makeText(this, qualityMsg, Toast.LENGTH_LONG).show()
                     return@addOnSuccessListener
                 }
-                val alignedCropped = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
-                showKycPhotoConfirmDialog(alignedCropped, rootContainer, overlay)
+
+                // 1. DP के लिए AI-Enhanced पूरा पोर्ट्रेट चेहरा
+                val portraitDpBmp = FaceMatcherEngine.createAiEnhancedPortraitDp(frameBmp, primaryFace)
+                // 2. 192-D बायोमेट्रिक डेटा के लिए अलाइन किया हुआ फेस
+                val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
+
+                showKycPhotoConfirmDialog(portraitDpBmp, alignedBiometricFace, rootContainer, overlay)
             }
             .addOnFailureListener {
                 Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
             }
     }
 
-    private fun showKycPhotoConfirmDialog(croppedFace: Bitmap, rootContainer: FrameLayout, overlay: FrameLayout) {
-        var workingBmp = croppedFace
+    private fun showKycPhotoConfirmDialog(
+        portraitDpBmp: Bitmap,
+        alignedBiometricBmp: Bitmap,
+        rootContainer: FrameLayout,
+        overlay: FrameLayout
+    ) {
+        var workingDpBmp = portraitDpBmp
+        var workingBioBmp = alignedBiometricBmp
+
         val imageView = ImageView(this).apply {
-            setImageBitmap(workingBmp)
+            setImageBitmap(workingDpBmp)
             adjustViewBounds = true
             maxHeight = 520
             setPadding(24, 24, 24, 12)
@@ -307,8 +302,9 @@ class AdminActivity : AppCompatActivity() {
             text = "⤵️ फोटो घुमाएं (Rotate)"
             setOnClickListener {
                 val matrix = Matrix().apply { postRotate(90f) }
-                workingBmp = Bitmap.createBitmap(workingBmp, 0, 0, workingBmp.width, workingBmp.height, matrix, true)
-                imageView.setImageBitmap(workingBmp)
+                workingDpBmp = Bitmap.createBitmap(workingDpBmp, 0, 0, workingDpBmp.width, workingDpBmp.height, matrix, true)
+                workingBioBmp = Bitmap.createBitmap(workingBioBmp, 0, 0, workingBioBmp.width, workingBioBmp.height, matrix, true)
+                imageView.setImageBitmap(workingDpBmp)
             }
         }
 
@@ -321,19 +317,32 @@ class AdminActivity : AppCompatActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("📸 FRS बायोमेट्रिक फोटो पुष्टि")
+            .setTitle("📸 KYC फोटो एवं 192-D बायोमेट्रिक पुष्टि")
             .setView(box)
             .setPositiveButton("✔ यह फोटो जोड़ें") { _, _ ->
-                val scaled = Bitmap.createScaledBitmap(workingBmp, 240, 240, true)
-                val baos = ByteArrayOutputStream()
-                scaled.compress(Bitmap.CompressFormat.JPEG, 86, baos)
-                val base64Str = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+                // बिना किसी जल्दबाज़ी के बैकग्राउंड में 192-D बायोमेट्रिक वेक्टर और DP तैयार करें
+                Thread {
+                    val embedding192D = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(workingBioBmp)
 
-                rootContainer.removeView(overlay)
-                kycOverlayRoot = null
+                    val scaledDp = Bitmap.createScaledBitmap(workingDpBmp, 260, 260, true)
+                    val baos = ByteArrayOutputStream()
+                    scaledDp.compress(Bitmap.CompressFormat.JPEG, 86, baos)
+                    val base64Str = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
-                val escaped = gson.toJson(base64Str)
-                webView.evaluateJavascript("onLiveKycPhotoApproved($escaped);", null)
+                    val escapedPhoto = gson.toJson(base64Str)
+                    val escapedEmb = gson.toJson(embedding192D)
+
+                    runOnUiThread {
+                        rootContainer.removeView(overlay)
+                        kycOverlayRoot = null
+                        webView.evaluateJavascript("onLiveKycPhotoApproved($escapedPhoto, $escapedEmb);", null)
+                        Toast.makeText(
+                            this@AdminActivity,
+                            "🧬 DP + 192-D बायोमेट्रिक डेटा (${embedding192D.size} पॉइंट्स) तैयार!",
+                            Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }.start()
             }
             .setNegativeButton("दोबारा लें", null)
             .show()
