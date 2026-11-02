@@ -119,7 +119,6 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("ClickableViewAccessibility")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // ✅ मुख्य स्कैनर स्क्रीन चालू रहने तक मोबाइल की स्क्रीन कभी बंद नहीं होगी
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContentView(R.layout.activity_main)
 
@@ -203,7 +202,6 @@ class MainActivity : AppCompatActivity() {
             startCamera()
         }
 
-        // ✅ मुख्य स्क्रीन पर 🔊 बटन अब केवल Mute/Unmute करेगा (Long-Press पॉपअप यहाँ से पूरी तरह हटा दिया गया है)
         btnVoiceIcon.setOnClickListener {
             voiceManager.isVoiceEnabled = !voiceManager.isVoiceEnabled
             btnVoiceIcon.text = if (voiceManager.isVoiceEnabled) "🔊" else "🔇"
@@ -325,7 +323,7 @@ class MainActivity : AppCompatActivity() {
     private fun performLiveFrameCheck(isManualTap: Boolean) {
         if (isProcessingFrame) return
         val now = System.currentTimeMillis()
-        if (!isManualTap && (now - lastScanTimestamp < 1400)) return
+        if (!isManualTap && (now - lastScanTimestamp < 1200)) return
 
         val frameBmp: Bitmap = previewView.bitmap ?: return
         isProcessingFrame = true
@@ -335,7 +333,6 @@ class MainActivity : AppCompatActivity() {
             .addOnSuccessListener { faces ->
                 if (faces.isNotEmpty()) {
                     emptyFrameCount = 0
-                    // केवल 1 मुख्य चेहरे पर सटीक फोकस
                     val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
 
                     if (!FaceMatcherEngine.isLiveFaceValidForScan(primaryFace)) {
@@ -350,38 +347,7 @@ class MainActivity : AppCompatActivity() {
                     val matchResult = FaceMatcherEngine.findBestMatchDetailed(alignedFace, payload.students)
                     val hasGeminiKey = voiceManager.getGeminiKeysString().trim().length > 15
 
-                    // 1. यदि ऑनलाइन Gemini Key उपलब्ध है और उम्मीदवार मिले हैं, तो बायोमेट्रिक क्रॉस-चेक करें
-                    if (hasGeminiKey && matchResult.topCandidates.isNotEmpty() && !matchResult.isHighConfidence) {
-                        val frozenBmp = alignedFace.copy(Bitmap.Config.ARGB_8888, false)
-                        aiVerifyExecutor.execute {
-                            val verifiedStudent = FaceMatcherEngine.identifyStudentWithGeminiVisionBlocking(
-                                this@MainActivity,
-                                frozenBmp,
-                                matchResult.topCandidates
-                            )
-                            uiHandler.post {
-                                if (verifiedStudent != null) {
-                                    lastScanTimestamp = System.currentTimeMillis()
-                                    pendingCandidateHits = 0
-                                    handleMatchedStudent(verifiedStudent)
-                                } else if (isVipInspectionModeActive) {
-                                    if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
-                                        hasSpokenVipForCurrentFace = true
-                                        lastScanTimestamp = System.currentTimeMillis()
-                                        speakAndShowVipWelcomeOnFaceDetected()
-                                    }
-                                } else if (isManualTap) {
-                                    lastScanTimestamp = System.currentTimeMillis()
-                                    showResultBanner("error", null, "चेहरा मैच नहीं हुआ!", 2000)
-                                    voiceManager.speakGreeting("error", "")
-                                }
-                                isProcessingFrame = false
-                            }
-                        }
-                        return@addOnSuccessListener
-                    }
-
-                    // 2. MobileFaceNet (.tflite) 192-D High Confidence Match (2-Frame Confirmation के साथ)
+                    // 1. MobileFaceNet 192-D High Confidence Match
                     val matchedStudent = if (matchResult.isHighConfidence) matchResult.student else null
                     if (matchedStudent != null) {
                         if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
@@ -393,8 +359,8 @@ class MainActivity : AppCompatActivity() {
                             return@addOnSuccessListener
                         }
 
-                        if (!isManualTap) {
-                            if (pendingCandidateId == matchedStudent.id && (now - pendingCandidateLastSeenMs) < 2400L) {
+                        if (!isManualTap && matchResult.matchPercentage < 78) {
+                            if (pendingCandidateId == matchedStudent.id && (now - pendingCandidateLastSeenMs) < 2500L) {
                                 pendingCandidateHits++
                             } else {
                                 pendingCandidateId = matchedStudent.id
@@ -409,8 +375,45 @@ class MainActivity : AppCompatActivity() {
 
                         pendingCandidateHits = 0
                         lastScanTimestamp = System.currentTimeMillis()
-                        handleMatchedStudent(matchedStudent)
-                    } else if (isVipInspectionModeActive) {
+                        handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
+                        isProcessingFrame = false
+                        return@addOnSuccessListener
+                    }
+
+                    // 2. यदि बॉर्डरलाइन केस (Match 50%..67%) है और Gemini Key उपलब्ध है, तो ऑनलाइन AI से पुष्टि करें
+                    if (hasGeminiKey && matchResult.topCandidates.isNotEmpty()) {
+                        val portraitForAi = FaceMatcherEngine.createAiEnhancedPortraitDp(frameBmp, primaryFace)
+                        aiVerifyExecutor.execute {
+                            val verifiedStudent = FaceMatcherEngine.identifyStudentWithGeminiVisionBlocking(
+                                this@MainActivity,
+                                portraitForAi,
+                                matchResult.topCandidates
+                            )
+                            uiHandler.post {
+                                if (verifiedStudent != null) {
+                                    lastScanTimestamp = System.currentTimeMillis()
+                                    pendingCandidateHits = 0
+                                    val aiPct = matchResult.matchPercentage.coerceAtLeast(85)
+                                    handleMatchedStudent(verifiedStudent, aiPct)
+                                } else if (isVipInspectionModeActive) {
+                                    if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
+                                        hasSpokenVipForCurrentFace = true
+                                        lastScanTimestamp = System.currentTimeMillis()
+                                        speakAndShowVipWelcomeOnFaceDetected()
+                                    }
+                                } else if (isManualTap) {
+                                    lastScanTimestamp = System.currentTimeMillis()
+                                    showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (सर्वोच्च मिलान: ${matchResult.matchPercentage}%)", 2500)
+                                    voiceManager.speakGreeting("error", "")
+                                }
+                                isProcessingFrame = false
+                            }
+                        }
+                        return@addOnSuccessListener
+                    }
+
+                    // 3. कोई मैच न मिलने पर
+                    if (isVipInspectionModeActive) {
                         if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
                             hasSpokenVipForCurrentFace = true
                             lastScanTimestamp = System.currentTimeMillis()
@@ -420,11 +423,8 @@ class MainActivity : AppCompatActivity() {
                         lastScanTimestamp = System.currentTimeMillis()
                         if (payload.students.isEmpty()) {
                             showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
-                        } else if (!FaceMatcherEngine.isNeuralModelReady()) {
-                            FaceMatcherEngine.initEngine(this@MainActivity)
-                            showResultBanner("error", null, "AI मॉडल तैयार हो रहा है, 5 सेकंड रुकें...", 2500)
                         } else {
-                            showResultBanner("error", null, "चेहरा मैच नहीं हुआ!", 2000)
+                            showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (मिलान: ${matchResult.matchPercentage}%)", 2500)
                             voiceManager.speakGreeting("error", "")
                         }
                     }
@@ -448,7 +448,7 @@ class MainActivity : AppCompatActivity() {
             }
     }
 
-    private fun handleMatchedStudent(stu: Student) {
+    private fun handleMatchedStudent(stu: Student, matchPct: Int = 92) {
         val todayKey = AppStorage.getTodayShortKey()
         if (AppStorage.isSundayOrHoliday(payload, todayKey, stu.className)) {
             Toast.makeText(this, "🏖️ अवकाश", Toast.LENGTH_SHORT).show()
@@ -467,15 +467,15 @@ class MainActivity : AppCompatActivity() {
             list.add(stu.id)
             AppStorage.saveData(this, payload)
             updateLiveSchoolTicker()
-            showResultBanner("success", stu, "✔ उपस्थित दर्ज", 4000)
+            showResultBanner("success", stu, "✔ उपस्थित दर्ज (मैच: $matchPct%)", 4000)
             voiceManager.speakGreeting("success", stu.name)
         } else {
             if (sameStudentScanStreak >= 3) {
                 val firstName = stu.name.trim().substringBefore(" ")
-                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName!", 4200)
+                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName! ($matchPct%)", 4200)
                 voiceManager.speakGreeting("move_away", stu.name)
             } else {
-                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है", 3500)
+                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है (मैच: $matchPct%)", 3500)
                 voiceManager.speakGreeting("warning", stu.name)
             }
         }
