@@ -23,7 +23,8 @@ data class Student(
     var admNo: String = "-",
     var admDate: String = "-",
     var address: String = "-",
-    var photos: MutableList<String> = mutableListOf()
+    var photos: MutableList<String> = mutableListOf(),
+    var embeddings: MutableList<List<Float>> = mutableListOf()
 )
 
 data class BackupPayload(
@@ -100,7 +101,7 @@ object AppStorage {
                 val cal = Calendar.getInstance().apply { set(yyyy, mm, dd) }
                 if (cal.get(Calendar.DAY_OF_WEEK) == Calendar.SUNDAY) return true
             }
-        } catch (_: Exception) {}
+        } catch (e: Exception) {}
 
         val entry = payload.holidays[shortDateKey] ?: return false
         if (entry is String) return true
@@ -128,7 +129,6 @@ object AppStorage {
 
             val parsed = gson.fromJson(jsonCandidate, BackupPayload::class.java)
             if (parsed != null && parsed.students != null) {
-                // ✅ यदि पैक के साथ गुप्त API Keys आई हैं, तो उन्हें इस मोबाइल के वॉइस मैनेजर में चुपचाप सेव कर दें
                 if (parsed.sharedApiKeys.isNotBlank()) {
                     val voicePrefs = context.getSharedPreferences(VOICE_PREF_NAME, Context.MODE_PRIVATE)
                     voicePrefs.edit().putString(KEY_CUSTOM_API, parsed.sharedApiKeys.trim()).apply()
