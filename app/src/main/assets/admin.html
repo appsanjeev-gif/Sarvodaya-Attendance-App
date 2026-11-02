@@ -226,7 +226,6 @@
       </div>
       <div class="modal-body">
         <input type="hidden" id="editStudentId" value="">
-        <!-- केवल लाल मार्क वाले फ़ील्ड्स में Red Star और अनिवार्य (Mandatory) -->
         <div class="form-row-2">
           <div class="form-group"><label class="field-lbl">कक्षा <span style="color:#dc2626;">*</span></label><select id="stuClass"><option value="6वीं">6वीं</option><option value="7वीं">7वीं</option><option value="8वीं">8वीं</option></select></div>
           <div class="form-group"><label class="field-lbl">रोल नं. <span style="color:#dc2626;">*</span></label><input type="number" id="stuRoll" placeholder="01"></div>
@@ -236,7 +235,6 @@
           <div class="form-group"><label class="field-lbl">लिंग <span style="color:#dc2626;">*</span></label><select id="stuGender"><option value="M">M</option><option value="F">F</option></select></div>
           <div class="form-group"><label class="field-lbl">कोटि <span style="color:#dc2626;">*</span></label><select id="stuCategory"><option value="EBC">EBC</option><option value="OBC">OBC</option><option value="SC">SC</option><option value="ST">ST</option><option value="GEN">GEN</option></select></div>
         </div>
-        <!-- सभी हरे मार्क वाले फ़ील्ड्स से * हटाकर ऐच्छिक (Optional) कर दिया गया है -->
         <div class="form-group"><label class="field-lbl">आधार नं. (12 अंक)</label><input type="tel" id="stuAadhaar" maxlength="12" inputmode="numeric"></div>
         <div class="form-row-2">
           <div class="form-group"><label class="field-lbl">पिता का नाम</label><input type="text" id="stuFather"></div>
@@ -364,6 +362,7 @@
   var isScannerOnlyPack = false;
   var currentAdminClass = 'सभी';
   var tempStudentPhotos = [];
+  var tempStudentEmbeddings = [];
   var selectedAdminDateKey = '';
   var currentDateModalTab = 'present';
   var longPressTimer = null;
@@ -373,7 +372,6 @@
   var pinTileTimer = null;
   var pinTileLongTriggered = false;
 
-  // [🔑 पिन व सत्र] 2 सेकंड Long-Press से Multi-API Keys और सामान्य टैप से पिन चेंज
   function handlePinTilePressStart() {
     pinTileLongTriggered = false;
     clearTimeout(pinTileTimer);
@@ -394,7 +392,6 @@
     clearTimeout(pinTileTimer);
   }
 
-  // उम्र गणना सहायक फ़ंक्शन: (** वर्ष ** माह)
   function calculateAgeYearsMonths(dobDotOrIso) {
     if (!dobDotOrIso || dobDotOrIso === '-' || dobDotOrIso === 'उपलब्ध नहीं') return '';
     var iso = formatDotToIso(dobDotOrIso);
@@ -769,7 +766,6 @@
     renderDateAttendanceModalList();
   }
 
-  // उपस्थिति/अनुपस्थित सूची में रोल गोले या नाम पर Long-Press करने पर छात्र प्रोफाइल खुलेगी
   function renderDateAttendanceModalList() {
     var activeDate = getActiveDateKey();
     var q = (document.getElementById('dateModalSearch').value || '').trim().toLowerCase();
@@ -807,9 +803,10 @@
     document.getElementById('stuDob').value = '';
     document.getElementById('stuMobile').value = '';
     document.getElementById('stuAdmNo').value = '';
-    document.getElementById('stuAdmDate').value = ''; // खाली रहेगा
+    document.getElementById('stuAdmDate').value = '';
     document.getElementById('stuAddress').value = '';
     tempStudentPhotos = [];
+    tempStudentEmbeddings = [];
     renderTempPhotos();
     document.getElementById('addStudentModal').classList.add('open');
   }
@@ -833,6 +830,7 @@
     document.getElementById('stuAdmDate').value = formatDotToIso(s.admDate);
     document.getElementById('stuAddress').value = (s.address && s.address !== '-' && s.address !== 'उपलब्ध नहीं') ? s.address : '';
     tempStudentPhotos = s.photos ? s.photos.slice() : [];
+    tempStudentEmbeddings = s.embeddings ? s.embeddings.slice() : [];
     renderTempPhotos();
     document.getElementById('addStudentModal').classList.add('open');
   }
@@ -847,14 +845,22 @@
     }
   }
 
-  function onLiveKycPhotoApproved(base64Img) {
+  function onLiveKycPhotoApproved(base64Img, embeddingArr) {
     if (base64Img && tempStudentPhotos.length < 5) {
       tempStudentPhotos.push(base64Img);
+      if (Array.isArray(embeddingArr) && embeddingArr.length > 0) {
+        tempStudentEmbeddings.push(embeddingArr);
+      }
       renderTempPhotos();
     }
   }
 
-  function clearTempPhotos() { tempStudentPhotos = []; renderTempPhotos(); }
+  function clearTempPhotos() {
+    tempStudentPhotos = [];
+    tempStudentEmbeddings = [];
+    renderTempPhotos();
+  }
+
   function renderTempPhotos() {
     var box = document.getElementById('stuPhotoThumbs');
     if (tempStudentPhotos.length === 0) {
@@ -874,7 +880,6 @@
     var gender = document.getElementById('stuGender').value;
     var category = document.getElementById('stuCategory').value;
 
-    // ऐच्छिक फ़ील्ड्स
     var aadhaar = document.getElementById('stuAadhaar').value.trim();
     var father = document.getElementById('stuFather').value.trim();
     var mother = document.getElementById('stuMother').value.trim();
@@ -884,10 +889,7 @@
     var admDate = document.getElementById('stuAdmDate').value;
     var address = document.getElementById('stuAddress').value.trim();
 
-    // केवल अनिवार्य फ़ील्ड्स की जाँच (रोल और नाम)
     if (!roll || !name) { showToast('रोल और नाम भरें'); return; }
-
-    // ऐच्छिक होने पर: यदि भरा गया है तो ही अंकों की पुष्टि करें
     if (aadhaar && !isExactDigits(aadhaar, 12)) { showToast('❌ 12 अंकों का आधार डालें'); return; }
     if (mobile && !isExactDigits(mobile, 10)) { showToast('❌ 10 अंकों का मोबाइल डालें'); return; }
 
@@ -909,7 +911,8 @@
       admNo: admNo || '',
       admDate: admDate ? formatIsoToDot(admDate) : '',
       address: address || '',
-      photos: tempStudentPhotos.slice()
+      photos: tempStudentPhotos.slice(),
+      embeddings: tempStudentEmbeddings.slice()
     };
 
     if (editId) students = students.map(function(s) { return s.id === editId ? recordObj : s; });
@@ -977,7 +980,6 @@
   }
   function handleDpPressEnd() { clearTimeout(dpPressTimer); }
 
-  // App के अंदर Save छात्र प्रोफाइल: उम्र (** वर्ष ** माह) और खाली बॉक्स
   function openStudentFullDetailsModal(stuId) {
     var s = students.find(function(x) { return x.id === stuId; });
     if (!s) return;
@@ -1114,7 +1116,6 @@
     shareOrSaveTextFile('Students_' + cls + '.csv', csv, 'text/csv');
   }
 
-  // ऑल स्टूडेंट्स PDF में प्रिंट डेट और खाली फ़ील्ड्स में "उपलब्ध नहीं"
   function exportAllStudentsFullPDF() {
     var cls = document.getElementById('exportSingleClassSelect').value;
     var activeDate = getActiveDateKey();
@@ -1166,7 +1167,6 @@
     shareOrSaveTextFile('Student_' + s.roll + '.csv', csv, 'text/csv');
   }
 
-  // छात्र व्यक्तिगत PDF: DP के पास प्रिंट डेट, खाली जगह "उपलब्ध नहीं" और DOB में उम्र
   function downloadStudentAttendancePDF(stuId) {
     var s = students.find(function(x) { return x.id === stuId; });
     if (!s) return;
