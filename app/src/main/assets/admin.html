@@ -277,7 +277,7 @@
           <div class="section-label" style="color:#15803d;">📋 मासिक रजिस्टर</div>
           <div class="form-row-2">
             <div class="form-group"><label class="field-lbl">कक्षा</label><select id="regChartClassSelect" style="background:#fff;"><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select></div>
-            <div class="form-group"><label class="field-lbl">माह</label><input type="month" id="regChartMonthInput" value="2026-10" style="background:#fff;"></div>
+            <div class="form-group"><label class="field-lbl">माह</label><input type="month" id="regChartMonthInput" value="2026-11" style="background:#fff;"></div>
           </div>
           <div style="display:flex;gap:8px;">
             <button type="button" class="btn-primary" style="background:#1e3a8a;" onclick="exportMonthlyRegisterChartPDF()">📄 PDF</button>
@@ -289,7 +289,7 @@
           <div class="form-group"><label class="field-lbl">कक्षा</label><select id="repClassSelect"><option value="सभी">सभी कक्षाएं</option><option value="6वीं">कक्षा 6वीं</option><option value="7वीं">कक्षा 7वीं</option><option value="8वीं">कक्षा 8वीं</option></select></div>
           <div class="form-row-2">
             <div class="form-group"><label class="field-lbl">से</label><input type="month" id="repFromMonth" value="2026-04"></div>
-            <div class="form-group"><label class="field-lbl">तक</label><input type="month" id="repToMonth" value="2026-10"></div>
+            <div class="form-group"><label class="field-lbl">तक</label><input type="month" id="repToMonth" value="2026-11"></div>
           </div>
           <div style="display:flex;gap:8px;">
             <button type="button" class="btn-primary" style="background:#15803d;" onclick="exportClassCSV()">📊 Excel</button>
@@ -390,6 +390,19 @@
   }
   function handlePinTilePressCancel() {
     clearTimeout(pinTileTimer);
+  }
+
+  function formatHindiMonthYear(monthVal) {
+    if (!monthVal || monthVal.indexOf('-') === -1) return monthVal;
+    var parts = monthVal.split('-');
+    var yyyy = parts[0];
+    var mm = Number(parts[1]);
+    var hindiMonths = [
+      '', 'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
+      'जुलाई', 'अगस्त', 'सितम्बर', 'अक्टूबर', 'नवम्बर', 'दिसम्बर'
+    ];
+    var mName = hindiMonths[mm] || parts[1];
+    return mName + ' - ' + yyyy;
   }
 
   function calculateAgeYearsMonths(dobDotOrIso) {
@@ -946,14 +959,16 @@
   function getStudentAttendanceStats(stuId, fromMonthStr, toMonthStr) {
     var s = students.find(function(x) { return x.id === stuId; });
     var stuCls = s ? s.className : 'सभी';
-    var admIso = formatDotToIso(s && s.admDate && s.admDate !== '-' ? s.admDate : '01.04.2024') || '2024-04-01';
-    var admTime = new Date(admIso).getTime();
-    var rangeStartTime = fromMonthStr ? new Date(fromMonthStr + '-01').getTime() : null;
+    var admIso = formatDotToIso(s && s.admDate && s.admDate !== '-' && s.admDate !== 'उपलब्ध नहीं' ? s.admDate : '');
+    var admTime = admIso ? new Date(admIso + 'T00:00:00').getTime() : null;
+    var todayEndMs = new Date(getTodayIso() + 'T23:59:59').getTime();
+
+    var rangeStartTime = fromMonthStr ? new Date(fromMonthStr + '-01T00:00:00').getTime() : null;
     var rangeEndTime = null;
     if (toMonthStr) {
       var p = toMonthStr.split('-');
       var ld = new Date(Number(p[0]), Number(p[1]), 0).getDate();
-      rangeEndTime = new Date(toMonthStr + '-' + String(ld).padStart(2, '0')).getTime();
+      rangeEndTime = new Date(toMonthStr + '-' + String(ld).padStart(2, '0') + 'T23:59:59').getTime();
     }
     var allDates = Object.keys(attendance).sort();
     var activeDate = getActiveDateKey();
@@ -961,8 +976,9 @@
 
     var validWorkingDays = 0, presentDays = 0, historyList = [];
     allDates.forEach(function(d) {
-      var dTime = new Date(shortDateKeyToIso(d)).getTime();
-      if (!isNaN(admTime) && !isNaN(dTime) && dTime < admTime) return;
+      var dTime = new Date(shortDateKeyToIso(d) + 'T12:00:00').getTime();
+      if (!isNaN(dTime) && dTime > todayEndMs) return;
+      if (admTime && !isNaN(admTime) && !isNaN(dTime) && dTime < admTime) return;
       if (rangeStartTime && !isNaN(dTime) && dTime < rangeStartTime) return;
       if (rangeEndTime && !isNaN(dTime) && dTime > rangeEndTime) return;
       var isHol = isSundayOrHoliday(d, stuCls);
@@ -1234,8 +1250,17 @@
     printOrSavePDF(htmlDoc, 'Student_Profile_' + s.roll);
   }
 
-  function openReportsModal() { document.getElementById('reportsModal').classList.add('open'); }
+  function openReportsModal() {
+    var d = new Date();
+    var curMonthStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    document.getElementById('regChartMonthInput').value = curMonthStr;
+    document.getElementById('reportsModal').classList.add('open');
+  }
 
+  // ✅ मासिक उपस्थिति पंजिका:
+  // 1. पहले कॉलम में ऊपर Roll और नीचे No. (Black Color)
+  // 2. नामांकन तिथि से प्रिंट तिथि (आज) तक ही P/A मार्क होगा, प्रिंट तिथि के बाद के दिनों में "-" रहेगा
+  // 3. यदि नामांकन तिथि खाली है तो महीने की 01 तारीख से प्रिंट तिथि तक P/A मार्क होगा
   function buildMonthlyRegisterTableHTML(cls, monthVal) {
     var list = sortStudentsByRollAsc(students.filter(function(s) { return s.className === cls; }));
     if (list.length === 0) return null;
@@ -1243,38 +1268,75 @@
     var yyyy = Number(parts[0]), mm = Number(parts[1]);
     var yyShort = String(yyyy).slice(-2), mmStr = String(mm).padStart(2, '0');
     var daysInMonth = new Date(yyyy, mm, 0).getDate();
+
+    // प्रिंट तिथि (आज की तारीख) की समय-सीमा (Midnight end of today)
+    var printTodayIso = getTodayIso();
+    var printTimeMs = new Date(printTodayIso + 'T23:59:59').getTime();
+
     var dayMeta = [];
     for (var d = 1; d <= daysInMonth; d++) {
       var ddStr = String(d).padStart(2, '0');
       var shortKey = ddStr + '.' + mmStr + '.' + yyShort;
       var isoDate = yyyy + '-' + mmStr + '-' + ddStr;
-      dayMeta.push({ dayNum: ddStr, shortKey: shortKey, timeMs: new Date(isoDate + 'T12:00:00').getTime(), holidayReason: getHolidayReasonForRegister(shortKey, cls) });
+      var dayTimeMs = new Date(isoDate + 'T12:00:00').getTime();
+      dayMeta.push({
+        dayNum: ddStr,
+        shortKey: shortKey,
+        timeMs: dayTimeMs,
+        isAfterPrintDate: (dayTimeMs > printTimeMs),
+        holidayReason: getHolidayReasonForRegister(shortKey, cls)
+      });
     }
-    var headerCells = '<th>रोल</th><th style="text-align:left;">छात्र का नाम</th>';
-    dayMeta.forEach(function(dm) { headerCells += '<th style="' + (dm.holidayReason ? 'background:#fef08a;color:#b91c1c;' : '') + '">' + dm.dayNum + '</th>'; });
-    headerCells += '<th>कुल</th><th>%</th>';
+
+    var headerCells = '<th style="color:#000000;font-weight:900;line-height:1.15;">Roll<br>No.</th><th style="text-align:left;color:#000000;font-weight:900;">छात्र का नाम</th>';
+    dayMeta.forEach(function(dm) {
+      headerCells += '<th style="' + (dm.holidayReason ? 'background:#fef08a;color:#b91c1c;' : 'color:#000000;') + '">' + dm.dayNum + '</th>';
+    });
+    headerCells += '<th style="color:#000000;">कुल</th><th style="color:#000000;">%</th>';
 
     var totalStudentsCount = list.length;
     var dailyPresentTotals = new Array(daysInMonth).fill(0);
+
     var bodyRows = list.map(function(stu, rowIdx) {
-      var admIso = formatDotToIso(stu.admDate && stu.admDate !== '-' ? stu.admDate : '01.04.2024') || '2024-04-01';
-      var admTime = new Date(admIso + 'T00:00:00').getTime();
+      var hasValidAdmDate = (stu.admDate && stu.admDate !== '-' && stu.admDate !== 'उपलब्ध नहीं' && String(stu.admDate).trim() !== '');
+      var admTime = null;
+      if (hasValidAdmDate) {
+        var admIso = formatDotToIso(stu.admDate);
+        if (admIso) {
+          var parsedAdm = new Date(admIso + 'T00:00:00').getTime();
+          if (!isNaN(parsedAdm)) admTime = parsedAdm;
+        }
+      }
+
       var stuWorkingDays = 0, stuPresentDays = 0;
       var rowCells = '<td><b>' + formatRollTwoDigits(stu.roll) + '</b></td><td style="text-align:left;white-space:nowrap;"><b>' + stu.name + '</b></td>';
+
       dayMeta.forEach(function(dm, dIdx) {
         if (dm.holidayReason) {
-          if (rowIdx === 0) rowCells += '<td rowspan="' + totalStudentsCount + '" class="hol-col-merged"><div class="hol-vert-text">' + dm.holidayReason + '</div></td>';
+          if (rowIdx === 0) {
+            rowCells += '<td rowspan="' + totalStudentsCount + '" class="hol-col-merged"><div class="hol-vert-text">' + dm.holidayReason + '</div></td>';
+          }
+        } else if (dm.isAfterPrintDate) {
+          // प्रिंट तिथि के बाद की तारीखों में केवल "-" रहेगा
+          rowCells += '<td>-</td>';
         } else {
           var isP = (attendance[dm.shortKey] || []).indexOf(stu.id) !== -1;
-          if (!isNaN(admTime) && dm.timeMs < admTime && !isP) {
+          // यदि नामांकन तिथि उपलब्ध है और यह तारीख नामांकन तिथि से पहले की है (तथा हाज़िरी दर्ज नहीं है), तो "-" रखें
+          if (admTime !== null && dm.timeMs < admTime && !isP) {
             rowCells += '<td>-</td>';
           } else {
             stuWorkingDays++;
-            if (isP) { stuPresentDays++; dailyPresentTotals[dIdx]++; rowCells += '<td style="color:#15803d;font-weight:bold;">P</td>'; }
-            else rowCells += '<td style="color:#dc2626;">A</td>';
+            if (isP) {
+              stuPresentDays++;
+              dailyPresentTotals[dIdx]++;
+              rowCells += '<td style="color:#15803d;font-weight:bold;">P</td>';
+            } else {
+              rowCells += '<td style="color:#dc2626;">A</td>';
+            }
           }
         }
       });
+
       var pct = stuWorkingDays > 0 ? Math.round((stuPresentDays / stuWorkingDays) * 100) : 0;
       rowCells += '<td><b>' + stuPresentDays + '/' + stuWorkingDays + '</b></td><td><b>' + pct + '%</b></td>';
       return '<tr>' + rowCells + '</tr>';
@@ -1282,10 +1344,22 @@
 
     var footerCells = '<td colspan="2" style="text-align:right;font-weight:bold;">कुल उपस्थित:</td>';
     dayMeta.forEach(function(dm, dIdx) {
-      footerCells += dm.holidayReason ? '<td>-</td>' : '<td><b>' + dailyPresentTotals[dIdx] + '</b></td>';
+      if (dm.holidayReason || dm.isAfterPrintDate) {
+        footerCells += '<td>-</td>';
+      } else {
+        footerCells += '<td><b>' + dailyPresentTotals[dIdx] + '</b></td>';
+      }
     });
     footerCells += '<td colspan="2"></td>';
-    return { cls: cls, monthVal: monthVal, studentCount: totalStudentsCount, tableHtml: '<table><thead><tr>' + headerCells + '</tr></thead><tbody>' + bodyRows + '<tr>' + footerCells + '</tr></tbody></table>' };
+
+    return {
+      cls: cls,
+      monthVal: monthVal,
+      hindiMonthLabel: formatHindiMonthYear(monthVal),
+      printDateStr: shortKeyToFullYearDot(getTodayShort()),
+      studentCount: totalStudentsCount,
+      tableHtml: '<table><thead><tr>' + headerCells + '</tr></thead><tbody>' + bodyRows + '<tr>' + footerCells + '</tr></tbody></table>'
+    };
   }
 
   function exportMonthlyRegisterChartPDF() {
@@ -1293,8 +1367,14 @@
     var monthVal = document.getElementById('regChartMonthInput').value;
     var built = buildMonthlyRegisterTableHTML(cls, monthVal);
     if (!built) { showToast('कोई छात्र नहीं'); return; }
-    var st = '@page{size:A4 landscape;margin:6mm;}body{font-family:sans-serif;font-size:10px;}table{width:100%;border-collapse:collapse;margin-top:6px;}th,td{border:1px solid #222;padding:3px 2px;text-align:center;}.hol-col-merged{background:#fef9c3;color:#b91c1c;font-weight:bold;}.hol-vert-text{writing-mode:vertical-rl;text-orientation:mixed;display:inline-block;white-space:nowrap;font-size:9px;}';
-    var topHead = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:6px;margin-bottom:6px;">' + getSchoolLogoSVG(42) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय - मासिक उपस्थिति पंजिका</h2><div style="font-size:11px;font-weight:bold;">कक्षा: ' + cls + ' | माह: ' + monthVal + '</div></div></div>';
+    var st = '@page{size:A4 landscape;margin:6mm;}body{font-family:sans-serif;font-size:10px;color:#000000;}table{width:100%;border-collapse:collapse;margin-top:6px;}th,td{border:1px solid #222;padding:3px 2px;text-align:center;}.hol-col-merged{background:#fef9c3;color:#b91c1c;font-weight:bold;}.hol-vert-text{writing-mode:vertical-rl;text-orientation:mixed;display:inline-block;white-space:nowrap;font-size:9px;}';
+    var topHead = '<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #1e3a8a;padding-bottom:6px;margin-bottom:6px;">' +
+      '<div style="display:flex;align-items:center;gap:12px;">' + getSchoolLogoSVG(42) +
+        '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय - मासिक उपस्थिति पंजिका</h2>' +
+        '<div style="font-size:11.5px;font-weight:bold;color:#000000;margin-top:2px;">कक्षा: ' + cls + ' | माह: <span style="color:#000000;font-weight:900;">' + built.hindiMonthLabel + '</span></div></div>' +
+      '</div>' +
+      '<div style="font-size:11px;color:#000000;border:1px solid #cbd5e1;padding:4px 8px;border-radius:6px;"><b>प्रिंट तिथि:</b> ' + built.printDateStr + '</div>' +
+    '</div>';
     printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>' + st + '</style></head><body>' + topHead + built.tableHtml + getOfficialPdfSignatureFooter() + '</body></html>', 'Register_' + cls + '_' + monthVal);
   }
 
@@ -1327,6 +1407,7 @@
     var toM = document.getElementById('repToMonth').value;
     var list = sortStudentsByRollAsc((cls === 'सभी') ? students : students.filter(function(s) { return s.className === cls; }));
     if (list.length === 0) { showToast('कोई छात्र नहीं'); return; }
+    var printDateStr = shortKeyToFullYearDot(getTodayShort());
     var rows = list.map(function(s) {
       var stStats = getStudentAttendanceStats(s.id, fromM, toM);
       var fVal = (s.father && s.father !== '-' && s.father !== 'उपलब्ध नहीं') ? s.father : 'उपलब्ध नहीं';
@@ -1341,7 +1422,9 @@
 
       return '<tr><td><b>' + formatRollTwoDigits(s.roll) + '</b></td><td><b>' + s.name + '</b><br><small>' + s.className + ' | ' + (s.gender || 'M') + ' | ' + (s.category || 'उपलब्ध नहीं') + '</small></td><td>' + fVal + '<br>' + mVal + '</td><td><b>M:</b> ' + mobVal + '<br><b>A:</b> ' + aadhVal + '</td><td>' + dobVal + '<br>' + admVal + ' (' + admDateVal + ')</td><td>' + addrVal + '</td><td><b>' + stStats.pct + '%</b> (' + stStats.presentDays + '/' + stStats.totalDays + ')</td></tr>';
     }).join('');
-    var topHead = '<div style="display:flex;align-items:center;gap:12px;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:8px;">' + getSchoolLogoSVG(46) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">समेकित उपस्थिति प्रतिवेदन (' + cls + ' | ' + fromM + ' से ' + toM + ')</div></div></div>';
+    var topHead = '<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #1e3a8a;padding-bottom:8px;margin-bottom:8px;">' +
+      '<div style="display:flex;align-items:center;gap:12px;">' + getSchoolLogoSVG(46) + '<div><h2 style="margin:0;color:#1e3a8a;">सर्वोदय मध्य विद्यालय, सोहसराय</h2><div style="font-size:12px;font-weight:bold;">समेकित उपस्थिति प्रतिवेदन (' + cls + ' | ' + formatHindiMonthYear(fromM) + ' से ' + formatHindiMonthYear(toM) + ')</div></div></div>' +
+      '<div style="font-size:11px;color:#000000;border:1px solid #cbd5e1;padding:4px 8px;border-radius:6px;"><b>प्रिंट तिथि:</b> ' + printDateStr + '</div></div>';
     printOrSavePDF('<html lang="hi"><head><meta charset="UTF-8"><style>body{font-family:sans-serif;font-size:11px;}table{width:100%;border-collapse:collapse;margin-top:8px;}th,td{border:1px solid #222;padding:5px;}</style></head><body>' + topHead + '<table><thead><tr><th>रोल नं.</th><th>नाम / कक्षा / लिंग / कोटि</th><th>पिता एवं माता का नाम</th><th>मोबाइल एवं आधार नं.</th><th>जन्म एवं नामांकन विवरण</th><th>पूरा पता</th><th>उपस्थिति</th></tr></thead><tbody>' + rows + '</tbody></table>' + getOfficialPdfSignatureFooter() + '</body></html>', 'Class_Report_' + cls);
   }
 
