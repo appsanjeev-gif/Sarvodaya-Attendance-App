@@ -14,11 +14,16 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
 import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.PI
@@ -26,35 +31,216 @@ import kotlin.math.exp
 import kotlin.math.sin
 import kotlin.random.Random
 
+object AiDiagnosticLogger {
+    private const val PREF_DIAG = "SarvodayaAiDiagPrefs"
+    private const val KEY_LOGS = "diag_logs_json"
+    private const val KEY_STATUS_MAP = "diag_status_map_json"
+
+    private fun nowTime(): String {
+        return SimpleDateFormat("dd.MM hh:mm:ss a", Locale.US).format(Date())
+    }
+
+    @Synchronized
+    fun recordEvent(
+        context: Context,
+        serviceKey: String,
+        serviceTitle: String,
+        statusBadge: String,
+        reasonHindi: String
+    ) {
+        try {
+            val prefs = context.applicationContext.getSharedPreferences(PREF_DIAG, Context.MODE_PRIVATE)
+            val timeStr = nowTime()
+
+            // 1. Update Current Status Map for the 5 Core Services
+            val statusRaw = prefs.getString(KEY_STATUS_MAP, "{}") ?: "{}"
+            val statusObj = try { JSONObject(statusRaw) } catch (e: Exception) { JSONObject() }
+            statusObj.put(serviceKey, JSONObject().apply {
+                put("title", serviceTitle)
+                put("status", statusBadge)
+                put("reason", reasonHindi)
+                put("time", timeStr)
+            })
+
+            // 2. Append to Recent 25 Event Logs
+            val logsRaw = prefs.getString(KEY_LOGS, "[]") ?: "[]"
+            val oldArr = try { JSONArray(logsRaw) } catch (e: Exception) { JSONArray() }
+            val newArr = JSONArray()
+            newArr.put(JSONObject().apply {
+                put("time", timeStr)
+                put("service", serviceTitle)
+                put("status", statusBadge)
+                put("reason", reasonHindi)
+            })
+            val limit = minOf(oldArr.length(), 24)
+            for (i in 0 until limit) {
+                newArr.put(oldArr.getJSONObject(i))
+            }
+
+            prefs.edit()
+                .putString(KEY_STATUS_MAP, statusObj.toString())
+                .putString(KEY_LOGS, newArr.toString())
+                .apply()
+        } catch (e: Exception) {}
+    }
+
+    fun buildFullDiagnosticJson(context: Context): String {
+        return try {
+            val appCtx = context.applicationContext
+            val prefs = appCtx.getSharedPreferences(PREF_DIAG, Context.MODE_PRIVATE)
+            val statusObj = try { JSONObject(prefs.getString(KEY_STATUS_MAP, "{}") ?: "{}") } catch (e: Exception) { JSONObject() }
+            val logsArr = try { JSONArray(prefs.getString(KEY_LOGS, "[]") ?: "[]") } catch (e: Exception) { JSONArray() }
+
+            val vm = RealisticVoiceManager(appCtx)
+            val gKeys = vm.getGeminiKeysListPublic()
+            val eKeys = vm.getElevenLabsKeysListPublic()
+
+            val root = JSONObject().apply {
+                put("checkedAt", nowTime())
+                put("tfliteReady", FaceMatcherEngine.isNeuralModelReady())
+                put("geminiKeyCount", gKeys.size)
+                put("elevenKeyCount", eKeys.size)
+                put("services", statusObj)
+                put("logs", logsArr)
+            }
+            root.toString()
+        } catch (e: Exception) {
+            "{}"
+        }
+    }
+
+    fun runLiveApiHealthCheckBlocking(context: Context): String {
+        val appCtx = context.applicationContext
+        val vm = RealisticVoiceManager(appCtx)
+        val gKeys = vm.getGeminiKeysListPublic()
+        val eKeys = vm.getElevenLabsKeysListPublic()
+
+        val geminiResults = JSONArray()
+        for (k in gKeys) {
+            val masked = if (k.length > 10) "${k.take(6)}••••••••${k.takeLast(4)}" else k
+            var status = "❌ अमान्य"
+            var detail = "कोई रिस्पॉन्स नहीं"
+            try {
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$k"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 6000
+                    readTimeout = 7000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                }
+                val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", "Reply OK")))))
+                conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+                val code = conn.responseCode
+                if (code == 200) {
+                    status = "✅ Key चालू है (Active)"
+                    detail = "HTTP 200 • Gemini 2.5 Flash तैयार है"
+                    recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "✅ सक्रिय", "Gemini API Key लाइव जांच में सफल")
+                } else {
+                    val errTxt = try { conn.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
+                    status = "❌ त्रुटि (HTTP $code)"
+                    detail = when (code) {
+                        400 -> "Key गलत है या निष्क्रिय है (Invalid Key)"
+                        403 -> "इस Key पर अनुमति नहीं है (Forbidden)"
+                        429 -> "आज की फ्री लिमिट समाप्त (Quota Exceeded 429)"
+                        else -> "सर्वर कोड $code: ${errTxt.take(60)}"
+                    }
+                }
+            } catch (e: UnknownHostException) {
+                status = "❌ इंटरनेट बंद है"
+                detail = "मोबाइल डेटा या वाई-फाई चालू नहीं है"
+            } catch (e: SocketTimeoutException) {
+                status = "⚠️ नेटवर्क धीमा"
+                detail = "इंटरनेट बहुत स्लो है (Connection Timeout)"
+            } catch (e: Exception) {
+                status = "❌ कनेक्शन त्रुटि"
+                detail = e.javaClass.simpleName
+            }
+            geminiResults.put(JSONObject().apply {
+                put("maskedKey", masked)
+                put("status", status)
+                put("detail", detail)
+            })
+        }
+
+        val elevenResults = JSONArray()
+        for (k in eKeys) {
+            val masked = if (k.length > 10) "${k.take(6)}••••••••${k.takeLast(4)}" else k
+            var status = "❌ अमान्य"
+            var detail = ""
+            try {
+                val url = "https://api.elevenlabs.io/v1/user/subscription"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 6000
+                    readTimeout = 7000
+                    setRequestProperty("xi-api-key", k)
+                }
+                val code = conn.responseCode
+                if (code == 200) {
+                    val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                    val sub = JSONObject(resp)
+                    val tier = sub.optString("tier", "free").uppercase()
+                    val used = sub.optInt("character_count", 0)
+                    val limit = sub.optInt("character_limit", 10000)
+                    val rem = (limit - used).coerceAtLeast(0)
+                    val nextUnix = sub.optLong("next_character_count_reset_unix", 0L)
+                    val resetDate = if (nextUnix > 0L) {
+                        SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(nextUnix * 1000L))
+                    } else "-"
+                    status = "✅ Key चालू है (Active • Tier: $tier)"
+                    detail = "बची हुई लिमिट: $rem / $limit chars (Used: $used) | अगली Reset: $resetDate"
+                    recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", "बचे हुए अक्षर: $rem / $limit")
+                } else {
+                    status = "❌ त्रुटि (HTTP $code)"
+                    detail = if (code == 401) "Key गलत है या ब्लॉक हो चुकी है (Invalid API Key)" else "सर्वर रिस्पॉन्स कोड: $code"
+                }
+            } catch (e: UnknownHostException) {
+                status = "❌ इंटरनेट बंद है"
+                detail = "मोबाइल डेटा या वाई-फाई चालू नहीं है"
+            } catch (e: SocketTimeoutException) {
+                status = "⚠️ नेटवर्क धीमा"
+                detail = "इंटरनेट बहुत स्लो है (Timeout)"
+            } catch (e: Exception) {
+                status = "❌ कनेक्शन त्रुटि"
+                detail = e.javaClass.simpleName
+            }
+            elevenResults.put(JSONObject().apply {
+                put("maskedKey", masked)
+                put("status", status)
+                put("detail", detail)
+            })
+        }
+
+        val fullJson = JSONObject(buildFullDiagnosticJson(appCtx))
+        fullJson.put("geminiLiveCheck", geminiResults)
+        fullJson.put("elevenLiveCheck", elevenResults)
+        return fullJson.toString()
+    }
+}
+
 class RealisticVoiceManager(private val context: Context) {
 
-    private val prefs = context.getSharedPreferences("SarvodayaVoicePrefs", Context.MODE_PRIVATE)
+    private val appCtx = context.applicationContext
+    private val prefs = appCtx.getSharedPreferences("SarvodayaVoicePrefs", Context.MODE_PRIVATE)
     private val mainHandler = Handler(Looper.getMainLooper())
-
-    private val defPart1 = "AQ.Ab8RN6JboShANCf"
-    private val defPart2 = "JrUUGoKliLkRUeWbYZ"
-    private val defPart3 = "38ZEo9InfG-hroP9Q"
-
-    private val builtInGeminiKeys = listOf(
-        defPart1 + defPart2 + defPart3
-    )
 
     private val geminiKeyIndex = AtomicInteger(0)
     private val elevenKeyIndex = AtomicInteger(0)
 
     fun getGeminiKeysString(): String {
         val dedicated = prefs.getString("custom_gemini_only_keys", null)
-        if (dedicated != null) return dedicated
+        if (!dedicated.isNullOrBlank()) return dedicated
         val legacy = prefs.getString("custom_gemini_api_key", "") ?: ""
         return legacy.split(",", "\n", ";", " ")
             .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("sk_", ignoreCase = true) }
+            .filter { it.length > 15 && (it.startsWith("AIza") || it.startsWith("AQ.")) }
             .joinToString("\n")
     }
 
     fun getElevenLabsKeysString(): String {
         val dedicated = prefs.getString("custom_eleven_only_keys", null)
-        if (dedicated != null) return dedicated
+        if (!dedicated.isNullOrBlank()) return dedicated
         val legacy = prefs.getString("custom_gemini_api_key", "") ?: ""
         return legacy.split(",", "\n", ";", " ")
             .map { it.trim() }
@@ -62,9 +248,20 @@ class RealisticVoiceManager(private val context: Context) {
             .joinToString("\n")
     }
 
+    fun getGeminiKeysListPublic(): List<String> = getGeminiKeyPool()
+    fun getElevenLabsKeysListPublic(): List<String> = getElevenLabsKeyPool()
+
     fun saveSeparateApiKeys(geminiRaw: String, elevenRaw: String) {
-        val gClean = geminiRaw.trim()
-        val eClean = elevenRaw.trim()
+        val gClean = geminiRaw.split(",", "\n", ";", " ")
+            .map { it.trim() }
+            .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
+            .joinToString("\n")
+
+        val eClean = elevenRaw.split(",", "\n", ";", " ")
+            .map { it.trim() }
+            .filter { it.length > 15 && !it.startsWith("AIza") && !it.startsWith("AQ.") }
+            .joinToString("\n")
+
         val combined = listOf(gClean, eClean).filter { it.isNotEmpty() }.joinToString("\n")
 
         prefs.edit()
@@ -72,6 +269,14 @@ class RealisticVoiceManager(private val context: Context) {
             .putString("custom_eleven_only_keys", eClean)
             .putString("custom_gemini_api_key", combined)
             .apply()
+
+        AiDiagnosticLogger.recordEvent(
+            appCtx,
+            "VOICE",
+            "4. AI मानवीय आवाज़ (TTS)",
+            "🔄 Keys अपडेट की गईं",
+            "Gemini Keys: ${if (gClean.isEmpty()) 0 else gClean.lines().size}, ElevenLabs Keys: ${if (eClean.isEmpty()) 0 else eClean.lines().size}"
+        )
 
         rollingCacheExecutor.execute {
             try {
@@ -86,11 +291,15 @@ class RealisticVoiceManager(private val context: Context) {
     }
 
     fun getApiKey(): String {
+        val combined = listOf(getGeminiKeysString().trim(), getElevenLabsKeysString().trim())
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+        if (combined.isNotEmpty()) return combined
         return prefs.getString("custom_gemini_api_key", "") ?: ""
     }
 
     fun saveCustomApiKey(newKey: String) {
-        val tokens = newKey.split(",", "\n", ";", " ").map { it.trim() }.filter { it.length > 10 }
+        val tokens = newKey.split(",", "\n", ";", " ").map { it.trim() }.filter { it.length > 15 }
         val gKeys = tokens.filter { it.startsWith("AIza") || it.startsWith("AQ.") }.joinToString("\n")
         val eKeys = tokens.filter { !it.startsWith("AIza") && !it.startsWith("AQ.") }.joinToString("\n")
         saveSeparateApiKeys(gKeys, eKeys)
@@ -98,15 +307,9 @@ class RealisticVoiceManager(private val context: Context) {
 
     private fun getGeminiKeyPool(): List<String> {
         val raw = getGeminiKeysString()
-        val list = raw.split(",", "\n", ";", " ")
+        return raw.split(",", "\n", ";", " ")
             .map { it.trim() }
             .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
-        val hasCustomEleven = getElevenLabsKeyPool().isNotEmpty()
-        return when {
-            list.isNotEmpty() -> list
-            hasCustomEleven -> emptyList()
-            else -> builtInGeminiKeys
-        }
     }
 
     private fun getElevenLabsKeyPool(): List<String> {
@@ -122,22 +325,25 @@ class RealisticVoiceManager(private val context: Context) {
         val stylePrompt: String
     )
 
+    // ✅ Free-Tier पर 100% काम करने वाली ElevenLabs Premade Default Voice IDs (Rachel, Adam, Clyde, Domi) सबसे आगे रखी गई हैं
     private val aiVoiceProfiles = listOf(
         AiVoiceProfile(
             name = "Sadachbia",
             elevenVoiceIds = listOf(
-                "JBFqnCBsd6RMkjVDRZzb",
-                "pNInz6obpgDQGcFmaJgB",
-                "onwK4e9ZLuTAKqWW03F9"
+                "pNInz6obpgDQGcFmaJgB", // Adam (Always allowed on Free Tier)
+                "21m00Tcm4TlvDq8ikWAM", // Rachel (Always allowed on Free Tier)
+                "onwK4e9ZLuTAKqWW03F9", // Daniel
+                "JBFqnCBsd6RMkjVDRZzb"  // George
             ),
             stylePrompt = "Speak like an energetic, proud, warm Indian Hindi radio RJ host with a natural smile and lively pace:"
         ),
         AiVoiceProfile(
             name = "Autonoe",
             elevenVoiceIds = listOf(
-                "EXAVITQu4vr4xnSDxMaL",
-                "Xb7hH8MSUJpSbSDYk0k2",
-                "21m00Tcm4TlvDq8ikWAM"
+                "21m00Tcm4TlvDq8ikWAM", // Rachel (Always allowed on Free Tier)
+                "AZnzlk1XvdvUeBnXmlld", // Domi (Always allowed on Free Tier)
+                "EXAVITQu4vr4xnSDxMaL", // Sarah
+                "pNInz6obpgDQGcFmaJgB"  // Adam
             ),
             stylePrompt = "Speak like a cheerful, bright, inspiring Indian Hindi female radio RJ announcer with warmth and pride:"
         )
@@ -157,7 +363,7 @@ class RealisticVoiceManager(private val context: Context) {
     private var mediaPlayer: MediaPlayer? = null
 
     private val voiceCacheDir: File by lazy {
-        File(context.getExternalFilesDir(null) ?: context.filesDir, "ai_studio_voice_bank").apply {
+        File(appCtx.getExternalFilesDir(null) ?: appCtx.filesDir, "ai_studio_voice_bank").apply {
             if (!exists()) mkdirs()
         }
     }
@@ -213,10 +419,13 @@ class RealisticVoiceManager(private val context: Context) {
         val geminiPool = getGeminiKeyPool()
         for (attempt in geminiPool.indices) {
             val idx = (geminiKeyIndex.getAndIncrement() % geminiPool.size).let { if (it < 0) it + geminiPool.size else it }
-            val (pcmBytes, code) = fetchGoogleAiStudioTtsPcm(welcomeText, profile, geminiPool[idx])
+            val (pcmBytes, code, errReason) = fetchGoogleAiStudioTtsPcm(welcomeText, profile, geminiPool[idx])
             if (pcmBytes != null && pcmBytes.size > 2000) {
                 writeFileAtomically(targetPcm, pcmBytes)
+                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ Gemini TTS सक्रिय", "स्वागत ऑडियो सफलतापूर्वक तैयार हुआ")
                 return true
+            } else {
+                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "⚠️ Gemini TTS विफल", errReason)
             }
             if (code != 429 && code != 400 && code != 403) break
         }
@@ -224,10 +433,13 @@ class RealisticVoiceManager(private val context: Context) {
         val elevenPool = getElevenLabsKeyPool()
         for (attempt in elevenPool.indices) {
             val idx = (elevenKeyIndex.getAndIncrement() % elevenPool.size).let { if (it < 0) it + elevenPool.size else it }
-            val (mp3Bytes, code) = fetchElevenLabsMp3WithFallback(welcomeText, profile.elevenVoiceIds, elevenPool[idx])
+            val (mp3Bytes, code, errReason) = fetchElevenLabsMp3WithFallback(welcomeText, profile.elevenVoiceIds, elevenPool[idx])
             if (mp3Bytes != null && mp3Bytes.size > 1000) {
                 writeFileAtomically(targetMp3, mp3Bytes)
+                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", "ElevenLabs से स्वागत ऑडियो तैयार हुआ")
                 return true
+            } else {
+                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "❌ ElevenLabs विफल", errReason)
             }
             if (code != 429 && code != 401 && code != 403) break
         }
@@ -279,7 +491,8 @@ class RealisticVoiceManager(private val context: Context) {
                 }
 
                 conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-                if (conn.responseCode == 200) {
+                val code = conn.responseCode
+                if (code == 200) {
                     val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                     val text = JSONObject(resp)
                         .optJSONArray("candidates")?.optJSONObject(0)
@@ -287,10 +500,21 @@ class RealisticVoiceManager(private val context: Context) {
                         ?.optString("text", "")?.trim()
                         ?.replace("\"", "")?.replace("*", "")?.replace("\n", " ") ?: ""
                     if (text.length in 25..220 && text.contains("सर्वोदय")) {
+                        AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "✅ सफल (Gemini)", "नया स्लोगन: \"${text.take(45)}...\"")
                         return text
                     }
+                } else {
+                    AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ डिफ़ॉल्ट स्लोगन", "Gemini HTTP $code के कारण इन-बिल्ट स्लोगन चुना गया")
                 }
-            } catch (e: Exception) {}
+            } catch (e: UnknownHostException) {
+                AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ ऑफलाइन स्लोगन", "इंटरनेट बंद होने से इन-बिल्ट स्लोगन चलाया गया")
+            } catch (e: SocketTimeoutException) {
+                AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ ऑफलाइन स्लोगन", "नेटवर्क धीमा (Timeout) होने से इन-बिल्ट स्लोगन चलाया गया")
+            } catch (e: Exception) {
+                AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ ऑफलाइन स्लोगन", "त्रुटि (${e.javaClass.simpleName}) के कारण इन-बिल्ट स्लोगन चला")
+            }
+        } else {
+            AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "ℹ️ इन-बिल्ट स्लोगन", "Google Gemini Key नहीं डली है — इन-बिल्ट हिंदी स्लोगन तैयार")
         }
 
         val fallbackTemplates = listOf(
@@ -452,40 +676,62 @@ class RealisticVoiceManager(private val context: Context) {
         val mp3CacheFile = File(voiceCacheDir, "${md5Hash("eleven_mp3_$text")}.mp3")
 
         if (file1.exists() && file1.length() > 2000) {
+            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (PCM)", "सेव की गई मानवीय आवाज़ तुरंत चलाई गई")
             if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return
         }
         if (file2.exists() && file2.length() > 2000) {
+            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (PCM)", "सेव की गई मानवीय आवाज़ तुरंत चलाई गई")
             if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return
         }
         if (mp3CacheFile.exists() && mp3CacheFile.length() > 1000) {
+            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (ElevenLabs)", "सेव की गई ElevenLabs आवाज़ तुरंत चलाई गई")
             if (playMp3File(mp3CacheFile)) return
         }
 
         val geminiPool = getGeminiKeyPool()
+        val elevenPool = getElevenLabsKeyPool()
+
+        if (geminiPool.isEmpty() && elevenPool.isEmpty()) {
+            AiDiagnosticLogger.recordEvent(
+                appCtx,
+                "VOICE",
+                "4. AI मानवीय आवाज़ (TTS)",
+                "❌ कोई API Key नहीं",
+                "न तो Gemini Key डली है और न ही ElevenLabs Key (ऑफलाइन रोबोटिक TTS बंद रखा गया है)"
+            )
+            isCurrentlySpeaking = false
+            return
+        }
+
         if (geminiPool.isNotEmpty()) {
             val poolSize = geminiPool.size
             for (attempt in 0 until poolSize) {
                 val idx = (geminiKeyIndex.getAndIncrement() % poolSize).let { if (it < 0) it + poolSize else it }
                 val candidateKey = geminiPool[idx]
-                val (pcmBytes, errCode) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, candidateKey)
+                val (pcmBytes, errCode, errReason) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, candidateKey)
                 if (pcmBytes != null && pcmBytes.size > 2000) {
                     writeFileAtomically(file1, pcmBytes)
+                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ सफल (Gemini TTS)", "Google AI Studio आवाज़ सफलतापूर्वक चली")
                     if (playRawPcm24kHz(pcmBytes, boostFactor)) return
+                } else {
+                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "⚠️ Gemini TTS विफल", errReason)
                 }
                 if (errCode != 429 && errCode != 400 && errCode != 403) break
             }
         }
 
-        val elevenPool = getElevenLabsKeyPool()
         if (elevenPool.isNotEmpty()) {
             val poolSize = elevenPool.size
             for (attempt in 0 until poolSize) {
                 val idx = (elevenKeyIndex.getAndIncrement() % poolSize).let { if (it < 0) it + poolSize else it }
                 val candidateKey = elevenPool[idx]
-                val (mp3Bytes, errCode) = fetchElevenLabsMp3WithFallback(text, chosenVoice.elevenVoiceIds, candidateKey)
+                val (mp3Bytes, errCode, errReason) = fetchElevenLabsMp3WithFallback(text, chosenVoice.elevenVoiceIds, candidateKey)
                 if (mp3Bytes != null && mp3Bytes.size > 1000) {
                     writeFileAtomically(mp3CacheFile, mp3Bytes)
+                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ सफल (ElevenLabs)", "ElevenLabs मानवीय आवाज़ सफलतापूर्वक चली")
                     if (playMp3File(mp3CacheFile)) return
+                } else {
+                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "❌ ElevenLabs विफल", errReason)
                 }
                 if (errCode != 429 && errCode != 401 && errCode != 403) break
             }
@@ -498,9 +744,10 @@ class RealisticVoiceManager(private val context: Context) {
         hindiText: String,
         profile: AiVoiceProfile,
         apiKey: String
-    ): Pair<ByteArray?, Int> {
+    ): Triple<ByteArray?, Int, String> {
         val models = listOf("gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts")
         var lastHttpCode = 0
+        var lastReason = "अज्ञात कारण"
 
         for (modelName in models) {
             try {
@@ -546,24 +793,41 @@ class RealisticVoiceManager(private val context: Context) {
                         ?.optJSONObject(0)
                     val b64Audio = part?.optJSONObject("inlineData")?.optString("data", "") ?: ""
                     if (b64Audio.isNotEmpty()) {
-                        return Pair(Base64.decode(b64Audio, Base64.DEFAULT), 200)
+                        return Triple(Base64.decode(b64Audio, Base64.DEFAULT), 200, "OK")
                     }
-                } else if (lastHttpCode == 400 || lastHttpCode == 403 || lastHttpCode == 429) {
-                    break
+                    lastReason = "सर्वर ने खाली ऑडियो भेजा"
+                } else {
+                    lastReason = when (lastHttpCode) {
+                        400 -> "Gemini Key अमान्य है (HTTP 400)"
+                        403 -> "Gemini Key पर अनुमति नहीं है (HTTP 403)"
+                        429 -> "Gemini TTS का दैनिक कोटा पूरा हो गया (HTTP 429)"
+                        else -> "Gemini सर्वर त्रुटि (HTTP $lastHttpCode)"
+                    }
+                    if (lastHttpCode == 400 || lastHttpCode == 403 || lastHttpCode == 429) {
+                        break
+                    }
                 }
-            } catch (e: Exception) {}
+            } catch (e: UnknownHostException) {
+                lastReason = "मोबाइल का इंटरनेट बंद है (No Internet)"
+            } catch (e: SocketTimeoutException) {
+                lastReason = "इंटरनेट बहुत धीमा है (Connection Timeout)"
+            } catch (e: Exception) {
+                lastReason = "नेटवर्क त्रुटि: ${e.javaClass.simpleName}"
+            }
         }
-        return Pair(null, lastHttpCode)
+        return Triple(null, lastHttpCode, lastReason)
     }
 
     private fun fetchElevenLabsMp3WithFallback(
         hindiText: String,
         voiceIds: List<String>,
         elevenApiKey: String
-    ): Pair<ByteArray?, Int> {
+    ): Triple<ByteArray?, Int, String> {
         val cleanKey = elevenApiKey.trim()
-        val models = listOf("eleven_multilingual_v2", "eleven_turbo_v2_5")
+        // ✅ Free tier के लिए eleven_multilingual_v2 और eleven_flash_v2_5 सबसे भरोसेमंद हैं
+        val models = listOf("eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_turbo_v2_5")
         var lastCode = 0
+        var lastReason = "अज्ञात त्रुटि"
 
         for (vId in voiceIds) {
             for (modelId in models) {
@@ -596,15 +860,36 @@ class RealisticVoiceManager(private val context: Context) {
                     if (lastCode == 200) {
                         val bytes = conn.inputStream.readBytes()
                         if (bytes.size > 1000) {
-                            return Pair(bytes, 200)
+                            return Triple(bytes, 200, "OK")
                         }
-                    } else if (lastCode == 401 || lastCode == 429) {
-                        return Pair(null, lastCode)
+                        lastReason = "ElevenLabs से बहुत छोटी ऑडियो प्राप्त हुई"
+                    } else {
+                        val errBody = try { conn.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
+                        lastReason = when (lastCode) {
+                            401 -> "ElevenLabs Key गलत है या ब्लॉक हो गई है (HTTP 401)"
+                            402 -> "यह वॉइस Free Plan में उपलब्ध नहीं है, अगली वॉइस आज़मा रहे हैं..."
+                            429 -> "ElevenLabs की लिमिट खत्म या एक साथ अधिक रिक्वेस्ट (HTTP 429)"
+                            else -> "ElevenLabs सर्वर कोड $lastCode: ${errBody.take(55)}"
+                        }
+                        if (lastCode == 401) {
+                            return Triple(null, lastCode, lastReason)
+                        }
+                        if (lastCode == 402 || errBody.contains("voice", ignoreCase = true)) {
+                            // इस Voice ID को छोड़कर तुरंत अगली Free Voice ID (Rachel/Adam) आज़माएं
+                            break
+                        }
                     }
-                } catch (e: Exception) {}
+                } catch (e: UnknownHostException) {
+                    lastReason = "मोबाइल का इंटरनेट बंद है (No Internet)"
+                    return Triple(null, 0, lastReason)
+                } catch (e: SocketTimeoutException) {
+                    lastReason = "इंटरनेट बहुत धीमा है (ElevenLabs Timeout)"
+                } catch (e: Exception) {
+                    lastReason = "कनेक्शन त्रुटि: ${e.javaClass.simpleName}"
+                }
             }
         }
-        return Pair(null, lastCode)
+        return Triple(null, lastCode, lastReason)
     }
 
     private fun playMp3File(mp3File: File): Boolean {
