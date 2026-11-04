@@ -276,6 +276,7 @@ class MainActivity : AppCompatActivity() {
         val present = payload.students.count { presentIds.contains(it.id) }
         val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
 
+        ivResultStudentPhoto.background = null
         ivResultStudentPhoto.visibility = View.VISIBLE
         ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
         tvResultLogo.text = "✨"
@@ -380,7 +381,7 @@ class MainActivity : AppCompatActivity() {
                         return@addOnSuccessListener
                     }
 
-                    // 2. यदि बॉर्डरलाइन केस (Match 50%..67%) है और Gemini Key उपलब्ध है, तो ऑनलाइन AI से पुष्टि करें
+                    // 2. बॉर्डरलाइन केस में Online Gemini AI से पुष्टि करें
                     if (hasGeminiKey && matchResult.topCandidates.isNotEmpty()) {
                         val portraitForAi = FaceMatcherEngine.createAiEnhancedPortraitDp(frameBmp, primaryFace)
                         aiVerifyExecutor.execute {
@@ -487,7 +488,10 @@ class MainActivity : AppCompatActivity() {
         if (stu != null && stu.photos.isNotEmpty()) {
             val bmp = FaceMatcherEngine.decodeBase64Bitmap(stu.photos[0])
             if (bmp != null) {
-                ivResultStudentPhoto.setImageBitmap(bmp)
+                // ✅ राउंडेड कॉर्नर बॉर्डर फ्रेम के साथ छात्र की 1:1 फोटो दिखाएं
+                val framedBmp = FaceMatcherEngine.createFramedResultCardBitmap(bmp)
+                ivResultStudentPhoto.background = null
+                ivResultStudentPhoto.setImageBitmap(framedBmp)
                 ivResultStudentPhoto.visibility = View.VISIBLE
             } else {
                 ivResultStudentPhoto.visibility = View.GONE
