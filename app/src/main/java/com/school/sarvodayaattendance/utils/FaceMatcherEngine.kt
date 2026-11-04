@@ -4,11 +4,15 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.RectF
 import android.util.Base64
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
@@ -60,8 +64,6 @@ object FaceMatcherEngine {
     private var inputImageSize: Int = 112
     private val templateCache = ConcurrentHashMap<String, StudentBiometricTemplate>()
 
-    // संतुलित बायोमेट्रिक थ्रेशोल्ड (Balanced MobileFaceNet Cosine Similarity):
-    // Cosine Similarity >= 0.58 (यानी Match >= 68%) होने पर High Confidence पास होगा।
     const val PASS_COSINE_THRESHOLD = 0.58f
     const val AI_ASSIST_COSINE_MIN = 0.46f
     const val MIN_COSINE_MARGIN_GAP = 0.045f
@@ -161,6 +163,49 @@ object FaceMatcherEngine {
         }
     }
 
+    // ✅ मुख्य स्क्रीन के रिजल्ट कार्ड के लिए राउंडेड कॉर्नर + डबल बॉर्डर फ्रेम वाली DP बनाना
+    fun createFramedResultCardBitmap(src: Bitmap): Bitmap {
+        val size = 240
+        val scaled = Bitmap.createScaledBitmap(src, size, size, true)
+        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+
+        val outerRect = RectF(0f, 0f, size.toFloat(), size.toFloat())
+        val innerPhotoRect = RectF(10f, 10f, (size - 10).toFloat(), (size - 10).toFloat())
+        val cornerRad = 34f
+
+        // 1. फोटो को राउंडेड बॉक्स में क्लिप करें
+        val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.WHITE
+            style = Paint.Style.FILL
+        }
+        val photoLayer = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val photoCanvas = Canvas(photoLayer)
+        photoCanvas.drawRoundRect(innerPhotoRect, cornerRad - 6f, cornerRad - 6f, maskPaint)
+        maskPaint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_IN)
+        photoCanvas.drawBitmap(scaled, null, innerPhotoRect, maskPaint)
+        canvas.drawBitmap(photoLayer, 0f, 0f, null)
+
+        // 2. अंदर की सफेद चमकदार रिंग
+        val innerBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 4f
+            color = Color.parseColor("#E2E8F0")
+        }
+        canvas.drawRoundRect(innerPhotoRect, cornerRad - 6f, cornerRad - 6f, innerBorderPaint)
+
+        // 3. बाहर का गाढ़ा स्टील-ब्लू रॉयल राउंडेड फ्रेम (जैसा चित्र में दिखाया गया है)
+        val outerBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 7f
+            color = Color.parseColor("#334155")
+        }
+        val frameRect = RectF(4f, 4f, (size - 4).toFloat(), (size - 4).toFloat())
+        canvas.drawRoundRect(frameRect, cornerRad, cornerRad, outerBorderPaint)
+
+        return out
+    }
+
     fun isLiveFaceValidForScan(face: Face): Boolean {
         if (abs(face.headEulerAngleY) > 20f || abs(face.headEulerAngleZ) > 18f) {
             return false
@@ -189,47 +234,255 @@ object FaceMatcherEngine {
         return Pair(true, "OK")
     }
 
-    // ✅ 1. DP (प्रोफाइल फोटो) के लिए सुंदर पूरा चेहरा (सिर के बालों से कंधे तक + AI Studio Portrait Enhancement)
-    fun createAiEnhancedPortraitDp(source: Bitmap, face: Face): Bitmap {
+    // ✅ True 1:1 Square Aspect-Locked Crop (जिससे फोटो ऊपर-नीचे या दाएं-बाएं से 1% भी न दबे)
+    fun cropTrueSquarePortrait(source: Bitmap, face: Face): Bitmap {
         val box = face.boundingBox
-        val w = box.width()
-        val h = box.height()
+        val cx = box.centerX()
+        // सिर के बाल और कंधे का संतुलित भाग लेने के लिए केंद्र को हल्का सा (4%) ऊपर रखें
+        val cy = (box.centerY() - (box.height() * 0.04f)).toInt()
 
-        // पूरा सिर, बाल, कान और कंधे का थोड़ा हिस्सा शामिल करें (Full Natural Portrait DP)
-        val padX = (w * 0.32f).toInt()
-        val padTop = (h * 0.40f).toInt()
-        val padBottom = (h * 0.35f).toInt()
+        val desiredSide = (max(box.width(), box.height()) * 1.62f).toInt()
+        val maxPossibleSide = min(source.width, source.height)
+        val side = desiredSide.coerceIn(100, maxPossibleSide)
+        val half = side / 2
 
-        val left = (box.left - padX).coerceIn(0, max(0, source.width - 1))
-        val top = (box.top - padTop).coerceIn(0, max(0, source.height - 1))
-        val right = (box.right + padX).coerceIn(left + 1, source.width)
-        val bottom = (box.bottom + padBottom).coerceIn(top + 1, source.height)
+        var left = cx - half
+        var top = cy - half
 
-        val portraitCrop = Bitmap.createBitmap(source, left, top, right - left, bottom - top)
-        val scaledDp = Bitmap.createScaledBitmap(portraitCrop, 300, 300, true)
+        if (left < 0) left = 0
+        if (top < 0) top = 0
+        if (left + side > source.width) left = max(0, source.width - side)
+        if (top + side > source.height) top = max(0, source.height - side)
 
-        // AI Portrait Lighting & Clarity Enhancement (Auto Contrast + Natural Studio Warmth)
-        val enhanced = Bitmap.createBitmap(300, 300, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(enhanced)
-        val cm = ColorMatrix(
-            floatArrayOf(
-                1.08f, 0f, 0f, 0f, 6f,
-                0f, 1.07f, 0f, 0f, 5f,
-                0f, 0f, 1.05f, 0f, 3f,
-                0f, 0f, 0f, 1f, 0f
-            )
-        )
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            colorFilter = ColorMatrixColorFilter(cm)
-        }
-        canvas.drawBitmap(scaledDp, 0f, 0f, paint)
-        return enhanced
+        val actualW = min(side, source.width - left)
+        val actualH = min(side, source.height - top)
+        val finalSquareSide = min(actualW, actualH).coerceAtLeast(1)
+
+        val squareCrop = Bitmap.createBitmap(source, left, top, finalSquareSide, finalSquareSide)
+        return Bitmap.createScaledBitmap(squareCrop, 320, 320, true)
     }
 
-    // ✅ 2. बायोमेट्रिक 192-D डेटा के लिए एक समान फेस अलाइनमेंट (KYC और Live Scan दोनों में 100% समान)
+    // ✅ विकल्प A: On-Device Multi-Stage Studio Portrait Enhancement (Auto-Histogram + Skin Smooth + Detail Sharpen)
+    fun applyOnDeviceStudioPortraitFilter(squareBmp: Bitmap): Bitmap {
+        val w = squareBmp.width
+        val h = squareBmp.height
+        val pixels = IntArray(w * h)
+        squareBmp.getPixels(pixels, 0, w, 0, 0, w, h)
+
+        // Step 1: Auto-Exposure & Dynamic Contrast Stretching (चेहरे का अंधेरापन दूर करने के लिए)
+        var minLum = 255
+        var maxLum = 0
+        var sumLum = 0L
+        for (px in pixels) {
+            val r = (px shr 16) and 0xFF
+            val g = (px shr 8) and 0xFF
+            val b = px and 0xFF
+            val lum = (r * 77 + g * 150 + b * 29) shr 8
+            if (lum < minLum) minLum = lum
+            if (lum > maxLum) maxLum = lum
+            sumLum += lum
+        }
+        val avgLum = (sumLum / pixels.size).toInt()
+        // अंधेरे फोटो को ज़्यादा ब्राइट करें, सामान्य फोटो को संतुलित रखें
+        val gamma = when {
+            avgLum < 95 -> 0.76
+            avgLum < 125 -> 0.86
+            avgLum > 185 -> 1.05
+            else -> 0.92
+        }
+
+        val lut = IntArray(256)
+        val lowCut = (minLum * 0.35).toInt().coerceIn(0, 40)
+        val highCut = max(maxLum, 215).coerceIn(190, 255)
+        val range = max(highCut - lowCut, 60).toDouble()
+
+        for (i in 0..255) {
+            val norm = ((i - lowCut).coerceAtLeast(0) / range).coerceIn(0.0, 1.0)
+            val curved = Math.pow(norm, gamma)
+            // S-Curve gentle studio contrast
+            val sCurve = curved * curved * (3.0 - 2.0 * curved)
+            val blended = (curved * 0.65 + sCurve * 0.35) * 255.0
+            lut[i] = blended.roundToInt().coerceIn(0, 255)
+        }
+
+        val exposedPixels = IntArray(w * h)
+        for (i in pixels.indices) {
+            val px = pixels[i]
+            var r = lut[(px shr 16) and 0xFF]
+            var g = lut[(px shr 8) and 0xFF]
+            var b = lut[px and 0xFF]
+
+            // Natural Studio Warmth (हल्का गुलाबी/गोल्डन निखार)
+            r = (r * 1.03f + 3f).toInt().coerceIn(0, 255)
+            g = (g * 1.01f + 1f).toInt().coerceIn(0, 255)
+            b = (b * 0.99f).toInt().coerceIn(0, 255)
+
+            exposedPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+
+        // Step 2: Edge-Preserving Bilateral Skin Smoothing + Eye/Edge Sharpening
+        val finalPixels = exposedPixels.clone()
+        val thresholdDiff = 26 // केवल त्वचा के दाने स्मूथ हों, आँखें/बाल शार्प रहें
+
+        for (y in 1 until h - 1) {
+            for (x in 1 until w - 1) {
+                val idx = y * w + x
+                val cPx = exposedPixels[idx]
+                val cr = (cPx shr 16) and 0xFF
+                val cg = (cPx shr 8) and 0xFF
+                val cb = cPx and 0xFF
+
+                var sumR = cr * 4
+                var sumG = cg * 4
+                var sumB = cb * 4
+                var weightSum = 4
+
+                val neighbors = intArrayOf(
+                    exposedPixels[idx - 1],
+                    exposedPixels[idx + 1],
+                    exposedPixels[idx - w],
+                    exposedPixels[idx + w]
+                )
+
+                var edgeDiff = 0
+                for (nPx in neighbors) {
+                    val nr = (nPx shr 16) and 0xFF
+                    val ng = (nPx shr 8) and 0xFF
+                    val nb = nPx and 0xFF
+                    val diff = (abs(cr - nr) + abs(cg - ng) + abs(cb - nb)) / 3
+                    edgeDiff += diff
+                    if (diff < thresholdDiff) {
+                        sumR += nr
+                        sumG += ng
+                        sumB += nb
+                        weightSum++
+                    }
+                }
+
+                val outR: Int
+                val outG: Int
+                val outB: Int
+                if (edgeDiff > 55) {
+                    // आँख, भौंह और होंठ की रेखाओं को हल्का शार्प करें
+                    val avgN_R = ((neighbors[0] shr 16 and 0xFF) + (neighbors[1] shr 16 and 0xFF) + (neighbors[2] shr 16 and 0xFF) + (neighbors[3] shr 16 and 0xFF)) shr 2
+                    val avgN_G = ((neighbors[0] shr 8 and 0xFF) + (neighbors[1] shr 8 and 0xFF) + (neighbors[2] shr 8 and 0xFF) + (neighbors[3] shr 8 and 0xFF)) shr 2
+                    val avgN_B = ((neighbors[0] and 0xFF) + (neighbors[1] and 0xFF) + (neighbors[2] and 0xFF) + (neighbors[3] and 0xFF)) shr 2
+                    outR = (cr + ((cr - avgN_R) * 0.28f).toInt()).coerceIn(0, 255)
+                    outG = (cg + ((cg - avgN_G) * 0.28f).toInt()).coerceIn(0, 255)
+                    outB = (cb + ((cb - avgN_B) * 0.28f).toInt()).coerceIn(0, 255)
+                } else {
+                    // त्वचा को स्मूथ करें
+                    outR = (sumR / weightSum).coerceIn(0, 255)
+                    outG = (sumG / weightSum).coerceIn(0, 255)
+                    outB = (sumB / weightSum).coerceIn(0, 255)
+                }
+
+                finalPixels[idx] = (0xFF shl 24) or (outR shl 16) or (outG shl 8) or outB
+            }
+        }
+
+        val outBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        outBmp.setPixels(finalPixels, 0, w, 0, 0, w, h)
+        return outBmp
+    }
+
+    // ✅ तुरंत प्रीव्यू दिखाने के लिए 1:1 स्क्वायर + विकल्प A
+    fun createAiEnhancedPortraitDp(source: Bitmap, face: Face): Bitmap {
+        val squareCrop = cropTrueSquarePortrait(source, face)
+        return applyOnDeviceStudioPortraitFilter(squareCrop)
+    }
+
+    // ✅ पहले विकल्प B (Online Gemini Image Edit API - 35s Timeout) को आज़माएं, और यदि इमेज न मिले तो विकल्प A (On-Device Studio Filter) लौटाएं
+    fun enhancePortraitWithGeminiOrFallbackBlocking(context: Context, squareBaseBmp: Bitmap): Pair<Bitmap, Boolean> {
+        try {
+            val vm = RealisticVoiceManager(context)
+            val rawKeys = vm.getGeminiKeysString()
+            val keyPool = rawKeys.split(",", "\n", ";", " ")
+                .map { it.trim() }
+                .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
+            val apiKey = keyPool.firstOrNull()
+
+            if (apiKey != null) {
+                val inputBaos = ByteArrayOutputStream()
+                Bitmap.createScaledBitmap(squareBaseBmp, 320, 320, true)
+                    .compress(Bitmap.CompressFormat.JPEG, 90, inputBaos)
+                val inputB64 = Base64.encodeToString(inputBaos.toByteArray(), Base64.NO_WRAP)
+
+                val modelsToTry = listOf(
+                    "gemini-2.0-flash-exp-image-generation",
+                    "gemini-2.5-flash-image-preview"
+                )
+
+                for (modelName in modelsToTry) {
+                    try {
+                        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
+                        val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            connectTimeout = 15000
+                            readTimeout = 30000
+                            doOutput = true
+                            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                        }
+
+                        val prompt = "Enhance this student ID portrait photo into a clean, bright, studio-lit 1:1 square passport photo. Keep the person's exact facial identity, bone structure, eyes, nose, and expression 100% unchanged. Only improve lighting, clarity, and natural skin tone."
+
+                        val partsArray = JSONArray().apply {
+                            put(JSONObject().put("text", prompt))
+                            put(JSONObject().put("inlineData", JSONObject().apply {
+                                put("mimeType", "image/jpeg")
+                                put("data", inputB64)
+                            }))
+                        }
+
+                        val genConfig = JSONObject().apply {
+                            put("responseModalities", JSONArray().put("TEXT").put("IMAGE"))
+                        }
+
+                        val payload = JSONObject().apply {
+                            put("contents", JSONArray().put(JSONObject().put("parts", partsArray)))
+                            put("generationConfig", genConfig)
+                        }
+
+                        conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                        if (conn.responseCode == 200) {
+                            val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                            val parts = JSONObject(resp)
+                                .optJSONArray("candidates")?.optJSONObject(0)
+                                ?.optJSONObject("content")?.optJSONArray("parts")
+                            if (parts != null) {
+                                for (i in 0 until parts.length()) {
+                                    val p = parts.optJSONObject(i) ?: continue
+                                    val inlineData = p.optJSONObject("inlineData") ?: p.optJSONObject("inline_data")
+                                    if (inlineData != null) {
+                                        val b64Data = inlineData.optString("data", "")
+                                        if (b64Data.length > 100) {
+                                            val decoded = decodeBase64Bitmap(b64Data)
+                                            if (decoded != null) {
+                                                // सुनिश्चित करें कि आउटपुट भी 1:1 स्क्वायर (320x320) ही हो
+                                                val side = min(decoded.width, decoded.height)
+                                                val x = (decoded.width - side) / 2
+                                                val y = (decoded.height - side) / 2
+                                                val sq = Bitmap.createBitmap(decoded, x, y, side, side)
+                                                return Pair(Bitmap.createScaledBitmap(sq, 320, 320, true), true)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {}
+                }
+            }
+        } catch (e: Exception) {}
+
+        // यदि Gemini API से इमेज नहीं मिली, तो विकल्प A (On-Device Studio Filter) का आउटपुट दें
+        return Pair(applyOnDeviceStudioPortraitFilter(squareBaseBmp), false)
+    }
+
+    // ✅ बायोमेट्रिक 192-D डेटा के लिए एक समान फेस अलाइनमेंट
     fun alignAndCropFaceBitmap(source: Bitmap, face: Face): Bitmap {
         var workingBmp = source
-        var box = face.boundingBox
+        val box = face.boundingBox
 
         val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
@@ -266,21 +519,17 @@ object FaceMatcherEngine {
         return Bitmap.createScaledBitmap(cropped, 160, 160, true)
     }
 
-    // ✅ KYC के समय 4-Pass Multi-Scale & Mirror Augmentation से उच्च-सटीकता वाला 192-D वेक्टर निकालें
     fun extractHighPrecisionKycEmbeddingList(alignedFaceBmp: Bitmap): List<Float> {
         val passes = mutableListOf<FloatArray>()
 
-        // Pass 1: मूल अलाइन किया हुआ चेहरा
         computeEmbedding(alignedFaceBmp)?.let { passes.add(it) }
 
-        // Pass 2: हॉरिजॉन्टल मिरर (फ्रंट और बैक कैमरे का अंतर खत्म करने के लिए सबसे ज़रूरी!)
         try {
             val flipMatrix = Matrix().apply { preScale(-1f, 1f) }
             val flipped = Bitmap.createBitmap(alignedFaceBmp, 0, 0, alignedFaceBmp.width, alignedFaceBmp.height, flipMatrix, true)
             computeEmbedding(flipped)?.let { passes.add(it) }
         } catch (e: Exception) {}
 
-        // Pass 3: 4% टाइट सेंटर ज़ूम (कैमरा थोड़ा पास होने की स्थिति के लिए)
         try {
             val w = alignedFaceBmp.width
             val d = (w * 0.04f).toInt()
@@ -352,8 +601,6 @@ object FaceMatcherEngine {
         return dot.coerceIn(-1f, 1f)
     }
 
-    // Cosine Similarity (-1..1) को इंसानी समझ के लिए 0%..100% बायोमेट्रिक स्कोर में बदलें
-    // Cosine 0.58 -> 70%, Cosine 0.70 -> 82%, Cosine 0.85 -> 95%
     private fun cosineToPercentage(cos: Float): Int {
         val mapped = ((cos + 0.12f) / 0.92f) * 100f
         return mapped.roundToInt().coerceIn(0, 99)
@@ -362,7 +609,6 @@ object FaceMatcherEngine {
     private fun buildStudentTemplate(student: Student): StudentBiometricTemplate? {
         val vectors = mutableListOf<FloatArray>()
 
-        // 1. पहले सेव किए गए 192-D बायोमेट्रिक डेटा (stu.embeddings) का सीधा उपयोग करें
         if (student.embeddings.isNotEmpty()) {
             for (savedList in student.embeddings) {
                 if (savedList.size == embeddingDim) {
@@ -375,7 +621,6 @@ object FaceMatcherEngine {
             }
         }
 
-        // 2. यदि किसी छात्र का 192-D वेक्टर अभी नहीं बना है, तो फोटो से बनाएं
         if (vectors.isEmpty() && student.photos.isNotEmpty()) {
             for (b64 in student.photos) {
                 val bmp = decodeBase64Bitmap(b64)
@@ -402,7 +647,6 @@ object FaceMatcherEngine {
             return MatchResult(null, 999f, 0, 0f, false, emptyList())
         }
 
-        // लाइव स्कैन में भी मूल + मिरर दोनों का औसत वेक्टर लें ताकि फ्रंट/बैक कैमरे का कोई फर्क न पड़े
         val livePasses = mutableListOf<FloatArray>()
         computeEmbedding(liveFaceBmp)?.let { livePasses.add(it) }
         try {
@@ -416,7 +660,7 @@ object FaceMatcherEngine {
         }
         val liveVec = averageEmbeddings(livePasses)
 
-        val scoredList = mutableListOf<Triple<Student, Float, Float>>() // Student, Distance, CosineSim
+        val scoredList = mutableListOf<Triple<Student, Float, Float>>()
 
         for (stu in candidates) {
             if (stu.photos.isEmpty() && stu.embeddings.isEmpty()) continue
@@ -445,7 +689,7 @@ object FaceMatcherEngine {
             return MatchResult(null, 999f, 0, 0f, false, emptyList())
         }
 
-        scoredList.sortByDescending { it.third } // उच्चतम Cosine Similarity सबसे ऊपर
+        scoredList.sortByDescending { it.third }
 
         val bestStudent = scoredList[0].first
         val bestDistance = scoredList[0].second
@@ -476,7 +720,6 @@ object FaceMatcherEngine {
         return Pair(detailed.student, detailed.distance)
     }
 
-    // ✅ Online Gemini Vision AI Verification (उम्र, कपड़े, सिंदूर आदि की कोई शर्त नहीं—केवल 100% इंसान के चेहरे का मिलान)
     fun identifyStudentWithGeminiVisionBlocking(
         context: Context,
         liveFaceBmp: Bitmap,
