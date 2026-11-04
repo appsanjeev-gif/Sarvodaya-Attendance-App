@@ -50,16 +50,4 @@
         android:strokeLineCap="round"
         android:pathData="M34,80 L86,80" />
 
-    <!-- स्पष्ट "स.म.वि." देवनागरी अक्षर (Vector Paths ताकि हर फोन पर 100% दिखे) -->
-    <path
-        android:strokeColor="#FDE047"
-        android:strokeWidth="2.6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M24,86 L42,86 M29,86 L29,93 C29,96 25,96 25,93 M29,93 L34,98 M29,92 L37,92 M37,86 L37,98 M49,86 L63,86 M53,86 L53,94 C53,96 50,96 50,93 L59,93 M59,86 L59,98 M71,86 L88,86 M74,86 L74,98 M85,86 L85,98 M85,92 C79,89 79,96 85,94 M74,86 C74,80 85,80 85,86" />
-
-    <!-- बिंदु (स. म. वि.) -->
-    <path
-        android:fillColor="#FDE047"
-        android:pathData="M44,97 A1.7,1.7 0 1,1 43.9,97 Z M66,97 A1.7,1.7 0 1,1 65.9,97 Z M92,97 A1.7,1.7 0 1,1 91.9,97 Z" />
 </vector>
