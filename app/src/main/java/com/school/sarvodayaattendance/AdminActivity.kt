@@ -46,7 +46,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.Face
 import com.school.sarvodayaattendance.data.AppStorage
 import com.school.sarvodayaattendance.data.BackupPayload
 import com.school.sarvodayaattendance.utils.FaceMatcherEngine
@@ -270,12 +269,13 @@ class AdminActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                // 1. DP के लिए AI-Enhanced पूरा पोर्ट्रेट चेहरा
-                val portraitDpBmp = FaceMatcherEngine.createAiEnhancedPortraitDp(frameBmp, primaryFace)
+                // 1. DP के लिए 1:1 स्क्वायर क्रॉप (बिना दबे) + ऑन-डिवाइस स्टूडियो फिल्टर प्रीव्यू
+                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortrait(frameBmp, primaryFace)
+                val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
                 // 2. 192-D बायोमेट्रिक डेटा के लिए अलाइन किया हुआ फेस
                 val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
 
-                showKycPhotoConfirmDialog(portraitDpBmp, alignedBiometricFace, rootContainer, overlay)
+                showKycPhotoConfirmDialog(rawSquareBmp, previewDpBmp, alignedBiometricFace, rootContainer, overlay)
             }
             .addOnFailureListener {
                 Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
@@ -283,16 +283,18 @@ class AdminActivity : AppCompatActivity() {
     }
 
     private fun showKycPhotoConfirmDialog(
-        portraitDpBmp: Bitmap,
+        rawSquareBmp: Bitmap,
+        previewDpBmp: Bitmap,
         alignedBiometricBmp: Bitmap,
         rootContainer: FrameLayout,
         overlay: FrameLayout
     ) {
-        var workingDpBmp = portraitDpBmp
+        var workingRawSquare = rawSquareBmp
+        var workingPreviewDp = previewDpBmp
         var workingBioBmp = alignedBiometricBmp
 
         val imageView = ImageView(this).apply {
-            setImageBitmap(workingDpBmp)
+            setImageBitmap(workingPreviewDp)
             adjustViewBounds = true
             maxHeight = 520
             setPadding(24, 24, 24, 12)
@@ -302,9 +304,10 @@ class AdminActivity : AppCompatActivity() {
             text = "⤵️ फोटो घुमाएं (Rotate)"
             setOnClickListener {
                 val matrix = Matrix().apply { postRotate(90f) }
-                workingDpBmp = Bitmap.createBitmap(workingDpBmp, 0, 0, workingDpBmp.width, workingDpBmp.height, matrix, true)
+                workingRawSquare = Bitmap.createBitmap(workingRawSquare, 0, 0, workingRawSquare.width, workingRawSquare.height, matrix, true)
+                workingPreviewDp = Bitmap.createBitmap(workingPreviewDp, 0, 0, workingPreviewDp.width, workingPreviewDp.height, matrix, true)
                 workingBioBmp = Bitmap.createBitmap(workingBioBmp, 0, 0, workingBioBmp.width, workingBioBmp.height, matrix, true)
-                imageView.setImageBitmap(workingDpBmp)
+                imageView.setImageBitmap(workingPreviewDp)
             }
         }
 
@@ -317,20 +320,29 @@ class AdminActivity : AppCompatActivity() {
         }
 
         AlertDialog.Builder(this)
-            .setTitle("📸 KYC फोटो एवं 192-D बायोमेट्रिक पुष्टि")
+            .setTitle("📸 1:1 KYC फोटो एवं 192-D बायोमेट्रिक पुष्टि")
             .setView(box)
             .setPositiveButton("✔ यह फोटो जोड़ें") { _, _ ->
-                // बिना किसी जल्दबाज़ी के बैकग्राउंड में 192-D बायोमेट्रिक वेक्टर और DP तैयार करें
+                Toast.makeText(this, "⏳ AI स्टूडियो DP एवं 192-D डेटा तैयार हो रहा है...", Toast.LENGTH_SHORT).show()
                 Thread {
+                    // 1. 192-D बायोमेट्रिक वेक्टर प्रोसेस करें
                     val embedding192D = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(workingBioBmp)
 
-                    val scaledDp = Bitmap.createScaledBitmap(workingDpBmp, 260, 260, true)
+                    // 2. पहले विकल्प B (Gemini API) आज़माएं, और यदि न हो तो विकल्प A (On-Device Studio Filter) का उपयोग करें
+                    val (finalDpBmp, usedGeminiCloud) = FaceMatcherEngine.enhancePortraitWithGeminiOrFallbackBlocking(
+                        this@AdminActivity,
+                        workingRawSquare
+                    )
+
+                    // 1:1 Square (300x300) में सेव करें ताकि कभी चपटा न हो
+                    val scaledDp = Bitmap.createScaledBitmap(finalDpBmp, 300, 300, true)
                     val baos = ByteArrayOutputStream()
-                    scaledDp.compress(Bitmap.CompressFormat.JPEG, 86, baos)
+                    scaledDp.compress(Bitmap.CompressFormat.JPEG, 88, baos)
                     val base64Str = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
                     val escapedPhoto = gson.toJson(base64Str)
                     val escapedEmb = gson.toJson(embedding192D)
+                    val modeTag = if (usedGeminiCloud) "Gemini AI Studio" else "Studio Filter"
 
                     runOnUiThread {
                         rootContainer.removeView(overlay)
@@ -338,7 +350,7 @@ class AdminActivity : AppCompatActivity() {
                         webView.evaluateJavascript("onLiveKycPhotoApproved($escapedPhoto, $escapedEmb);", null)
                         Toast.makeText(
                             this@AdminActivity,
-                            "🧬 DP + 192-D बायोमेट्रिक डेटा (${embedding192D.size} पॉइंट्स) तैयार!",
+                            "✔ 1:1 DP ($modeTag) + 192-D डेटा (${embedding192D.size} पॉइंट्स) तैयार!",
                             Toast.LENGTH_SHORT
                         ).show()
                     }
