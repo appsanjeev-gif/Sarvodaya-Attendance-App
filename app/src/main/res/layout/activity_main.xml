@@ -49,7 +49,7 @@
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
-            <!-- स्कूल का नया रॉयल लोगो + नीचे छोटे अक्षरों में स.म.वि. (VIP स्वागत ट्रिगर के साथ) -->
+            <!-- स्कूल का रॉयल लोगो (ic_school_logo में स.म.वि. इन-बिल्ट है, इसलिए डुप्लीकेट TextView हटा दिया गया है) -->
             <FrameLayout
                 android:id="@+id/logoVipTrigger"
                 android:layout_width="46dp"
@@ -60,17 +60,6 @@
                     android:layout_height="match_parent"
                     android:src="@drawable/ic_school_logo"
                     android:scaleType="fitCenter" />
-
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_gravity="bottom|center_horizontal"
-                    android:layout_marginBottom="3dp"
-                    android:gravity="center"
-                    android:text="स.म.वि."
-                    android:textColor="#FDE047"
-                    android:textSize="7.5sp"
-                    android:textStyle="bold" />
             </FrameLayout>
 
             <LinearLayout
@@ -122,7 +111,7 @@
             android:textStyle="bold"
             android:visibility="gone" />
 
-        <!-- Live School Ticker Row (लाइव स्कैन + लाइव उपस्थिति काउंटर) -->
+        <!-- Live School Ticker Row -->
         <LinearLayout
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -173,7 +162,7 @@
         android:background="#E60F172A"
         android:padding="14dp">
 
-        <!-- स्कैन रिजल्ट कार्ड (छात्र की रजिस्टर्ड बायोमेट्रिक फोटो के साथ) -->
+        <!-- स्कैन रिजल्ट कार्ड -->
         <LinearLayout
             android:id="@+id/resultCardBox"
             android:layout_width="match_parent"
@@ -185,7 +174,6 @@
             android:padding="12dp"
             android:visibility="gone">
 
-            <!-- बाईं तरफ छात्र की रजिस्टर्ड फोटो -->
             <ImageView
                 android:id="@+id/ivResultStudentPhoto"
                 android:layout_width="68dp"
