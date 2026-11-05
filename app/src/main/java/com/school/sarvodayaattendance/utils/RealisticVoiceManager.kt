@@ -40,26 +40,34 @@ object AiDiagnosticLogger {
         return SimpleDateFormat("dd.MM hh:mm:ss a", Locale.US).format(Date())
     }
 
-    fun parseElevenLabsErrorDetail(httpCode: Int, rawErrBody: String): String {
+    fun parseElevenLabsErrorDetail(errBody: String, httpCode: Int): String {
         return try {
-            val detailObj = JSONObject(rawErrBody).optJSONObject("detail")
-            val status = detailObj?.optString("status", "") ?: ""
-            val msg = detailObj?.optString("message", "") ?: ""
-            when {
-                status.contains("unusual_activity", ignoreCase = true) || msg.contains("Unusual activity", ignoreCase = true) ->
-                    "ElevenLabs ने आपके मोबाइल नेटवर्क/IP पर Free Tier रोका है (unusual_activity_detected)"
-                status.contains("missing_permissions", ignoreCase = true) || msg.contains("missing the permission", ignoreCase = true) ->
-                    "इस Key में 'Text to Speech' की अनुमति बंद है (ElevenLabs में नई Full-Access Key बनाएं)"
-                status.contains("quota_exceeded", ignoreCase = true) ->
-                    "ElevenLabs का मासिक करैक्टर कोटा समाप्त हो गया है"
-                msg.isNotBlank() ->
-                    "HTTP $httpCode ($status): ${msg.take(75)}"
-                else ->
-                    "ElevenLabs अस्वीकृत (HTTP $httpCode)"
+            val root = JSONObject(errBody)
+            val detailObj = root.optJSONObject("detail")
+            if (detailObj != null) {
+                val status = detailObj.optString("status", "")
+                val msg = detailObj.optString("message", "")
+                when {
+                    status.contains("missing_permissions", ignoreCase = true) ->
+                        "Key में 'Text to Speech' परमिशन बंद है (ElevenLabs में नई Key बनाते समय Text-to-Speech चालू करें)"
+                    status.contains("unusual_activity", ignoreCase = true) ->
+                        "ElevenLabs ने Free-Tier पर मोबाइल IP/VPN ब्लॉक लगाया है (unusual_activity_detected)"
+                    status.contains("quota_exceeded", ignoreCase = true) ->
+                        "ElevenLabs के अक्षरों की लिमिट समाप्त हो गई है (quota_exceeded)"
+                    msg.isNotBlank() ->
+                        "HTTP $httpCode ($status): ${msg.take(90)}"
+                    else ->
+                        "HTTP $httpCode: ${errBody.take(80)}"
+                }
+            } else {
+                "HTTP $httpCode: ${errBody.take(80).ifBlank { "अज्ञात सर्वर त्रुटि" }}"
             }
         } catch (e: Exception) {
-            if (httpCode == 401) "ElevenLabs HTTP 401 (Key में Text-to-Speech अनुमति बंद है या नेटवर्क IP ब्लॉक है)"
-            else "ElevenLabs सर्वर कोड: $httpCode"
+            if (httpCode == 401) {
+                "HTTP 401: Key में Text-to-Speech अनुमति बंद है या गलत Key है"
+            } else {
+                "HTTP $httpCode: ${errBody.take(65)}"
+            }
         }
     }
 
@@ -150,30 +158,31 @@ object AiDiagnosticLogger {
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                 }
-                val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", "OK")))))
+                val body = JSONObject().put("contents", JSONArray().put(JSONObject().put("parts", JSONArray().put(JSONObject().put("text", "Reply OK")))))
                 conn.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
                 val code = conn.responseCode
                 if (code == 200) {
-                    status = "✅ सक्रिय (Active)"
-                    detail = "Gemini 2.5 Flash तैयार है"
-                    recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "✅ सक्रिय", "Gemini Key लाइव जांच में सफल")
+                    status = "✅ Key चालू है (Active)"
+                    detail = "HTTP 200 • Gemini 2.5 Flash तैयार है"
+                    recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "✅ सक्रिय", "Gemini API Key लाइव जांच में सफल")
                 } else {
+                    val errTxt = try { conn.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
                     status = "❌ त्रुटि (HTTP $code)"
                     detail = when (code) {
-                        400 -> "Key गलत है (Invalid Key)"
-                        403 -> "अनुमति नहीं है (Forbidden)"
-                        429 -> "दैनिक कोटा समाप्त (HTTP 429)"
-                        else -> "सर्वर कोड $code"
+                        400 -> "Key गलत है या निष्क्रिय है (Invalid Key)"
+                        403 -> "इस Key पर अनुमति नहीं है (Forbidden)"
+                        429 -> "आज की फ्री लिमिट समाप्त (Quota Exceeded 429)"
+                        else -> "सर्वर कोड $code: ${errTxt.take(60)}"
                     }
                 }
             } catch (e: UnknownHostException) {
-                status = "❌ इंटरनेट बंद"
-                detail = "डेटा या वाई-फाई चालू करें"
+                status = "❌ इंटरनेट बंद है"
+                detail = "मोबाइल डेटा या वाई-फाई चालू नहीं है"
             } catch (e: SocketTimeoutException) {
                 status = "⚠️ नेटवर्क धीमा"
-                detail = "कनेक्शन टाइमआउट"
+                detail = "इंटरनेट बहुत स्लो है (Connection Timeout)"
             } catch (e: Exception) {
-                status = "❌ त्रुटि"
+                status = "❌ कनेक्शन त्रुटि"
                 detail = e.javaClass.simpleName
             }
             geminiResults.put(JSONObject().apply {
@@ -185,21 +194,23 @@ object AiDiagnosticLogger {
 
         val elevenResults = JSONArray()
         for (k in eKeys) {
-            val masked = if (k.length > 10) "${k.take(6)}••••••••${k.takeLast(4)}" else k
+            val cleanKey = k.trim()
+            val masked = if (cleanKey.length > 10) "${cleanKey.take(6)}••••••••${cleanKey.takeLast(4)}" else cleanKey
             var status = "❌ अमान्य"
             var detail = ""
             try {
-                val subUrl = "https://api.elevenlabs.io/v1/user/subscription"
-                val subConn = (URL(subUrl).openConnection() as HttpURLConnection).apply {
+                val url = "https://api.elevenlabs.io/v1/user/subscription"
+                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
                     connectTimeout = 6000
                     readTimeout = 7000
-                    setRequestProperty("xi-api-key", k)
+                    setRequestProperty("xi-api-key", cleanKey)
+                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile")
                 }
-                val subCode = subConn.responseCode
-                var quotaText = ""
-                if (subCode == 200) {
-                    val resp = subConn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                val code = conn.responseCode
+                if (code == 200) {
+                    val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                     val sub = JSONObject(resp)
                     val tier = sub.optString("tier", "free").uppercase()
                     val used = sub.optInt("character_count", 0)
@@ -209,28 +220,22 @@ object AiDiagnosticLogger {
                     val resetDate = if (nextUnix > 0L) {
                         SimpleDateFormat("dd MMM yyyy", Locale.US).format(Date(nextUnix * 1000L))
                     } else "-"
-                    quotaText = "बचे अक्षर: $rem / $limit (Tier: $tier) | Reset: $resetDate"
-                }
-
-                // अब वास्तविक Text-to-Speech (TTS) परमिशन व ऑडियो जनरेशन की लाइव जांच करें
-                val ttsTest = vm.testElevenLabsTtsLive(k)
-                if (ttsTest.first) {
-                    status = "✅ वॉइस चालू है (TTS Active)"
-                    detail = if (quotaText.isNotEmpty()) quotaText else "ElevenLabs ऑडियो जनरेशन सफल"
-                    recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", detail)
+                    status = "✅ Key चालू है (Active • Tier: $tier)"
+                    detail = "बची हुई लिमिट: $rem / $limit chars (Used: $used) | अगली Reset: $resetDate"
+                    recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", "बचे हुए अक्षर: $rem / $limit")
                 } else {
-                    status = "⚠️ TTS अवरुद्ध (${ttsTest.second})"
-                    detail = if (quotaText.isNotEmpty()) "$quotaText\nकारण: ${ttsTest.third}" else ttsTest.third
-                    recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "❌ ElevenLabs विफल", ttsTest.third)
+                    val errBody = try { conn.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
+                    status = "❌ त्रुटि (HTTP $code)"
+                    detail = parseElevenLabsErrorDetail(errBody, code)
                 }
             } catch (e: UnknownHostException) {
-                status = "❌ इंटरनेट बंद"
-                detail = "मोबाइल डेटा या वाई-फाई चालू करें"
+                status = "❌ इंटरनेट बंद है"
+                detail = "मोबाइल डेटा या वाई-फाई चालू नहीं है"
             } catch (e: SocketTimeoutException) {
                 status = "⚠️ नेटवर्क धीमा"
-                detail = "कनेक्शन टाइमआउट"
+                detail = "इंटरनेट बहुत स्लो है (Timeout)"
             } catch (e: Exception) {
-                status = "❌ त्रुटि"
+                status = "❌ कनेक्शन त्रुटि"
                 detail = e.javaClass.simpleName
             }
             elevenResults.put(JSONObject().apply {
@@ -255,9 +260,6 @@ class RealisticVoiceManager(private val context: Context) {
 
     private val geminiKeyIndex = AtomicInteger(0)
     private val elevenKeyIndex = AtomicInteger(0)
-
-    @Volatile
-    private var cachedDynamicElevenVoiceId: String? = null
 
     fun getGeminiKeysString(): String {
         val dedicated = prefs.getString("custom_gemini_only_keys", null)
@@ -301,14 +303,12 @@ class RealisticVoiceManager(private val context: Context) {
             .putString("custom_gemini_api_key", combined)
             .apply()
 
-        cachedDynamicElevenVoiceId = null
-
         AiDiagnosticLogger.recordEvent(
             appCtx,
             "VOICE",
             "4. AI मानवीय आवाज़ (TTS)",
-            "🔄 Keys सेव",
-            "Gemini: ${if (gClean.isEmpty()) 0 else gClean.lines().size}, ElevenLabs: ${if (eClean.isEmpty()) 0 else eClean.lines().size}"
+            "🔄 Keys अपडेट की गईं",
+            "Gemini Keys: ${if (gClean.isEmpty()) 0 else gClean.lines().size}, ElevenLabs Keys: ${if (eClean.isEmpty()) 0 else eClean.lines().size}"
         )
 
         rollingCacheExecutor.execute {
@@ -362,9 +362,10 @@ class RealisticVoiceManager(private val context: Context) {
         AiVoiceProfile(
             name = "Sadachbia",
             elevenVoiceIds = listOf(
-                "21m00Tcm4TlvDq8ikWAM", // Rachel (Default Premade Free Voice)
-                "pNInz6obpgDQGcFmaJgB", // Adam (Default Premade Free Voice)
-                "EXAVITQu4vr4xnSDxMaL"  // Sarah
+                "21m00Tcm4TlvDq8ikWAM", // Rachel (Default Free Premade)
+                "pNInz6obpgDQGcFmaJgB", // Adam (Default Free Premade)
+                "onwK4e9ZLuTAKqWW03F9", // Daniel
+                "JBFqnCBsd6RMkjVDRZzb"  // George
             ),
             stylePrompt = "Speak like an energetic, proud, warm Indian Hindi radio RJ host with a natural smile and lively pace:"
         ),
@@ -373,6 +374,7 @@ class RealisticVoiceManager(private val context: Context) {
             elevenVoiceIds = listOf(
                 "21m00Tcm4TlvDq8ikWAM", // Rachel
                 "AZnzlk1XvdvUeBnXmlld", // Domi
+                "EXAVITQu4vr4xnSDxMaL", // Sarah
                 "pNInz6obpgDQGcFmaJgB"  // Adam
             ),
             stylePrompt = "Speak like a cheerful, bright, inspiring Indian Hindi female radio RJ announcer with warmth and pride:"
@@ -400,47 +402,6 @@ class RealisticVoiceManager(private val context: Context) {
 
     init {
         maintainTwoHourRollingWelcomeCache()
-    }
-
-    // ElevenLabs अकाउंट से उपलब्ध पहली वैध Voice ID अपने-आप प्राप्त करना
-    private fun fetchAvailableAccountVoiceId(elevenKey: String): String? {
-        cachedDynamicElevenVoiceId?.let { return it }
-        return try {
-            val conn = (URL("https://api.elevenlabs.io/v1/voices").openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = 6000
-                readTimeout = 6000
-                setRequestProperty("xi-api-key", elevenKey.trim())
-            }
-            if (conn.responseCode == 200) {
-                val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                val voices = JSONObject(resp).optJSONArray("voices")
-                if (voices != null && voices.length() > 0) {
-                    val vId = voices.optJSONObject(0)?.optString("voice_id", "") ?: ""
-                    if (vId.isNotBlank()) {
-                        cachedDynamicElevenVoiceId = vId
-                        return vId
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    // लाइव चेक बटन के लिए वास्तविक TTS टेस्ट
-    fun testElevenLabsTtsLive(elevenKey: String): Triple<Boolean, String, String> {
-        val (bytes, code, reason) = fetchElevenLabsMp3WithFallback(
-            "नमस्ते",
-            listOf("21m00Tcm4TlvDq8ikWAM", "pNInz6obpgDQGcFmaJgB"),
-            elevenKey
-        )
-        return if (bytes != null && bytes.size > 500) {
-            Triple(true, "HTTP 200", "OK")
-        } else {
-            Triple(false, "HTTP $code", reason)
-        }
     }
 
     private fun getCurrentTwoHourSlot(): Long {
@@ -493,7 +454,7 @@ class RealisticVoiceManager(private val context: Context) {
             val (pcmBytes, code, errReason) = fetchGoogleAiStudioTtsPcm(welcomeText, profile, geminiPool[idx])
             if (pcmBytes != null && pcmBytes.size > 2000) {
                 writeFileAtomically(targetPcm, pcmBytes)
-                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ Gemini TTS सक्रिय", "स्वागत ऑडियो तैयार")
+                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ Gemini TTS सक्रिय", "स्वागत ऑडियो सफलतापूर्वक तैयार हुआ")
                 return true
             } else {
                 AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "⚠️ Gemini TTS विफल", errReason)
@@ -507,7 +468,7 @@ class RealisticVoiceManager(private val context: Context) {
             val (mp3Bytes, code, errReason) = fetchElevenLabsMp3WithFallback(welcomeText, profile.elevenVoiceIds, elevenPool[idx])
             if (mp3Bytes != null && mp3Bytes.size > 1000) {
                 writeFileAtomically(targetMp3, mp3Bytes)
-                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", "स्वागत ऑडियो तैयार")
+                AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", "ElevenLabs से स्वागत ऑडियो तैयार हुआ")
                 return true
             } else {
                 AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "❌ ElevenLabs विफल", errReason)
@@ -528,10 +489,10 @@ class RealisticVoiceManager(private val context: Context) {
         }
 
         val styles = listOf(
-            "प्रेरणादायक और जोशपूर्ण",
-            "हाई-टेक डिजिटल स्मार्ट कैंपस",
-            "बच्चों और शिक्षकों से आत्मीय संवाद",
-            "अनुशासन, मुस्कान और गर्व से भरा"
+            "प्रेरणादायक और जोशपूर्ण (Motivational & Energetic)",
+            "हाई-टेक डिजिटल स्मार्ट कैंपस (Modern Digital Campus)",
+            "बच्चों और शिक्षकों से आत्मीय संवाद (Warm Student-Teacher Connect)",
+            "अनुशासन, मुस्कान और गर्व से भरा (Proud & Disciplined)"
         )
         val chosenStyle = styles[(slotId % styles.size).toInt().let { if (it < 0) -it else it }]
 
@@ -552,7 +513,7 @@ class RealisticVoiceManager(private val context: Context) {
                     विद्यालय का नाम: "सर्वोदय मध्य विद्यालय, सोहसराय"।
                     अभिवादन शब्द: "$greetingWord"।
                     अंदाज़: $chosenStyle।
-                    नियम: केवल 18 से 24 शब्दों में एक नया, आकर्षक रेडियो एंकर जैसा हिंदी स्वागत वाक्य लिखें जो छात्रों को कैमरे के सामने मुस्कुराकर स्मार्ट उपस्थिति दर्ज कराने के लिए प्रेरित करे। केवल शुद्ध वाक्य लौटाएं। (Slot: $slotId)
+                    नियम: केवल 18 से 24 शब्दों में एक नया, आकर्षक रेडियो एंकर जैसा हिंदी स्वागत वाक्य लिखें जो छात्रों को कैमरे के सामने मुस्कुराकर स्मार्ट उपस्थिति दर्ज कराने के लिए प्रेरित करे। केवल शुद्ध वाक्य लौटाएं, कोई कोट्स या अतिरिक्त शब्द न लिखें। (Slot: $slotId)
                 """.trimIndent()
 
                 val payload = JSONObject().apply {
@@ -571,17 +532,21 @@ class RealisticVoiceManager(private val context: Context) {
                         ?.optString("text", "")?.trim()
                         ?.replace("\"", "")?.replace("*", "")?.replace("\n", " ") ?: ""
                     if (text.length in 25..220 && text.contains("सर्वोदय")) {
-                        AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "✅ सफल (Gemini)", "\"${text.take(45)}...\"")
+                        AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "✅ सफल (Gemini)", "नया स्लोगन: \"${text.take(45)}...\"")
                         return text
                     }
                 } else {
-                    AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ डिफ़ॉल्ट स्लोगन", "Gemini HTTP $code")
+                    AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ डिफ़ॉल्ट स्लोगन", "Gemini HTTP $code के कारण इन-बिल्ट स्लोगन चुना गया")
                 }
+            } catch (e: UnknownHostException) {
+                AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ ऑफलाइन स्लोगन", "इंटरनेट बंद होने से इन-बिल्ट स्लोगन चलाया गया")
+            } catch (e: SocketTimeoutException) {
+                AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ ऑफलाइन स्लोगन", "नेटवर्क धीमा (Timeout) होने से इन-बिल्ट स्लोगन चलाया गया")
             } catch (e: Exception) {
-                AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "ℹ️ इन-बिल्ट स्लोगन", "ऑफलाइन स्लोगन सक्रिय")
+                AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "⚠️ ऑफलाइन स्लोगन", "त्रुटि (${e.javaClass.simpleName}) के कारण इन-बिल्ट स्लोगन चला")
             }
         } else {
-            AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "ℹ️ इन-बिल्ट स्लोगन", "इन-बिल्ट हिंदी स्लोगन तैयार")
+            AiDiagnosticLogger.recordEvent(appCtx, "SLOGAN", "5. दैनिक AI स्लोगन", "ℹ️ इन-बिल्ट स्लोगन", "Google Gemini Key नहीं डली है — इन-बिल्ट हिंदी स्लोगन तैयार")
         }
 
         val fallbackTemplates = listOf(
@@ -743,15 +708,15 @@ class RealisticVoiceManager(private val context: Context) {
         val mp3CacheFile = File(voiceCacheDir, "${md5Hash("eleven_mp3_$text")}.mp3")
 
         if (file1.exists() && file1.length() > 2000) {
-            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (PCM)", "सेव की गई आवाज़ चलाई गई")
+            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (PCM)", "सेव की गई मानवीय आवाज़ तुरंत चलाई गई")
             if (playRawPcm24kHz(file1.readBytes(), boostFactor)) return
         }
         if (file2.exists() && file2.length() > 2000) {
-            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (PCM)", "सेव की गई आवाज़ चलाई गई")
+            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (PCM)", "सेव की गई मानवीय आवाज़ तुरंत चलाई गई")
             if (playRawPcm24kHz(file2.readBytes(), boostFactor)) return
         }
         if (mp3CacheFile.exists() && mp3CacheFile.length() > 1000) {
-            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (MP3)", "सेव की गई ElevenLabs आवाज़ चलाई गई")
+            AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (ElevenLabs)", "सेव की गई ElevenLabs आवाज़ तुरंत चलाई गई")
             if (playMp3File(mp3CacheFile)) return
         }
 
@@ -763,8 +728,8 @@ class RealisticVoiceManager(private val context: Context) {
                 appCtx,
                 "VOICE",
                 "4. AI मानवीय आवाज़ (TTS)",
-                "❌ कोई Key नहीं",
-                "कोई API Key सेव नहीं है"
+                "❌ कोई API Key नहीं",
+                "न तो Gemini Key डली है और न ही ElevenLabs Key (ऑफलाइन रोबोटिक TTS बंद रखा गया है)"
             )
             isCurrentlySpeaking = false
             return
@@ -778,10 +743,10 @@ class RealisticVoiceManager(private val context: Context) {
                 val (pcmBytes, errCode, errReason) = fetchGoogleAiStudioTtsPcm(text, chosenVoice, candidateKey)
                 if (pcmBytes != null && pcmBytes.size > 2000) {
                     writeFileAtomically(file1, pcmBytes)
-                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ सफल (Gemini TTS)", "आवाज़ सफलतापूर्वक चली")
+                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ सफल (Gemini TTS)", "Google AI Studio आवाज़ सफलतापूर्वक चली")
                     if (playRawPcm24kHz(pcmBytes, boostFactor)) return
                 } else {
-                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "⚠️ Gemini विफल", errReason)
+                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "⚠️ Gemini TTS विफल", errReason)
                 }
                 if (errCode != 429 && errCode != 400 && errCode != 403) break
             }
@@ -795,7 +760,7 @@ class RealisticVoiceManager(private val context: Context) {
                 val (mp3Bytes, errCode, errReason) = fetchElevenLabsMp3WithFallback(text, chosenVoice.elevenVoiceIds, candidateKey)
                 if (mp3Bytes != null && mp3Bytes.size > 1000) {
                     writeFileAtomically(mp3CacheFile, mp3Bytes)
-                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ सफल (ElevenLabs)", "आवाज़ सफलतापूर्वक चली")
+                    AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ सफल (ElevenLabs)", "ElevenLabs मानवीय आवाज़ सफलतापूर्वक चली")
                     if (playMp3File(mp3CacheFile)) return
                 } else {
                     AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "❌ ElevenLabs विफल", errReason)
@@ -866,18 +831,18 @@ class RealisticVoiceManager(private val context: Context) {
                 } else {
                     lastReason = when (lastHttpCode) {
                         400 -> "Gemini Key अमान्य है (HTTP 400)"
-                        403 -> "अनुमति नहीं है (HTTP 403)"
-                        429 -> "Gemini TTS कोटा समाप्त (HTTP 429)"
-                        else -> "Gemini सर्वर कोड $lastHttpCode"
+                        403 -> "Gemini Key पर अनुमति नहीं है (HTTP 403)"
+                        429 -> "Gemini TTS का दैनिक कोटा पूरा हो गया (HTTP 429)"
+                        else -> "Gemini सर्वर त्रुटि (HTTP $lastHttpCode)"
                     }
                     if (lastHttpCode == 400 || lastHttpCode == 403 || lastHttpCode == 429) {
                         break
                     }
                 }
             } catch (e: UnknownHostException) {
-                lastReason = "इंटरनेट बंद है"
+                lastReason = "मोबाइल का इंटरनेट बंद है (No Internet)"
             } catch (e: SocketTimeoutException) {
-                lastReason = "इंटरनेट धीमा है (Timeout)"
+                lastReason = "इंटरनेट बहुत धीमा है (Connection Timeout)"
             } catch (e: Exception) {
                 lastReason = "नेटवर्क त्रुटि: ${e.javaClass.simpleName}"
             }
@@ -890,18 +855,12 @@ class RealisticVoiceManager(private val context: Context) {
         voiceIds: List<String>,
         elevenApiKey: String
     ): Triple<ByteArray?, Int, String> {
-        val cleanKey = elevenApiKey.trim()
-        val dynamicVoice = fetchAvailableAccountVoiceId(cleanKey)
-        val combinedVoices = LinkedHashSet<String>().apply {
-            if (!dynamicVoice.isNullOrBlank()) add(dynamicVoice)
-            addAll(voiceIds)
-        }.toList()
-
+        val cleanKey = elevenApiKey.trim().replace("\"", "").replace("'", "")
         val models = listOf("eleven_multilingual_v2", "eleven_flash_v2_5", "eleven_turbo_v2_5")
         var lastCode = 0
         var lastReason = "अज्ञात त्रुटि"
 
-        for (vId in combinedVoices) {
+        for (vId in voiceIds) {
             for (modelId in models) {
                 try {
                     val endpoint = "https://api.elevenlabs.io/v1/text-to-speech/$vId"
@@ -913,7 +872,7 @@ class RealisticVoiceManager(private val context: Context) {
                         setRequestProperty("xi-api-key", cleanKey)
                         setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                         setRequestProperty("Accept", "audio/mpeg")
-                        setRequestProperty("User-Agent", "Mozilla/5.0 (Android 14; Mobile)")
+                        setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36")
                     }
 
                     val payload = JSONObject().apply {
@@ -921,7 +880,7 @@ class RealisticVoiceManager(private val context: Context) {
                         put("model_id", modelId)
                         put("voice_settings", JSONObject().apply {
                             put("stability", 0.50)
-                            put("similarity_boost", 0.75)
+                            put("similarity_boost", 0.78)
                         })
                     }
 
@@ -932,30 +891,26 @@ class RealisticVoiceManager(private val context: Context) {
                     lastCode = conn.responseCode
                     if (lastCode == 200) {
                         val bytes = conn.inputStream.readBytes()
-                        if (bytes.size > 500) {
+                        if (bytes.size > 1000) {
                             return Triple(bytes, 200, "OK")
                         }
-                        lastReason = "छोटी ऑडियो प्राप्त हुई"
+                        lastReason = "ElevenLabs से बहुत छोटी ऑडियो प्राप्त हुई"
                     } else {
                         val errBody = try { conn.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
-                        lastReason = AiDiagnosticLogger.parseElevenLabsErrorDetail(lastCode, errBody)
+                        lastReason = AiDiagnosticLogger.parseElevenLabsErrorDetail(errBody, lastCode)
 
-                        // यदि Key में परमिशन नहीं है या IP पर Free Tier ब्लॉक है, तो बार-बार लूप न चलाएं
-                        if (errBody.contains("missing_permissions", ignoreCase = true) ||
-                            errBody.contains("unusual_activity", ignoreCase = true) ||
-                            errBody.contains("invalid_api_key", ignoreCase = true)
-                        ) {
+                        if (lastCode == 401 && (errBody.contains("missing_permissions", ignoreCase = true) || errBody.contains("invalid", ignoreCase = true))) {
                             return Triple(null, lastCode, lastReason)
                         }
-
-                        if (lastCode == 402 || errBody.contains("voice", ignoreCase = true)) {
+                        if (lastCode == 402 || lastCode == 403 || errBody.contains("voice", ignoreCase = true)) {
                             break
                         }
                     }
                 } catch (e: UnknownHostException) {
-                    return Triple(null, 0, "इंटरनेट बंद है (No Internet)")
+                    lastReason = "मोबाइल का इंटरनेट बंद है (No Internet)"
+                    return Triple(null, 0, lastReason)
                 } catch (e: SocketTimeoutException) {
-                    lastReason = "इंटरनेट धीमा है (ElevenLabs Timeout)"
+                    lastReason = "इंटरनेट बहुत धीमा है (ElevenLabs Timeout)"
                 } catch (e: Exception) {
                     lastReason = "कनेक्शन त्रुटि: ${e.javaClass.simpleName}"
                 }
