@@ -28,7 +28,9 @@ import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
@@ -95,7 +97,16 @@ object FaceMatcherEngine {
                         afd.startOffset,
                         afd.declaredLength
                     )
-                    if (setupInterpreter(mapped)) return
+                    if (setupInterpreter(mapped)) {
+                        AiDiagnosticLogger.recordEvent(
+                            appCtx,
+                            "TFLITE",
+                            "1. 192-D बायोमेट्रिक इंजन (Offline)",
+                            "✅ सक्रिय ($embeddingDim-D)",
+                            "मॉडल ($name) मेमोरी में सफलतापूर्वक लोड है"
+                        )
+                        return
+                    }
                 }
             } catch (e: Exception) {
                 try {
@@ -108,12 +119,28 @@ object FaceMatcherEngine {
                     if (cacheFile.exists() && cacheFile.length() > 500_000L) {
                         FileInputStream(cacheFile).use { fis ->
                             val mapped = fis.channel.map(FileChannel.MapMode.READ_ONLY, 0, cacheFile.length())
-                            if (setupInterpreter(mapped)) return
+                            if (setupInterpreter(mapped)) {
+                                AiDiagnosticLogger.recordEvent(
+                                    appCtx,
+                                    "TFLITE",
+                                    "1. 192-D बायोमेट्रिक इंजन (Offline)",
+                                    "✅ सक्रिय ($embeddingDim-D)",
+                                    "मॉडल ($name) कैश मेमोरी से लोड है"
+                                )
+                                return
+                            }
                         }
                     }
                 } catch (ex: Exception) {}
             }
         }
+        AiDiagnosticLogger.recordEvent(
+            appCtx,
+            "TFLITE",
+            "1. 192-D बायोमेट्रिक इंजन (Offline)",
+            "❌ लोड विफल",
+            "APK के assets में .tflite मॉडल नहीं मिला"
+        )
     }
 
     private fun setupInterpreter(mapped: MappedByteBuffer): Boolean {
@@ -163,18 +190,15 @@ object FaceMatcherEngine {
         }
     }
 
-    // ✅ मुख्य स्क्रीन के रिजल्ट कार्ड के लिए राउंडेड कॉर्नर + डबल बॉर्डर फ्रेम वाली DP बनाना
     fun createFramedResultCardBitmap(src: Bitmap): Bitmap {
         val size = 240
         val scaled = Bitmap.createScaledBitmap(src, size, size, true)
         val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
 
-        val outerRect = RectF(0f, 0f, size.toFloat(), size.toFloat())
         val innerPhotoRect = RectF(10f, 10f, (size - 10).toFloat(), (size - 10).toFloat())
         val cornerRad = 34f
 
-        // 1. फोटो को राउंडेड बॉक्स में क्लिप करें
         val maskPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.WHITE
             style = Paint.Style.FILL
@@ -186,7 +210,6 @@ object FaceMatcherEngine {
         photoCanvas.drawBitmap(scaled, null, innerPhotoRect, maskPaint)
         canvas.drawBitmap(photoLayer, 0f, 0f, null)
 
-        // 2. अंदर की सफेद चमकदार रिंग
         val innerBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = 4f
@@ -194,7 +217,6 @@ object FaceMatcherEngine {
         }
         canvas.drawRoundRect(innerPhotoRect, cornerRad - 6f, cornerRad - 6f, innerBorderPaint)
 
-        // 3. बाहर का गाढ़ा स्टील-ब्लू रॉयल राउंडेड फ्रेम (जैसा चित्र में दिखाया गया है)
         val outerBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = 7f
@@ -234,11 +256,9 @@ object FaceMatcherEngine {
         return Pair(true, "OK")
     }
 
-    // ✅ True 1:1 Square Aspect-Locked Crop (जिससे फोटो ऊपर-नीचे या दाएं-बाएं से 1% भी न दबे)
     fun cropTrueSquarePortrait(source: Bitmap, face: Face): Bitmap {
         val box = face.boundingBox
         val cx = box.centerX()
-        // सिर के बाल और कंधे का संतुलित भाग लेने के लिए केंद्र को हल्का सा (4%) ऊपर रखें
         val cy = (box.centerY() - (box.height() * 0.04f)).toInt()
 
         val desiredSide = (max(box.width(), box.height()) * 1.62f).toInt()
@@ -262,14 +282,12 @@ object FaceMatcherEngine {
         return Bitmap.createScaledBitmap(squareCrop, 320, 320, true)
     }
 
-    // ✅ विकल्प A: On-Device Multi-Stage Studio Portrait Enhancement (Auto-Histogram + Skin Smooth + Detail Sharpen)
     fun applyOnDeviceStudioPortraitFilter(squareBmp: Bitmap): Bitmap {
         val w = squareBmp.width
         val h = squareBmp.height
         val pixels = IntArray(w * h)
         squareBmp.getPixels(pixels, 0, w, 0, 0, w, h)
 
-        // Step 1: Auto-Exposure & Dynamic Contrast Stretching (चेहरे का अंधेरापन दूर करने के लिए)
         var minLum = 255
         var maxLum = 0
         var sumLum = 0L
@@ -283,7 +301,6 @@ object FaceMatcherEngine {
             sumLum += lum
         }
         val avgLum = (sumLum / pixels.size).toInt()
-        // अंधेरे फोटो को ज़्यादा ब्राइट करें, सामान्य फोटो को संतुलित रखें
         val gamma = when {
             avgLum < 95 -> 0.76
             avgLum < 125 -> 0.86
@@ -299,7 +316,6 @@ object FaceMatcherEngine {
         for (i in 0..255) {
             val norm = ((i - lowCut).coerceAtLeast(0) / range).coerceIn(0.0, 1.0)
             val curved = Math.pow(norm, gamma)
-            // S-Curve gentle studio contrast
             val sCurve = curved * curved * (3.0 - 2.0 * curved)
             val blended = (curved * 0.65 + sCurve * 0.35) * 255.0
             lut[i] = blended.roundToInt().coerceIn(0, 255)
@@ -312,7 +328,6 @@ object FaceMatcherEngine {
             var g = lut[(px shr 8) and 0xFF]
             var b = lut[px and 0xFF]
 
-            // Natural Studio Warmth (हल्का गुलाबी/गोल्डन निखार)
             r = (r * 1.03f + 3f).toInt().coerceIn(0, 255)
             g = (g * 1.01f + 1f).toInt().coerceIn(0, 255)
             b = (b * 0.99f).toInt().coerceIn(0, 255)
@@ -320,9 +335,8 @@ object FaceMatcherEngine {
             exposedPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
 
-        // Step 2: Edge-Preserving Bilateral Skin Smoothing + Eye/Edge Sharpening
         val finalPixels = exposedPixels.clone()
-        val thresholdDiff = 26 // केवल त्वचा के दाने स्मूथ हों, आँखें/बाल शार्प रहें
+        val thresholdDiff = 26
 
         for (y in 1 until h - 1) {
             for (x in 1 until w - 1) {
@@ -363,7 +377,6 @@ object FaceMatcherEngine {
                 val outG: Int
                 val outB: Int
                 if (edgeDiff > 55) {
-                    // आँख, भौंह और होंठ की रेखाओं को हल्का शार्प करें
                     val avgN_R = ((neighbors[0] shr 16 and 0xFF) + (neighbors[1] shr 16 and 0xFF) + (neighbors[2] shr 16 and 0xFF) + (neighbors[3] shr 16 and 0xFF)) shr 2
                     val avgN_G = ((neighbors[0] shr 8 and 0xFF) + (neighbors[1] shr 8 and 0xFF) + (neighbors[2] shr 8 and 0xFF) + (neighbors[3] shr 8 and 0xFF)) shr 2
                     val avgN_B = ((neighbors[0] and 0xFF) + (neighbors[1] and 0xFF) + (neighbors[2] and 0xFF) + (neighbors[3] and 0xFF)) shr 2
@@ -371,7 +384,6 @@ object FaceMatcherEngine {
                     outG = (cg + ((cg - avgN_G) * 0.28f).toInt()).coerceIn(0, 255)
                     outB = (cb + ((cb - avgN_B) * 0.28f).toInt()).coerceIn(0, 255)
                 } else {
-                    // त्वचा को स्मूथ करें
                     outR = (sumR / weightSum).coerceIn(0, 255)
                     outG = (sumG / weightSum).coerceIn(0, 255)
                     outB = (sumB / weightSum).coerceIn(0, 255)
@@ -386,14 +398,13 @@ object FaceMatcherEngine {
         return outBmp
     }
 
-    // ✅ तुरंत प्रीव्यू दिखाने के लिए 1:1 स्क्वायर + विकल्प A
     fun createAiEnhancedPortraitDp(source: Bitmap, face: Face): Bitmap {
         val squareCrop = cropTrueSquarePortrait(source, face)
         return applyOnDeviceStudioPortraitFilter(squareCrop)
     }
 
-    // ✅ पहले विकल्प B (Online Gemini Image Edit API - 35s Timeout) को आज़माएं, और यदि इमेज न मिले तो विकल्प A (On-Device Studio Filter) लौटाएं
     fun enhancePortraitWithGeminiOrFallbackBlocking(context: Context, squareBaseBmp: Bitmap): Pair<Bitmap, Boolean> {
+        var fallbackReason = "Gemini Key उपलब्ध नहीं है — ऑन-डिवाइस स्टूडियो फिल्टर लगाया गया"
         try {
             val vm = RealisticVoiceManager(context)
             val rawKeys = vm.getGeminiKeysString()
@@ -444,7 +455,8 @@ object FaceMatcherEngine {
                         }
 
                         conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-                        if (conn.responseCode == 200) {
+                        val code = conn.responseCode
+                        if (code == 200) {
                             val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                             val parts = JSONObject(resp)
                                 .optJSONArray("candidates")?.optJSONObject(0)
@@ -458,28 +470,48 @@ object FaceMatcherEngine {
                                         if (b64Data.length > 100) {
                                             val decoded = decodeBase64Bitmap(b64Data)
                                             if (decoded != null) {
-                                                // सुनिश्चित करें कि आउटपुट भी 1:1 स्क्वायर (320x320) ही हो
                                                 val side = min(decoded.width, decoded.height)
                                                 val x = (decoded.width - side) / 2
                                                 val y = (decoded.height - side) / 2
                                                 val sq = Bitmap.createBitmap(decoded, x, y, side, side)
+                                                AiDiagnosticLogger.recordEvent(
+                                                    context,
+                                                    "DP_EDIT",
+                                                    "3. AI स्टूडियो DP सुधार (KYC)",
+                                                    "✅ क्लाउड AI से बना",
+                                                    "Gemini Image Model ($modelName) से 1:1 फोटो एडिट होकर आई"
+                                                )
                                                 return Pair(Bitmap.createScaledBitmap(sq, 320, 320, true), true)
                                             }
                                         }
                                     }
                                 }
                             }
+                            fallbackReason = "Gemini ($modelName) ने इमेज बाइनरी नहीं लौटाई — ऑन-डिवाइस स्टूडियो फिल्टर लगा"
+                        } else {
+                            fallbackReason = "Gemini Image API HTTP $code (फ्री टियर पर इमेज जनरेशन सीमित) — ऑन-डिवाइस स्टूडियो फिल्टर लगा"
                         }
-                    } catch (e: Exception) {}
+                    } catch (e: UnknownHostException) {
+                        fallbackReason = "इंटरनेट बंद था — ऑन-डिवाइस स्टूडियो फिल्टर से 1:1 DP बनाई गई"
+                    } catch (e: SocketTimeoutException) {
+                        fallbackReason = "नेटवर्क धीमा (Timeout) था — ऑन-डिवाइस स्टूडियो फिल्टर से 1:1 DP बनाई गई"
+                    } catch (e: Exception) {
+                        fallbackReason = "कनेक्शन त्रुटि (${e.javaClass.simpleName}) — ऑन-डिवाइस स्टूडियो फिल्टर लगा"
+                    }
                 }
             }
         } catch (e: Exception) {}
 
-        // यदि Gemini API से इमेज नहीं मिली, तो विकल्प A (On-Device Studio Filter) का आउटपुट दें
+        AiDiagnosticLogger.recordEvent(
+            context,
+            "DP_EDIT",
+            "3. AI स्टूडियो DP सुधार (KYC)",
+            "🔄 ऑन-डिवाइस स्टूडियो फिल्टर",
+            fallbackReason
+        )
         return Pair(applyOnDeviceStudioPortraitFilter(squareBaseBmp), false)
     }
 
-    // ✅ बायोमेट्रिक 192-D डेटा के लिए एक समान फेस अलाइनमेंट
     fun alignAndCropFaceBitmap(source: Bitmap, face: Face): Bitmap {
         var workingBmp = source
         val box = face.boundingBox
@@ -732,7 +764,17 @@ object FaceMatcherEngine {
             val keyPool = rawKeys.split(",", "\n", ";", " ")
                 .map { it.trim() }
                 .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
-            val apiKey = keyPool.firstOrNull() ?: return null
+            val apiKey = keyPool.firstOrNull()
+            if (apiKey == null) {
+                AiDiagnosticLogger.recordEvent(
+                    context,
+                    "VISION_VERIFY",
+                    "2. AI फेस मिलान सहायता (Gemini Vision)",
+                    "⚠️ Key उपलब्ध नहीं",
+                    "कन्फ्यूजन की स्थिति में Gemini Key न होने से ऑनलाइन वेरिफिकेशन नहीं हो सका"
+                )
+                return null
+            }
 
             val liveBaos = ByteArrayOutputStream()
             Bitmap.createScaledBitmap(liveFaceBmp, 220, 220, true)
@@ -792,7 +834,8 @@ object FaceMatcherEngine {
             }
 
             conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-            if (conn.responseCode == 200) {
+            val code = conn.responseCode
+            if (code == 200) {
                 val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
                 val rawAns = JSONObject(resp)
                     .optJSONArray("candidates")?.optJSONObject(0)
@@ -806,10 +849,58 @@ object FaceMatcherEngine {
                     else -> -1
                 }
                 if (chosenIdx in validList.indices) {
-                    return validList[chosenIdx]
+                    val matched = validList[chosenIdx]
+                    AiDiagnosticLogger.recordEvent(
+                        context,
+                        "VISION_VERIFY",
+                        "2. AI फेस मिलान सहायता (Gemini Vision)",
+                        "✅ पहचान सफल",
+                        "Gemini AI ने संशय दूर कर '${matched.name}' की पुष्टि की"
+                    )
+                    return matched
+                } else {
+                    AiDiagnosticLogger.recordEvent(
+                        context,
+                        "VISION_VERIFY",
+                        "2. AI फेस मिलान सहायता (Gemini Vision)",
+                        "ℹ️ अज्ञात चेहरा (NONE)",
+                        "Gemini AI ने जाँच कर बताया कि यह चेहरा किसी उम्मीदवार से मैच नहीं करता"
+                    )
                 }
+            } else {
+                AiDiagnosticLogger.recordEvent(
+                    context,
+                    "VISION_VERIFY",
+                    "2. AI फेस मिलान सहायता (Gemini Vision)",
+                    "❌ सर्वर त्रुटि ($code)",
+                    "Gemini Vision API रिस्पॉन्स कोड: $code"
+                )
             }
-        } catch (e: Exception) {}
+        } catch (e: UnknownHostException) {
+            AiDiagnosticLogger.recordEvent(
+                context,
+                "VISION_VERIFY",
+                "2. AI फेस मिलान सहायता (Gemini Vision)",
+                "❌ इंटरनेट बंद है",
+                "मोबाइल डेटा बंद होने से ऑनलाइन क्रॉस-चेक नहीं हो सका"
+            )
+        } catch (e: SocketTimeoutException) {
+            AiDiagnosticLogger.recordEvent(
+                context,
+                "VISION_VERIFY",
+                "2. AI फेस मिलान सहायता (Gemini Vision)",
+                "⚠️ नेटवर्क धीमा (Timeout)",
+                "इंटरनेट स्लो होने से 6 सेकंड में जवाब नहीं आया"
+            )
+        } catch (e: Exception) {
+            AiDiagnosticLogger.recordEvent(
+                context,
+                "VISION_VERIFY",
+                "2. AI फेस मिलान सहायता (Gemini Vision)",
+                "❌ त्रुटि",
+                "कारण: ${e.javaClass.simpleName}"
+            )
+        }
         return null
     }
 }
