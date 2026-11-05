@@ -48,6 +48,7 @@ import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
 import com.school.sarvodayaattendance.data.AppStorage
 import com.school.sarvodayaattendance.data.BackupPayload
+import com.school.sarvodayaattendance.utils.AiDiagnosticLogger
 import com.school.sarvodayaattendance.utils.FaceMatcherEngine
 import com.school.sarvodayaattendance.utils.RealisticVoiceManager
 import java.io.BufferedReader
@@ -269,10 +270,8 @@ class AdminActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                // 1. DP के लिए 1:1 स्क्वायर क्रॉप (बिना दबे) + ऑन-डिवाइस स्टूडियो फिल्टर प्रीव्यू
                 val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortrait(frameBmp, primaryFace)
                 val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
-                // 2. 192-D बायोमेट्रिक डेटा के लिए अलाइन किया हुआ फेस
                 val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
 
                 showKycPhotoConfirmDialog(rawSquareBmp, previewDpBmp, alignedBiometricFace, rootContainer, overlay)
@@ -325,16 +324,13 @@ class AdminActivity : AppCompatActivity() {
             .setPositiveButton("✔ यह फोटो जोड़ें") { _, _ ->
                 Toast.makeText(this, "⏳ AI स्टूडियो DP एवं 192-D डेटा तैयार हो रहा है...", Toast.LENGTH_SHORT).show()
                 Thread {
-                    // 1. 192-D बायोमेट्रिक वेक्टर प्रोसेस करें
                     val embedding192D = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(workingBioBmp)
 
-                    // 2. पहले विकल्प B (Gemini API) आज़माएं, और यदि न हो तो विकल्प A (On-Device Studio Filter) का उपयोग करें
                     val (finalDpBmp, usedGeminiCloud) = FaceMatcherEngine.enhancePortraitWithGeminiOrFallbackBlocking(
                         this@AdminActivity,
                         workingRawSquare
                     )
 
-                    // 1:1 Square (300x300) में सेव करें ताकि कभी चपटा न हो
                     val scaledDp = Bitmap.createScaledBitmap(finalDpBmp, 300, 300, true)
                     val baos = ByteArrayOutputStream()
                     scaledDp.compress(Bitmap.CompressFormat.JPEG, 88, baos)
@@ -384,6 +380,24 @@ class AdminActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 e.printStackTrace()
             }
+        }
+
+        // ✅ [📊 रिपोर्ट्स] बटन पर 2.5 सेकंड Long-Press करने पर खुलने वाले चार्ट के लिए डेटा देना
+        @JavascriptInterface
+        fun getAiDiagnosticsJson(): String {
+            return AiDiagnosticLogger.buildFullDiagnosticJson(this@AdminActivity)
+        }
+
+        // ✅ चार्ट के अंदर "🔄 अभी सभी AI सेवाएं चेक करें" दबाने पर लाइव API जांच चलाना
+        @JavascriptInterface
+        fun triggerLiveAiHealthCheck() {
+            Thread {
+                val resJson = AiDiagnosticLogger.runLiveApiHealthCheckBlocking(this@AdminActivity)
+                val escaped = gson.toJson(resJson)
+                runOnUiThread {
+                    webView.evaluateJavascript("onLiveAiHealthCheckResult($escaped);", null)
+                }
+            }.start()
         }
 
         @JavascriptInterface
