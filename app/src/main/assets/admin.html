@@ -32,6 +32,7 @@
   .sub-modal { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.8); z-index: 60; justify-content: center; align-items: flex-end; }
   .sub-modal.open { display: flex; }
   .modal-sheet { width: 100%; max-width: 480px; max-height: 92vh; background: #fff; border-top-left-radius: 22px; border-top-right-radius: 22px; display: flex; flex-direction: column; overflow: hidden; }
+  .modal-sheet.fullscreen-sheet { max-height: 98vh; height: 98vh; border-top-left-radius: 16px; border-top-right-radius: 16px; }
   .modal-header { padding: 14px 16px; background: #0f172a; color: #fff; display: flex; justify-content: space-between; align-items: center; }
   .modal-title { font-size: 18px; font-weight: 900; }
   .close-btn { background: rgba(255,255,255,0.2); color: #fff; border: none; width: 34px; height: 34px; border-radius: 50%; font-size: 17px; font-weight: 900; }
@@ -67,7 +68,12 @@
   .demo-table { width: 100%; border-collapse: collapse; margin-bottom: 12px; font-size: 14px; }
   .demo-table th, .demo-table td { border: 1.5px solid #cbd5e1; padding: 8px; text-align: center; font-weight: 800; }
   .demo-table th { background: #eff6ff; color: #1e3a8a; }
-  .toast-msg { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: 14.5px; font-weight: 900; z-index: 200; display: none; }
+  .diag-card { background: #0f172a; color: #f8fafc; border: 1.5px solid #334155; border-radius: 14px; padding: 12px; margin-bottom: 10px; }
+  .diag-key-card { background: #132238; border: 1.5px solid #10b981; border-radius: 12px; padding: 11px; margin-bottom: 9px; color: #f8fafc; }
+  .diag-table { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 12px; background: #fff; border-radius: 10px; overflow: hidden; }
+  .diag-table th, .diag-table td { border: 1.5px solid #cbd5e1; padding: 8px 7px; text-align: left; vertical-align: top; }
+  .diag-table th { background: #0f172a; color: #fde047; font-weight: 900; }
+  .toast-msg { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: #0f172a; color: #fff; padding: 10px 18px; border-radius: 12px; font-size: 14.5px; font-weight: 900; z-index: 200; display: none; text-align: center; }
 </style>
 </head>
 <body>
@@ -115,7 +121,12 @@
     <div class="admin-actions-grid">
       <div class="action-tile" onclick="openAddStudentModal()"><div style="font-size:22px;">👤+</div><div>नया छात्र</div></div>
       <div class="action-tile" onclick="openStudentListModal()"><div style="font-size:22px;">📋</div><div>छात्र सूची</div></div>
-      <div class="action-tile" onclick="openReportsModal()"><div style="font-size:22px;">📊</div><div>रिपोर्ट्स</div></div>
+      <!-- [📊 रिपोर्ट्स] सामान्य टैप पर रिपोर्ट्स, और 2.5 सेकंड Long-Press पर Full-Screen AI डायग्नोस्टिक चार्ट -->
+      <div class="action-tile"
+           onmousedown="handleReportsTilePressStart()" onmouseup="handleReportsTilePressEnd()"
+           ontouchstart="handleReportsTilePressStart()" ontouchend="handleReportsTilePressEnd()"
+           ontouchmove="handleReportsTilePressCancel()" ontouchcancel="handleReportsTilePressCancel()"
+           oncontextmenu="event.preventDefault()"><div style="font-size:22px;">📊</div><div>रिपोर्ट्स</div></div>
       <div class="action-tile" onclick="openHolidayModal()"><div style="font-size:22px;">🏖️</div><div>छुट्टी</div></div>
       <div class="action-tile" onclick="openMultiDeviceModal()" style="background:#eff6ff;"><div style="font-size:22px;">🤝</div><div>पैक शेयर</div></div>
       <div class="action-tile"
@@ -300,6 +311,20 @@
     </div>
   </div>
 
+  <!-- MODAL 3B: FULL-SCREEN AI & BACKGROUND SYSTEM DIAGNOSTIC CHART (Long-Press 2.5s on Reports) -->
+  <div id="aiDiagnosticModal" class="sub-modal" style="z-index:110;">
+    <div class="modal-sheet fullscreen-sheet">
+      <div class="modal-header" style="background:linear-gradient(135deg,#0f172a,#1e3a8a);">
+        <div>
+          <div class="modal-title">📡 AI एवं सिस्टम लाइव डायग्नोस्टिक चार्ट</div>
+          <div id="aiDiagSubHeader" style="font-size:12px;color:#93c5fd;margin-top:2px;">बैकग्राउंड AI सर्विसेज की वास्तविक स्थिति</div>
+        </div>
+        <button type="button" class="close-btn" onclick="closeModal('aiDiagnosticModal')">✕</button>
+      </div>
+      <div class="modal-body" id="aiDiagnosticModalBody" style="background:#f8fafc;"></div>
+    </div>
+  </div>
+
   <!-- MODAL 4: PIN & PROMOTION -->
   <div id="changePinModal" class="sub-modal">
     <div class="modal-sheet">
@@ -371,7 +396,12 @@
   var genderBoxTimer = null;
   var pinTileTimer = null;
   var pinTileLongTriggered = false;
+  var reportsTileTimer = null;
+  var reportsTileLongTriggered = false;
+  var deleteBtnTimer = null;
+  var deleteBtnLongTriggered = false;
 
+  // [🔑 पिन व सत्र] 2 सेकंड Long-Press से Multi-API Keys और सामान्य टैप से पिन चेंज
   function handlePinTilePressStart() {
     pinTileLongTriggered = false;
     clearTimeout(pinTileTimer);
@@ -390,6 +420,223 @@
   }
   function handlePinTilePressCancel() {
     clearTimeout(pinTileTimer);
+  }
+
+  // [📊 रिपोर्ट्स] 2.5 सेकंड Long-Press से Full-Screen AI डायग्नोस्टिक चार्ट और सामान्य टैप से रिपोर्ट्स
+  function handleReportsTilePressStart() {
+    reportsTileLongTriggered = false;
+    clearTimeout(reportsTileTimer);
+    reportsTileTimer = setTimeout(function() {
+      reportsTileLongTriggered = true;
+      openAiDiagnosticFullModal();
+    }, 2500);
+  }
+  function handleReportsTilePressEnd() {
+    clearTimeout(reportsTileTimer);
+    if (!reportsTileLongTriggered) {
+      openReportsModal();
+    }
+  }
+  function handleReportsTilePressCancel() {
+    clearTimeout(reportsTileTimer);
+  }
+
+  // [🗑️ हटाएं] 1.5 सेकंड Long-Press + Warning + 6-अंकों का PIN सुरक्षा कवच
+  function handleDeleteBtnPressStart(stuId) {
+    deleteBtnLongTriggered = false;
+    clearTimeout(deleteBtnTimer);
+    deleteBtnTimer = setTimeout(function() {
+      deleteBtnLongTriggered = true;
+      showDeleteWarningAndPinBox(stuId);
+    }, 1500);
+  }
+  function handleDeleteBtnPressEnd() {
+    clearTimeout(deleteBtnTimer);
+    if (!deleteBtnLongTriggered) {
+      showToast('⚠️ छात्र को हटाने के लिए [🗑️ हटाएं] को 1.5 सेकंड दबाए रखें');
+    }
+  }
+  function handleDeleteBtnPressCancel() {
+    clearTimeout(deleteBtnTimer);
+  }
+
+  function showDeleteWarningAndPinBox(stuId) {
+    var s = students.find(function(x) { return x.id === stuId; });
+    if (!s) return;
+    var warnZone = document.getElementById('deletePinConfirmZone');
+    if (!warnZone) return;
+    warnZone.style.display = 'block';
+    warnZone.innerHTML =
+      '<div style="background:#fef2f2;border:2px solid #dc2626;border-radius:12px;padding:12px;margin-top:10px;text-align:center;">' +
+        '<div style="font-size:14.5px;font-weight:900;color:#b91c1c;margin-bottom:4px;">🚨 अंतिम चेतावनी: डेटा स्थायी रूप से मिट जाएगा!</div>' +
+        '<div style="font-size:13px;color:#0f172a;font-weight:700;margin-bottom:8px;">क्या आप वाकई <b>' + s.name + ' (रोल: ' + formatRollTwoDigits(s.roll) + ')</b> की प्रोफाइल और 192-D बायोमेट्रिक डेटा हटाना चाहते हैं?</div>' +
+        '<input type="password" id="delStuPinInput" maxlength="6" inputmode="numeric" placeholder="यहाँ 6-अंकों का एडमिन पिन डालें" style="text-align:center;background:#fff;border:2px solid #dc2626;margin-bottom:8px;font-size:16px;" oninput="if(this.value.length===6)confirmStudentDeleteWithPin(\'' + s.id + '\')">' +
+        '<div style="display:flex;gap:8px;">' +
+          '<button type="button" class="btn-danger" style="flex:1;background:#dc2626;color:#fff;" onclick="confirmStudentDeleteWithPin(\'' + s.id + '\')">🗑️ पिन जांचें व हटाएं</button>' +
+          '<button type="button" class="btn-edit-sm" onclick="document.getElementById(\'deletePinConfirmZone\').style.display=\'none\'">रद्द करें</button>' +
+        '</div>' +
+      '</div>';
+    var inp = document.getElementById('delStuPinInput');
+    if (inp) inp.focus();
+  }
+
+  function confirmStudentDeleteWithPin(stuId) {
+    var inp = document.getElementById('delStuPinInput');
+    var entered = inp ? inp.value.trim() : '';
+    if (entered !== adminPin) {
+      showToast('❌ गलत पिन! छात्र सुरक्षित है');
+      if (inp) inp.value = '';
+      return;
+    }
+    closeModal('studentFullDetailsModal');
+    deleteStudent(stuId);
+  }
+
+  function openAiDiagnosticFullModal() {
+    var rawJson = '{}';
+    try {
+      if (window.AndroidBridge && window.AndroidBridge.getAiDiagnosticsJson) {
+        rawJson = window.AndroidBridge.getAiDiagnosticsJson();
+      }
+    } catch (e) {}
+    renderAiDiagnosticChartUI(rawJson, false);
+    document.getElementById('aiDiagnosticModal').classList.add('open');
+  }
+
+  function startLiveAiHealthCheckFromUI() {
+    var btn = document.getElementById('btnRunLiveAiCheck');
+    if (btn) {
+      btn.textContent = '⏳ सभी AI Keys व सर्वर लाइव चेक हो रहे हैं...';
+      btn.disabled = true;
+    }
+    if (window.AndroidBridge && window.AndroidBridge.triggerLiveAiHealthCheck) {
+      window.AndroidBridge.triggerLiveAiHealthCheck();
+    } else {
+      showToast('नेटिव ब्रिज उपलब्ध नहीं है');
+    }
+  }
+
+  function onLiveAiHealthCheckResult(resJsonStr) {
+    renderAiDiagnosticChartUI(resJsonStr, true);
+    showToast('✔ लाइव AI डायग्नोस्टिक जांच पूर्ण!');
+  }
+
+  function renderAiDiagnosticChartUI(jsonStr, isAfterLiveCheck) {
+    var data = {};
+    try { data = JSON.parse(jsonStr || '{}'); } catch (e) { data = {}; }
+
+    var stuWith192D = students.filter(function(s) { return s.embeddings && s.embeddings.length > 0; }).length;
+    var stuWithPhotos = students.filter(function(s) { return s.photos && s.photos.length > 0; }).length;
+
+    var services = data.services || {};
+    var logs = Array.isArray(data.logs) ? data.logs : [];
+    var geminiLive = Array.isArray(data.geminiLiveCheck) ? data.geminiLiveCheck : [];
+    var elevenLive = Array.isArray(data.elevenLiveCheck) ? data.elevenLiveCheck : [];
+
+    document.getElementById('aiDiagSubHeader').textContent =
+      'अंतिम अपडेट: ' + (data.checkedAt || getTodayShort()) + ' | पंजीकृत छात्र: ' + students.length;
+
+    var defaultRows = [
+      {
+        key: 'TFLITE',
+        name: '1. 192-D बायोमेट्रिक इंजन (Offline TFLite)',
+        defStatus: data.tfliteReady ? '✅ सक्रिय (192-D)' : '⚠️ लोड जांचें',
+        defReason: '192-D वेक्टर तैयार छात्र: ' + stuWith192D + ' / ' + students.length + ' (फोटो युक्त: ' + stuWithPhotos + ')'
+      },
+      {
+        key: 'VISION_VERIFY',
+        name: '2. AI फेस मिलान सहायता (Gemini Vision)',
+        defStatus: (data.geminiKeyCount > 0) ? '🟢 स्टैंडबाय (तैयार)' : '⚪ Key नहीं है',
+        defReason: (data.geminiKeyCount > 0)
+          ? 'जब लोकल 192-D स्कोर 50%-67% के बीच होगा, तब यह खुद फोटो मिलाएगा'
+          : 'Google AI Key नहीं डली है (केवल 192-D ऑफलाइन मिलान काम करेगा)'
+      },
+      {
+        key: 'DP_EDIT',
+        name: '3. AI स्टूडियो 1:1 DP सुधार (KYC)',
+        defStatus: (data.geminiKeyCount > 0) ? '🟢 क्लाउड + लोकल तैयार' : '🔄 ऑन-डिवाइस स्टूडियो फिल्टर',
+        defReason: 'KYC फोटो खींचते समय पहले विकल्प B (Gemini) और फिर विकल्प A (Studio Filter) चलता है'
+      },
+      {
+        key: 'VOICE',
+        name: '4. AI मानवीय आवाज़ (ElevenLabs / Gemini TTS)',
+        defStatus: (data.elevenKeyCount > 0 || data.geminiKeyCount > 0) ? '✅ तैयार' : '❌ कोई Key नहीं',
+        defReason: 'ElevenLabs Keys: ' + (data.elevenKeyCount || 0) + ' | Gemini Keys: ' + (data.geminiKeyCount || 0) + ' (फोन का रोबोटिक TTS बंद है)'
+      },
+      {
+        key: 'SLOGAN',
+        name: '5. दैनिक रेडियो स्वागत स्लोगन (AI Slogan)',
+        defStatus: (data.geminiKeyCount > 0) ? '✅ सक्रिय' : 'ℹ️ इन-बिल्ट स्लोगन',
+        defReason: (data.geminiKeyCount > 0) ? 'हर 2 घंटे पर नया प्रेरणादायक स्लोगन बनता है' : 'Gemini Key के बिना 4 इन-बिल्ट हिंदी स्वागत स्लोगन चलते हैं'
+      }
+    ];
+
+    var serviceTableRows = defaultRows.map(function(row) {
+      var saved = services[row.key];
+      var st = saved && saved.status ? saved.status : row.defStatus;
+      var rs = saved && saved.reason ? saved.reason : row.defReason;
+      var tm = saved && saved.time ? ('<div style="font-size:10.5px;color:#64748b;margin-top:3px;">🕒 ' + saved.time + '</div>') : '';
+      var extraBio = (row.key === 'TFLITE')
+        ? ('<div style="font-size:11px;color:#1e3a8a;font-weight:900;margin-top:3px;">🧬 192-D तैयार: ' + stuWith192D + '/' + students.length + ' छात्र</div>')
+        : '';
+      return '<tr>' +
+        '<td style="font-weight:900;color:#0f172a;width:34%;">' + row.name + tm + '</td>' +
+        '<td style="font-weight:900;width:24%;">' + st + '</td>' +
+        '<td style="color:#334155;font-weight:700;">' + rs + extraBio + '</td>' +
+      '</tr>';
+    }).join('');
+
+    var liveCheckHtml = '';
+    if (elevenLive.length > 0 || geminiLive.length > 0) {
+      var eCards = elevenLive.map(function(item, idx) {
+        return '<div class="diag-key-card">' +
+          '<div style="font-size:14px;font-weight:900;color:#fff;">[🎙️ ELEVENLABS #' + (idx + 1) + ']</div>' +
+          '<div style="font-size:12.5px;color:#cbd5e1;margin-top:3px;">Key: ' + item.maskedKey + '</div>' +
+          '<div style="font-size:13.5px;font-weight:900;color:#4ade80;margin-top:5px;">' + item.status + '</div>' +
+          '<div style="font-size:12.5px;color:#f8fafc;margin-top:3px;font-weight:700;">' + item.detail + '</div>' +
+        '</div>';
+      }).join('');
+
+      var gCards = geminiLive.map(function(item, idx) {
+        return '<div class="diag-key-card" style="border-color:#38bdf8;">' +
+          '<div style="font-size:14px;font-weight:900;color:#fff;">[✨ GOOGLE GEMINI #' + (idx + 1) + ']</div>' +
+          '<div style="font-size:12.5px;color:#cbd5e1;margin-top:3px;">Key: ' + item.maskedKey + '</div>' +
+          '<div style="font-size:13.5px;font-weight:900;color:#38bdf8;margin-top:5px;">' + item.status + '</div>' +
+          '<div style="font-size:12.5px;color:#f8fafc;margin-top:3px;font-weight:700;">' + item.detail + '</div>' +
+        '</div>';
+      }).join('');
+
+      liveCheckHtml = '<div style="margin-bottom:12px;">' + eCards + gCards + '</div>';
+    } else if (isAfterLiveCheck) {
+      liveCheckHtml = '<div class="diag-key-card" style="border-color:#f87171;">❌ कोई API Key सेव नहीं है! ([🔑 पिन व सत्र] को 2 सेकंड दबाकर Key डालें)</div>';
+    }
+
+    var logsRowsHtml = logs.length > 0
+      ? logs.map(function(lg) {
+          return '<tr>' +
+            '<td style="white-space:nowrap;font-size:11px;color:#475569;font-weight:800;">' + (lg.time || '-') + '</td>' +
+            '<td style="font-weight:900;color:#0f172a;">' + (lg.service || '-') + '</td>' +
+            '<td style="font-weight:900;">' + (lg.status || '-') + '</td>' +
+            '<td style="color:#1e293b;font-weight:700;">' + (lg.reason || '-') + '</td>' +
+          '</tr>';
+        }).join('')
+      : '<tr><td colspan="4" style="text-align:center;padding:14px;color:#64748b;font-weight:800;">अभी कोई गतिविधि लॉग नहीं है। स्कैन या लाइव चेक करने पर यहाँ पूरा विवरण दिखेगा।</td></tr>';
+
+    document.getElementById('aiDiagnosticModalBody').innerHTML =
+      '<div style="display:flex;gap:8px;margin-bottom:12px;">' +
+        '<button type="button" id="btnRunLiveAiCheck" class="btn-primary" style="background:#16a34a;padding:12px;font-size:14.5px;flex:1;" onclick="startLiveAiHealthCheckFromUI()">🔄 अभी सभी AI सेवाएं व Keys लाइव चेक करें</button>' +
+      '</div>' +
+      liveCheckHtml +
+      '<div style="font-size:15px;font-weight:900;color:#0f172a;margin-bottom:6px;">📊 1. मुख्य AI एवं बायोमेट्रिक सिस्टम चार्ट:</div>' +
+      '<table class="diag-table">' +
+        '<thead><tr><th>सिस्टम / सेवा का नाम</th><th>वर्तमान स्थिति</th><th>सरल विवरण / काम न करने का कारण</th></tr></thead>' +
+        '<tbody>' + serviceTableRows + '</tbody>' +
+      '</table>' +
+      '<div style="font-size:15px;font-weight:900;color:#0f172a;margin:12px 0 6px 0;">🕒 2. बैकग्राउंड AI गतिविधि इतिहास (कब, क्या हुआ और क्यों):</div>' +
+      '<table class="diag-table">' +
+        '<thead><tr><th>समय</th><th>सिस्टम</th><th>स्थिति</th><th>स्पष्ट कारण / रिपोर्ट</th></tr></thead>' +
+        '<tbody>' + logsRowsHtml + '</tbody>' +
+      '</table>';
   }
 
   function formatHindiMonthYear(monthVal) {
@@ -544,7 +791,7 @@
     t.textContent = msg;
     t.style.display = 'block';
     clearTimeout(window._tTimer);
-    window._tTimer = setTimeout(function() { t.style.display = 'none'; }, 2200);
+    window._tTimer = setTimeout(function() { t.style.display = 'none'; }, 2400);
   }
 
   function loadState() {
@@ -1019,6 +1266,8 @@
       admDisplay += (admDisplay ? ' (' + s.admDate + ')' : s.admDate);
     }
 
+    var delEvents = 'onmousedown="handleDeleteBtnPressStart(\'' + s.id + '\')" onmouseup="handleDeleteBtnPressEnd()" ontouchstart="handleDeleteBtnPressStart(\'' + s.id + '\')" ontouchend="handleDeleteBtnPressEnd()" ontouchmove="handleDeleteBtnPressCancel()" ontouchcancel="handleDeleteBtnPressCancel()" oncontextmenu="event.preventDefault()"';
+
     document.getElementById('fullDetailModalBody').innerHTML =
       '<div class="student-meta-grid">' +
         '<div class="meta-box-item"><b>नाम:</b> ' + s.name + '</div><div class="meta-box-item"><b>कक्षा/रोल:</b> ' + s.className + ' (' + formatRollTwoDigits(s.roll) + ')</div>' +
@@ -1029,7 +1278,11 @@
         '<div class="meta-box-item" style="grid-column:span 2;"><b>पता:</b> ' + ((s.address && s.address !== '-' && s.address !== 'उपलब्ध नहीं') ? s.address : '') + '</div>' +
       '</div>' +
       '<div class="att-summary-bar"><div style="font-weight:900;font-size:14.5px;color:#1e3a8a;">📊 उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div><div class="att-history-box">' + fullHistoryRows + '</div></div>' +
-      '<div style="display:flex;justify-content:flex-end;gap:8px;"><button type="button" class="btn-edit-sm" onclick="closeModal(\'studentFullDetailsModal\');openEditStudentModal(\'' + s.id + '\')">✏️ सुधारें</button><button type="button" class="btn-danger" onclick="closeModal(\'studentFullDetailsModal\');deleteStudent(\'' + s.id + '\')">🗑️ हटाएं</button></div>';
+      '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
+        '<button type="button" class="btn-edit-sm" onclick="closeModal(\'studentFullDetailsModal\');openEditStudentModal(\'' + s.id + '\')">✏️ सुधारें</button>' +
+        '<button type="button" class="btn-danger" ' + delEvents + '>🗑️ हटाएं (1.5s दबाएं)</button>' +
+      '</div>' +
+      '<div id="deletePinConfirmZone" style="display:none;"></div>';
     document.getElementById('studentFullDetailsModal').classList.add('open');
   }
 
@@ -1104,9 +1357,12 @@
 
   function deleteStudent(id) {
     students = students.filter(function(s) { return s.id !== id; });
+    Object.keys(attendance).forEach(function(d) {
+      attendance[d] = (attendance[d] || []).filter(function(sid) { return sid !== id; });
+    });
     saveState();
     renderStudentList();
-    showToast('🗑️ हटाया गया');
+    showToast('🗑️ छात्र का रिकॉर्ड हटाया गया');
   }
 
   function printOrSavePDF(htmlString, jobTitle) {
@@ -1257,10 +1513,6 @@
     document.getElementById('reportsModal').classList.add('open');
   }
 
-  // ✅ मासिक उपस्थिति पंजिका:
-  // 1. पहले कॉलम में ऊपर Roll और नीचे No. (Black Color)
-  // 2. नामांकन तिथि से प्रिंट तिथि (आज) तक ही P/A मार्क होगा, प्रिंट तिथि के बाद के दिनों में "-" रहेगा
-  // 3. यदि नामांकन तिथि खाली है तो महीने की 01 तारीख से प्रिंट तिथि तक P/A मार्क होगा
   function buildMonthlyRegisterTableHTML(cls, monthVal) {
     var list = sortStudentsByRollAsc(students.filter(function(s) { return s.className === cls; }));
     if (list.length === 0) return null;
@@ -1269,7 +1521,6 @@
     var yyShort = String(yyyy).slice(-2), mmStr = String(mm).padStart(2, '0');
     var daysInMonth = new Date(yyyy, mm, 0).getDate();
 
-    // प्रिंट तिथि (आज की तारीख) की समय-सीमा (Midnight end of today)
     var printTodayIso = getTodayIso();
     var printTimeMs = new Date(printTodayIso + 'T23:59:59').getTime();
 
@@ -1317,11 +1568,9 @@
             rowCells += '<td rowspan="' + totalStudentsCount + '" class="hol-col-merged"><div class="hol-vert-text">' + dm.holidayReason + '</div></td>';
           }
         } else if (dm.isAfterPrintDate) {
-          // प्रिंट तिथि के बाद की तारीखों में केवल "-" रहेगा
           rowCells += '<td>-</td>';
         } else {
           var isP = (attendance[dm.shortKey] || []).indexOf(stu.id) !== -1;
-          // यदि नामांकन तिथि उपलब्ध है और यह तारीख नामांकन तिथि से पहले की है (तथा हाज़िरी दर्ज नहीं है), तो "-" रखें
           if (admTime !== null && dm.timeMs < admTime && !isP) {
             rowCells += '<td>-</td>';
           } else {
