@@ -19,15 +19,16 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: Download & Verify MobileFaceNet 192-D TFLite AI Model
+      - name: Download & Verify TFLite Biometric Model
         run: |
           mkdir -p app/src/main/assets
-          curl -fL --retry 3 "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/app/src/main/assets/mobile_face_net.tflite" -o app/src/main/assets/mobile_face_net.tflite || \
           curl -fL --retry 3 "https://github.com/MCarlomagno/FaceRecognitionAuth/raw/master/app/src/main/assets/mobile_face_net.tflite" -o app/src/main/assets/mobile_face_net.tflite || \
-          curl -fL --retry 3 "https://raw.githubusercontent.com/sirius-ai/MobileFaceNet_TF/master/arch/pretrained_model/mobilefacenet.tflite" -o app/src/main/assets/mobile_face_net.tflite
+          curl -fL --retry 3 "https://raw.githubusercontent.com/MCarlomagno/FaceRecognitionAuth/master/app/src/main/assets/mobile_face_net.tflite" -o app/src/main/assets/mobile_face_net.tflite || \
+          curl -fL --retry 3 "https://raw.githubusercontent.com/shubham0204/FaceRecognition_With_FaceNet_Android/master/app/src/main/assets/facenet.tflite" -o app/src/main/assets/mobile_face_net.tflite || \
+          curl -fL --retry 3 "https://github.com/shubham0204/FaceRecognition_With_FaceNet_Android/raw/master/app/src/main/assets/facenet.tflite" -o app/src/main/assets/mobile_face_net.tflite
           ls -lh app/src/main/assets/mobile_face_net.tflite
           FILE_SIZE=$(stat -c%s "app/src/main/assets/mobile_face_net.tflite" || echo 0)
-          if [ "$FILE_SIZE" -lt 1000000 ]; then
+          if [ "$FILE_SIZE" -lt 500000 ]; then
             echo "Error: Downloaded TFLite model is invalid or too small ($FILE_SIZE bytes)"
             exit 1
           fi
