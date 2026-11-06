@@ -84,6 +84,8 @@ class MainActivity : AppCompatActivity() {
     private var camera: Camera? = null
     private var lensFacing = CameraSelector.LENS_FACING_FRONT
     private var isTorchOn = false
+
+    @Volatile
     private var isProcessingFrame = false
     private var lastScanTimestamp = 0L
 
@@ -98,8 +100,8 @@ class MainActivity : AppCompatActivity() {
     private var pendingCandidateId: String? = null
     private var pendingCandidateHits: Int = 0
     private var pendingCandidateLastSeenMs: Long = 0L
-    private val aiVerifyExecutor = Executors.newSingleThreadExecutor()
 
+    private val scanWorkerExecutor = Executors.newSingleThreadExecutor()
     private val uiHandler = Handler(Looper.getMainLooper())
     private var hideCardRunnable: Runnable? = null
 
@@ -112,7 +114,7 @@ class MainActivity : AppCompatActivity() {
     private val autoScanLoop = object : Runnable {
         override fun run() {
             performLiveFrameCheck(false)
-            uiHandler.postDelayed(this, 650)
+            uiHandler.postDelayed(this, 420)
         }
     }
 
@@ -236,11 +238,10 @@ class MainActivity : AppCompatActivity() {
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         FaceMatcherEngine.initEngine(this)
         payload = AppStorage.loadData(this)
-        FaceMatcherEngine.clearCache()
-        FaceMatcherEngine.warmUpCache(payload.students)
+        FaceMatcherEngine.warmUpCache(payload.students, this)
         refreshScannerModeUI()
         updateLiveSchoolTicker()
-        uiHandler.postDelayed(autoScanLoop, 800)
+        uiHandler.postDelayed(autoScanLoop, 500)
     }
 
     override fun onPause() {
@@ -276,7 +277,6 @@ class MainActivity : AppCompatActivity() {
         val present = payload.students.count { presentIds.contains(it.id) }
         val pct = if (total > 0) ((present * 100.0) / total).roundToInt() else 0
 
-        ivResultStudentPhoto.background = null
         ivResultStudentPhoto.visibility = View.VISIBLE
         ivResultStudentPhoto.setImageResource(R.drawable.ic_school_logo)
         tvResultLogo.text = "✨"
@@ -324,7 +324,7 @@ class MainActivity : AppCompatActivity() {
     private fun performLiveFrameCheck(isManualTap: Boolean) {
         if (isProcessingFrame) return
         val now = System.currentTimeMillis()
-        if (!isManualTap && (now - lastScanTimestamp < 1200)) return
+        if (!isManualTap && (now - lastScanTimestamp < 850)) return
 
         val frameBmp: Bitmap = previewView.bitmap ?: return
         isProcessingFrame = true
@@ -332,108 +332,11 @@ class MainActivity : AppCompatActivity() {
         val inputImage = InputImage.fromBitmap(frameBmp, 0)
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
-                if (faces.isNotEmpty()) {
-                    emptyFrameCount = 0
-                    val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
-
-                    if (!FaceMatcherEngine.isLiveFaceValidForScan(primaryFace)) {
-                        if (isManualTap) {
-                            showResultBanner("error", null, "कृपया आँखें खुली रखें और सीधे देखें!", 2000)
-                        }
-                        isProcessingFrame = false
-                        return@addOnSuccessListener
-                    }
-
-                    val alignedFace = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
-                    val matchResult = FaceMatcherEngine.findBestMatchDetailed(alignedFace, payload.students)
-                    val hasGeminiKey = voiceManager.getGeminiKeysString().trim().length > 15
-
-                    // 1. MobileFaceNet 192-D High Confidence Match
-                    val matchedStudent = if (matchResult.isHighConfidence) matchResult.student else null
-                    if (matchedStudent != null) {
-                        if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
-                            isProcessingFrame = false
-                            return@addOnSuccessListener
-                        }
-                        if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (now - lastScanTimestamp < 4200)) {
-                            isProcessingFrame = false
-                            return@addOnSuccessListener
-                        }
-
-                        if (!isManualTap && matchResult.matchPercentage < 78) {
-                            if (pendingCandidateId == matchedStudent.id && (now - pendingCandidateLastSeenMs) < 2500L) {
-                                pendingCandidateHits++
-                            } else {
-                                pendingCandidateId = matchedStudent.id
-                                pendingCandidateHits = 1
-                            }
-                            pendingCandidateLastSeenMs = now
-                            if (pendingCandidateHits < 2) {
-                                isProcessingFrame = false
-                                return@addOnSuccessListener
-                            }
-                        }
-
-                        pendingCandidateHits = 0
-                        lastScanTimestamp = System.currentTimeMillis()
-                        handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
-                        isProcessingFrame = false
-                        return@addOnSuccessListener
-                    }
-
-                    // 2. बॉर्डरलाइन केस में Online Gemini AI से पुष्टि करें
-                    if (hasGeminiKey && matchResult.topCandidates.isNotEmpty()) {
-                        val portraitForAi = FaceMatcherEngine.createAiEnhancedPortraitDp(frameBmp, primaryFace)
-                        aiVerifyExecutor.execute {
-                            val verifiedStudent = FaceMatcherEngine.identifyStudentWithGeminiVisionBlocking(
-                                this@MainActivity,
-                                portraitForAi,
-                                matchResult.topCandidates
-                            )
-                            uiHandler.post {
-                                if (verifiedStudent != null) {
-                                    lastScanTimestamp = System.currentTimeMillis()
-                                    pendingCandidateHits = 0
-                                    val aiPct = matchResult.matchPercentage.coerceAtLeast(85)
-                                    handleMatchedStudent(verifiedStudent, aiPct)
-                                } else if (isVipInspectionModeActive) {
-                                    if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
-                                        hasSpokenVipForCurrentFace = true
-                                        lastScanTimestamp = System.currentTimeMillis()
-                                        speakAndShowVipWelcomeOnFaceDetected()
-                                    }
-                                } else if (isManualTap) {
-                                    lastScanTimestamp = System.currentTimeMillis()
-                                    showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (सर्वोच्च मिलान: ${matchResult.matchPercentage}%)", 2500)
-                                    voiceManager.speakGreeting("error", "")
-                                }
-                                isProcessingFrame = false
-                            }
-                        }
-                        return@addOnSuccessListener
-                    }
-
-                    // 3. कोई मैच न मिलने पर
-                    if (isVipInspectionModeActive) {
-                        if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
-                            hasSpokenVipForCurrentFace = true
-                            lastScanTimestamp = System.currentTimeMillis()
-                            speakAndShowVipWelcomeOnFaceDetected()
-                        }
-                    } else if (isManualTap) {
-                        lastScanTimestamp = System.currentTimeMillis()
-                        if (payload.students.isEmpty()) {
-                            showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
-                        } else {
-                            showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (मिलान: ${matchResult.matchPercentage}%)", 2500)
-                            voiceManager.speakGreeting("error", "")
-                        }
-                    }
-                } else {
+                if (faces.isEmpty()) {
                     emptyFrameCount++
                     pendingCandidateId = null
                     pendingCandidateHits = 0
-                    if (emptyFrameCount >= 5) {
+                    if (emptyFrameCount >= 4) {
                         lastSpokenStudentId = null
                         sameStudentScanStreak = 0
                         hasSpokenVipForCurrentFace = false
@@ -441,8 +344,87 @@ class MainActivity : AppCompatActivity() {
                     if (isManualTap) {
                         showResultBanner("error", null, "कैमरे में चेहरा नहीं दिखा!", 2000)
                     }
+                    isProcessingFrame = false
+                    return@addOnSuccessListener
                 }
-                isProcessingFrame = false
+
+                emptyFrameCount = 0
+                val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
+
+                if (!FaceMatcherEngine.isLiveFaceValidForScan(primaryFace)) {
+                    if (isManualTap) {
+                        showResultBanner("error", null, "कृपया आँखें खुली रखें और सीधे देखें!", 2000)
+                    }
+                    isProcessingFrame = false
+                    return@addOnSuccessListener
+                }
+
+                // ऑफलाइन 192-D बायोमेट्रिक मिलान को बैकग्राउंड थ्रेड पर चलाएं ताकि कैमरा कभी हैंग न हो (0 इंटरनेट देरी)
+                val studentsSnapshot = payload.students.toList()
+                scanWorkerExecutor.execute {
+                    try {
+                        val alignedFace = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
+                        val matchResult = FaceMatcherEngine.findBestMatchDetailed(alignedFace, studentsSnapshot)
+
+                        uiHandler.post {
+                            val matchedStudent = if (matchResult.isHighConfidence) matchResult.student else null
+                            if (matchedStudent != null) {
+                                val currentMs = System.currentTimeMillis()
+                                if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
+                                    isProcessingFrame = false
+                                    return@post
+                                }
+                                if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (currentMs - lastScanTimestamp < 3800)) {
+                                    isProcessingFrame = false
+                                    return@post
+                                }
+
+                                // यदि स्कोर 82% से कम (72%..81%) है, तो 100% सटीकता के लिए लगातार 2 फ्रेम (~0.4 सेकंड) में पुष्टि करें
+                                if (!isManualTap && matchResult.matchPercentage < 82) {
+                                    if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 2200L) {
+                                        pendingCandidateHits++
+                                    } else {
+                                        pendingCandidateId = matchedStudent.id
+                                        pendingCandidateHits = 1
+                                    }
+                                    pendingCandidateLastSeenMs = currentMs
+                                    if (pendingCandidateHits < 2) {
+                                        isProcessingFrame = false
+                                        return@post
+                                    }
+                                }
+
+                                pendingCandidateHits = 0
+                                pendingCandidateId = null
+                                lastScanTimestamp = currentMs
+                                handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
+                            } else {
+                                pendingCandidateHits = 0
+                                pendingCandidateId = null
+                                if (isVipInspectionModeActive) {
+                                    if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
+                                        hasSpokenVipForCurrentFace = true
+                                        lastScanTimestamp = System.currentTimeMillis()
+                                        speakAndShowVipWelcomeOnFaceDetected()
+                                    }
+                                } else if (isManualTap) {
+                                    lastScanTimestamp = System.currentTimeMillis()
+                                    if (payload.students.isEmpty()) {
+                                        showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
+                                    } else {
+                                        showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (मिलान: ${matchResult.matchPercentage}%)", 2500)
+                                        voiceManager.speakGreeting("error", "")
+                                    }
+                                }
+                            }
+                            isProcessingFrame = false
+                        }
+                    } catch (e: Exception) {
+                        uiHandler.post {
+                            isProcessingFrame = false
+                        }
+                    }
+                }
             }
             .addOnFailureListener {
                 isProcessingFrame = false
@@ -488,10 +470,9 @@ class MainActivity : AppCompatActivity() {
         if (stu != null && stu.photos.isNotEmpty()) {
             val bmp = FaceMatcherEngine.decodeBase64Bitmap(stu.photos[0])
             if (bmp != null) {
-                // ✅ राउंडेड कॉर्नर बॉर्डर फ्रेम के साथ छात्र की 1:1 फोटो दिखाएं
                 val framedBmp = FaceMatcherEngine.createFramedResultCardBitmap(bmp)
-                ivResultStudentPhoto.background = null
                 ivResultStudentPhoto.setImageBitmap(framedBmp)
+                ivResultStudentPhoto.background = null
                 ivResultStudentPhoto.visibility = View.VISIBLE
             } else {
                 ivResultStudentPhoto.visibility = View.GONE
@@ -655,7 +636,7 @@ class MainActivity : AppCompatActivity() {
             if (ok) {
                 payload = AppStorage.loadData(this)
                 FaceMatcherEngine.clearCache()
-                FaceMatcherEngine.warmUpCache(payload.students)
+                FaceMatcherEngine.warmUpCache(payload.students, this)
                 refreshScannerModeUI()
                 updateLiveSchoolTicker()
                 Toast.makeText(this, "✔ पैक लोड हो गया (${payload.students.size} छात्र)", Toast.LENGTH_SHORT).show()
@@ -676,7 +657,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        aiVerifyExecutor.shutdown()
+        scanWorkerExecutor.shutdown()
         voiceManager.shutdown()
     }
 }
