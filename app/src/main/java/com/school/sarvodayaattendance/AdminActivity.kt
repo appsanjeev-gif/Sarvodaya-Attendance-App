@@ -125,7 +125,7 @@ class AdminActivity : AppCompatActivity() {
                     loaded.isScannerOnlyPack = false
                     AppStorage.saveData(this, loaded)
                     FaceMatcherEngine.clearCache()
-                    FaceMatcherEngine.warmUpCache(loaded.students)
+                    FaceMatcherEngine.warmUpCache(loaded.students, this)
                     Toast.makeText(this, "✔ डेटा रिस्टोर हो गया (${loaded.students.size} छात्र)", Toast.LENGTH_SHORT).show()
                     webView.reload()
                 } else {
@@ -250,13 +250,15 @@ class AdminActivity : AppCompatActivity() {
     }
 
     private fun captureAndVerifyKycFace(rootContainer: FrameLayout, overlay: FrameLayout) {
-        val frameBmp = kycPreviewView?.bitmap
-        if (frameBmp == null) {
+        val rawFrameBmp = kycPreviewView?.bitmap
+        if (rawFrameBmp == null) {
             Toast.makeText(this, "कैमरा तैयार नहीं है", Toast.LENGTH_SHORT).show()
             return
         }
 
-        val inputImage = InputImage.fromBitmap(frameBmp, 0)
+        // लाइव स्कैनर के समान ही सटीक कोऑर्डिनेट और तेज़ डिटेक्शन के लिए 640p फ्रेम का उपयोग
+        val detectBmp = FaceMatcherEngine.downscaleFrameForFastDetection(rawFrameBmp, 640)
+        val inputImage = InputImage.fromBitmap(detectBmp, 0)
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
                 if (faces.isEmpty()) {
@@ -264,15 +266,15 @@ class AdminActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
-                val (isValid, qualityMsg) = FaceMatcherEngine.validateKycFaceQuality(primaryFace, frameBmp)
+                val (isValid, qualityMsg) = FaceMatcherEngine.validateKycFaceQuality(primaryFace, detectBmp)
                 if (!isValid) {
                     Toast.makeText(this, qualityMsg, Toast.LENGTH_LONG).show()
                     return@addOnSuccessListener
                 }
 
-                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortrait(frameBmp, primaryFace)
+                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortrait(detectBmp, primaryFace)
                 val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
-                val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
+                val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(detectBmp, primaryFace)
 
                 showKycPhotoConfirmDialog(rawSquareBmp, previewDpBmp, alignedBiometricFace, rootContainer, overlay)
             }
@@ -375,20 +377,18 @@ class AdminActivity : AppCompatActivity() {
                     }
                     AppStorage.saveData(this@AdminActivity, parsed)
                     FaceMatcherEngine.clearCache()
-                    FaceMatcherEngine.warmUpCache(parsed.students)
+                    FaceMatcherEngine.warmUpCache(parsed.students, this@AdminActivity)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
         }
 
-        // ✅ [📊 रिपोर्ट्स] बटन पर 2.5 सेकंड Long-Press करने पर खुलने वाले चार्ट के लिए डेटा देना
         @JavascriptInterface
         fun getAiDiagnosticsJson(): String {
             return AiDiagnosticLogger.buildFullDiagnosticJson(this@AdminActivity)
         }
 
-        // ✅ चार्ट के अंदर "🔄 अभी सभी AI सेवाएं चेक करें" दबाने पर लाइव API जांच चलाना
         @JavascriptInterface
         fun triggerLiveAiHealthCheck() {
             Thread {
