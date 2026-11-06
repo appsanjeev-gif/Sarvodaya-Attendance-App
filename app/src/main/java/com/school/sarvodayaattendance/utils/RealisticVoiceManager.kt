@@ -53,7 +53,7 @@ object AiDiagnosticLogger {
                 val msg = detailObj.optString("message", "")
                 when {
                     status.contains("missing_permissions", ignoreCase = true) ->
-                        "Key में 'Text to Speech' परमिशन बंद है (ElevenLabs में नई Key बनाते समय Text-to-Speech चालू करें)"
+                        "Key में आवश्यक परमिशन ($msg) बंद है — ElevenLabs में Key बनाते समय 'Text to Speech' चालू रखें"
                     status.contains("unusual_activity", ignoreCase = true) ->
                         "ElevenLabs ने Free-Tier पर मोबाइल IP/VPN ब्लॉक लगाया है (unusual_activity_detected)"
                     status.contains("quota_exceeded", ignoreCase = true) ->
@@ -208,8 +208,11 @@ object AiDiagnosticLogger {
                         readTimeout = 5000
                     }
                     if (listConn.responseCode == 200) {
-                        status = "✅ Key वैध है (Models Active)"
-                        detail = "Key सक्रिय है (AQ.Ab8 Cloud Key • इन-बिल्ट स्लोगन + ElevenLabs तैयार)"
+                        val listResp = listConn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                        val modelsArr = JSONObject(listResp).optJSONArray("models")
+                        val modelCount = modelsArr?.length() ?: 0
+                        status = "✅ Key वैध है (Models OK • $modelCount उपलब्ध)"
+                        detail = "AQ.Ab8 Cloud Key मान्य है (इन-बिल्ट स्लोगन + ElevenLabs वॉइस सक्रिय)"
                     } else {
                         status = "❌ त्रुटि (HTTP 404)"
                         detail = "इस Key पर जनरेशन मॉडल उपलब्ध नहीं है"
@@ -265,8 +268,38 @@ object AiDiagnosticLogger {
                     recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", "बचे हुए अक्षर: $rem / $limit")
                 } else {
                     val errBody = try { conn.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
-                    status = "❌ त्रुटि (HTTP $code)"
-                    detail = parseElevenLabsErrorDetail(errBody, code)
+                    // यदि Restricted Key में केवल user_read बंद है लेकिन Text-to-Speech चालू है, तो सीधे TTS चेक करें
+                    if (code == 401 && errBody.contains("user_read", ignoreCase = true)) {
+                        val ttsUrl = "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"
+                        val ttsConn = (URL(ttsUrl).openConnection() as HttpURLConnection).apply {
+                            requestMethod = "POST"
+                            connectTimeout = 7000
+                            readTimeout = 9000
+                            doOutput = true
+                            setRequestProperty("xi-api-key", cleanKey)
+                            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                            setRequestProperty("Accept", "audio/mpeg")
+                            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126.0.0.0 Mobile")
+                        }
+                        val testPayload = JSONObject().apply {
+                            put("text", "नमस्ते")
+                            put("model_id", "eleven_multilingual_v2")
+                        }
+                        ttsConn.outputStream.use { it.write(testPayload.toString().toByteArray(Charsets.UTF_8)) }
+                        val ttsCode = ttsConn.responseCode
+                        if (ttsCode == 200) {
+                            status = "✅ Key चालू है (TTS Active • Restricted Key)"
+                            detail = "ऑडियो जनरेशन चालू है (Subscription Read परमिशन बंद होने से कोटा संख्या छिपी है)"
+                            recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ ElevenLabs सक्रिय", "Restricted Key से ऑडियो जनरेशन चालू है")
+                        } else {
+                            val ttsErr = try { ttsConn.errorStream?.bufferedReader()?.readText() ?: "" } catch (e: Exception) { "" }
+                            status = "❌ त्रुटि (HTTP $ttsCode)"
+                            detail = parseElevenLabsErrorDetail(ttsErr, ttsCode)
+                        }
+                    } else {
+                        status = "❌ त्रुटि (HTTP $code)"
+                        detail = parseElevenLabsErrorDetail(errBody, code)
+                    }
                 }
             } catch (e: UnknownHostException) {
                 status = "❌ इंटरनेट बंद है"
@@ -352,7 +385,7 @@ class RealisticVoiceManager(private val context: Context) {
         )
 
         rollingCacheExecutor.execute {
-            purgeInvalidCachedFiles()
+            purgeLegacyAndInvalidCachedFiles()
             maintainTwoHourRollingWelcomeCache()
         }
     }
@@ -428,20 +461,20 @@ class RealisticVoiceManager(private val context: Context) {
     private var loudnessEnhancer: LoudnessEnhancer? = null
     private var mediaPlayer: MediaPlayer? = null
 
+    // नया साफ फोल्डर v2 ताकि पुराने किसी भी बिल्ड की मूक/खराब .pcm फाइलें कभी न चलें
     private val voiceCacheDir: File by lazy {
-        File(appCtx.getExternalFilesDir(null) ?: appCtx.filesDir, "ai_studio_voice_bank").apply {
+        File(appCtx.getExternalFilesDir(null) ?: appCtx.filesDir, "ai_studio_voice_bank_v2").apply {
             if (!exists()) mkdirs()
         }
     }
 
     init {
         rollingCacheExecutor.execute {
-            purgeInvalidCachedFiles()
+            purgeLegacyAndInvalidCachedFiles()
             maintainTwoHourRollingWelcomeCache()
         }
     }
 
-    // यदि पुरानी या खराब/मूक .pcm फाइलें कैश में हैं, तो उन्हें जांचकर हटाएं ताकि असली आवाज़ रुके नहीं
     private fun isValidPcmAudioBytes(bytes: ByteArray): Boolean {
         if (bytes.size < 4800) return false
         return try {
@@ -454,17 +487,32 @@ class RealisticVoiceManager(private val context: Context) {
             while (idx < totalSamples) {
                 val s = abs(buf.getShort(idx * 2).toInt())
                 if (s > peak) peak = s
-                if (s > 180) nonZeroSamples++
+                if (s > 200) nonZeroSamples++
                 idx += step
             }
-            peak > 600 && nonZeroSamples > 12
+            peak > 700 && nonZeroSamples > 15
         } catch (e: Exception) {
             false
         }
     }
 
-    private fun purgeInvalidCachedFiles() {
+    private fun purgeLegacyAndInvalidCachedFiles() {
         try {
+            // पुराने फोल्डर "ai_studio_voice_bank" की सभी पुरानी खराब .pcm फाइलें स्थायी रूप से हटाएं
+            val oldDir = File(appCtx.getExternalFilesDir(null) ?: appCtx.filesDir, "ai_studio_voice_bank")
+            if (oldDir.exists()) {
+                oldDir.listFiles()?.forEach { f ->
+                    if (f.name.endsWith(".pcm")) {
+                        try { f.delete() } catch (e: Exception) {}
+                    } else if (f.name.endsWith(".mp3") && f.length() > 1500L) {
+                        val dest = File(voiceCacheDir, f.name)
+                        if (!dest.exists()) {
+                            try { f.copyTo(dest, overwrite = false) } catch (e: Exception) {}
+                        }
+                    }
+                }
+            }
+
             voiceCacheDir.listFiles()?.forEach { file ->
                 if (file.name.endsWith(".pcm")) {
                     val bytes = try { file.readBytes() } catch (e: Exception) { ByteArray(0) }
@@ -528,7 +576,6 @@ class RealisticVoiceManager(private val context: Context) {
         val targetPcm = File(voiceCacheDir, "welcome_slot_$slotId.pcm")
         val targetMp3 = File(voiceCacheDir, "welcome_slot_$slotId.mp3")
 
-        // 1. पहले ElevenLabs Key उपलब्ध होने पर तुरंत MP3 आवाज़ बनाएं (क्योंकि ElevenLabs 100% स्थिर है)
         val elevenPool = getElevenLabsKeyPool()
         for (attempt in elevenPool.indices) {
             val idx = (elevenKeyIndex.getAndIncrement() % elevenPool.size).let { if (it < 0) it + elevenPool.size else it }
@@ -543,7 +590,6 @@ class RealisticVoiceManager(private val context: Context) {
             if (code != 429 && code != 401 && code != 403) break
         }
 
-        // 2. फिर Gemini TTS आज़माएं (केवल AIza वाली Keys पर)
         val geminiPool = getGeminiKeyPool().filter { it.startsWith("AIza") }
         for (attempt in geminiPool.indices) {
             val idx = (geminiKeyIndex.getAndIncrement() % geminiPool.size).let { if (it < 0) it + geminiPool.size else it }
@@ -786,7 +832,6 @@ class RealisticVoiceManager(private val context: Context) {
         }
     }
 
-    // सिंगल थ्रेड में ब्लॉकिंग प्लेबैक: जब तक एक वाक्य पूरा न बज जाए, तब तक कोई दूसरा स्कैन उसे बीच में नहीं काटेगा
     private fun speakHindiInternalBlocking(text: String, boostFactor: Float) {
         scheduleSpeakingUnlock(12000L)
 
@@ -797,13 +842,11 @@ class RealisticVoiceManager(private val context: Context) {
         val file1 = File(voiceCacheDir, "${md5Hash("${chosenVoice.name}_$text")}.pcm")
         val file2 = File(voiceCacheDir, "${md5Hash("${otherVoice.name}_$text")}.pcm")
 
-        // 1. पहले वैध ElevenLabs MP3 कैश जांचें
         if (mp3CacheFile.exists() && mp3CacheFile.length() > 1200) {
             AiDiagnosticLogger.recordEvent(appCtx, "VOICE", "4. AI मानवीय आवाज़ (TTS)", "✅ कैश ऑडियो (ElevenLabs)", "सेव की गई ElevenLabs आवाज़ तुरंत चलाई गई")
             if (playMp3FileBlocking(mp3CacheFile)) return
         }
 
-        // 2. फिर वैध PCM कैश जांचें (यदि खराब हो तो तुरंत हटा दें)
         for (pcmFile in listOf(file1, file2)) {
             if (pcmFile.exists()) {
                 val bytes = try { pcmFile.readBytes() } catch (e: Exception) { ByteArray(0) }
@@ -825,13 +868,12 @@ class RealisticVoiceManager(private val context: Context) {
                 "VOICE",
                 "4. AI मानवीय आवाज़ (TTS)",
                 "❌ कोई TTS Key नहीं",
-                "कृपया ElevenLabs Key या मानक AIza... Google Key डालें"
+                "कृपया चालू ElevenLabs Key (Text-to-Speech परमिशन सहित) या मानक AIza... Google Key डालें"
             )
             isCurrentlySpeaking = false
             return
         }
 
-        // 3. पहले ElevenLabs से आवाज़ बनाएं और पूरी सुनाएं (केवल ElevenLabs Key होने पर भी 100% तुरंत काम करेगा)
         if (elevenPool.isNotEmpty()) {
             val poolSize = elevenPool.size
             for (attempt in 0 until poolSize) {
@@ -849,7 +891,6 @@ class RealisticVoiceManager(private val context: Context) {
             }
         }
 
-        // 4. यदि ElevenLabs न हो, तो Gemini TTS (AIza Keys) से आवाज़ बनाएं
         if (geminiPool.isNotEmpty()) {
             val poolSize = geminiPool.size
             for (attempt in 0 until poolSize) {
@@ -1018,7 +1059,6 @@ class RealisticVoiceManager(private val context: Context) {
         return Triple(null, lastCode, lastReason)
     }
 
-    // MP3 को पूरा बजने तक voiceExecutor थ्रेड को होल्ड रखें ताकि अगली आवाज़ उसे काटे नहीं
     private fun playMp3FileBlocking(mp3File: File): Boolean {
         val doneLatch = CountDownLatch(1)
         var startedOk = false
