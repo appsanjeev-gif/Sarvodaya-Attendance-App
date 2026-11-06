@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -111,10 +112,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 128-D जैसी सुपर-फास्ट स्पीड के लिए हर 260ms पर नॉन-ब्लॉकिंग फ्रेम चेक
     private val autoScanLoop = object : Runnable {
         override fun run() {
             performLiveFrameCheck(false)
-            uiHandler.postDelayed(this, 420)
+            uiHandler.postDelayed(this, 260)
         }
     }
 
@@ -241,7 +243,7 @@ class MainActivity : AppCompatActivity() {
         FaceMatcherEngine.warmUpCache(payload.students, this)
         refreshScannerModeUI()
         updateLiveSchoolTicker()
-        uiHandler.postDelayed(autoScanLoop, 500)
+        uiHandler.postDelayed(autoScanLoop, 350)
     }
 
     override fun onPause() {
@@ -324,22 +326,26 @@ class MainActivity : AppCompatActivity() {
     private fun performLiveFrameCheck(isManualTap: Boolean) {
         if (isProcessingFrame) return
         val now = System.currentTimeMillis()
-        if (!isManualTap && (now - lastScanTimestamp < 850)) return
+        if (!isManualTap && (now - lastScanTimestamp < 550)) return
 
-        val frameBmp: Bitmap = previewView.bitmap ?: return
+        val rawFrameBmp: Bitmap = previewView.bitmap ?: return
         isProcessingFrame = true
 
-        val inputImage = InputImage.fromBitmap(frameBmp, 0)
+        // 480px पर डाउनस्केल करके ML Kit को दें ताकि फेस डिटेक्शन 20ms में पूरा हो जाए
+        val fastFrameBmp = FaceMatcherEngine.downscaleFrameForFastDetection(rawFrameBmp, 480)
+        val inputImage = InputImage.fromBitmap(fastFrameBmp, 0)
+
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
                 if (faces.isEmpty()) {
                     emptyFrameCount++
                     pendingCandidateId = null
                     pendingCandidateHits = 0
-                    if (emptyFrameCount >= 4) {
+                    if (emptyFrameCount >= 3) {
                         lastSpokenStudentId = null
                         sameStudentScanStreak = 0
                         hasSpokenVipForCurrentFace = false
+                        tvLiveStatus.text = "🟢 लाइव स्कैन"
                     }
                     if (isManualTap) {
                         showResultBanner("error", null, "कैमरे में चेहरा नहीं दिखा!", 2000)
@@ -353,17 +359,16 @@ class MainActivity : AppCompatActivity() {
 
                 if (!FaceMatcherEngine.isLiveFaceValidForScan(primaryFace)) {
                     if (isManualTap) {
-                        showResultBanner("error", null, "कृपया आँखें खुली रखें और सीधे देखें!", 2000)
+                        showResultBanner("error", null, "कृपया कैमरे की ओर सीधे देखें!", 2000)
                     }
                     isProcessingFrame = false
                     return@addOnSuccessListener
                 }
 
-                // ऑफलाइन 192-D बायोमेट्रिक मिलान को बैकग्राउंड थ्रेड पर चलाएं ताकि कैमरा कभी हैंग न हो (0 इंटरनेट देरी)
                 val studentsSnapshot = payload.students.toList()
                 scanWorkerExecutor.execute {
                     try {
-                        val alignedFace = FaceMatcherEngine.alignAndCropFaceBitmap(frameBmp, primaryFace)
+                        val alignedFace = FaceMatcherEngine.alignAndCropFaceBitmap(fastFrameBmp, primaryFace)
                         val matchResult = FaceMatcherEngine.findBestMatchDetailed(alignedFace, studentsSnapshot)
 
                         uiHandler.post {
@@ -374,20 +379,21 @@ class MainActivity : AppCompatActivity() {
                                     isProcessingFrame = false
                                     return@post
                                 }
-                                if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (currentMs - lastScanTimestamp < 3800)) {
+                                if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (currentMs - lastScanTimestamp < 3200)) {
                                     isProcessingFrame = false
                                     return@post
                                 }
 
-                                // यदि स्कोर 82% से कम (72%..81%) है, तो 100% सटीकता के लिए लगातार 2 फ्रेम (~0.4 सेकंड) में पुष्टि करें
-                                if (!isManualTap && matchResult.matchPercentage < 82) {
-                                    if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 2200L) {
+                                // यदि बॉर्डरलाइन केस (needsSecondFrameConfirm) है, तो अनजान चेहरे से बचाव के लिए लगातार 2 फ्रेम (~0.3s) की पुष्टि करें
+                                if (!isManualTap && matchResult.needsSecondFrameConfirm) {
+                                    if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 1800L) {
                                         pendingCandidateHits++
                                     } else {
                                         pendingCandidateId = matchedStudent.id
                                         pendingCandidateHits = 1
                                     }
                                     pendingCandidateLastSeenMs = currentMs
+                                    tvLiveStatus.text = "🔍 जाँच: ${matchedStudent.name.substringBefore(" ")} (${matchResult.matchPercentage}%)"
                                     if (pendingCandidateHits < 2) {
                                         isProcessingFrame = false
                                         return@post
@@ -397,10 +403,12 @@ class MainActivity : AppCompatActivity() {
                                 pendingCandidateHits = 0
                                 pendingCandidateId = null
                                 lastScanTimestamp = currentMs
+                                tvLiveStatus.text = "🟢 लाइव स्कैन"
                                 handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
                             } else {
                                 pendingCandidateHits = 0
                                 pendingCandidateId = null
+                                tvLiveStatus.text = "🟢 लाइव स्कैन"
                                 if (isVipInspectionModeActive) {
                                     if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
                                         hasSpokenVipForCurrentFace = true
@@ -412,7 +420,7 @@ class MainActivity : AppCompatActivity() {
                                     if (payload.students.isEmpty()) {
                                         showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
                                     } else {
-                                        showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (मिलान: ${matchResult.matchPercentage}%)", 2500)
+                                        showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (सर्वोच्च: ${matchResult.matchPercentage}%)", 2500)
                                         voiceManager.speakGreeting("error", "")
                                     }
                                 }
@@ -450,15 +458,15 @@ class MainActivity : AppCompatActivity() {
             list.add(stu.id)
             AppStorage.saveData(this, payload)
             updateLiveSchoolTicker()
-            showResultBanner("success", stu, "✔ उपस्थित दर्ज (मैच: $matchPct%)", 4000)
+            showResultBanner("success", stu, "✔ उपस्थित दर्ज (मैच: $matchPct%)", 3800)
             voiceManager.speakGreeting("success", stu.name)
         } else {
             if (sameStudentScanStreak >= 3) {
                 val firstName = stu.name.trim().substringBefore(" ")
-                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName! ($matchPct%)", 4200)
+                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName! ($matchPct%)", 4000)
                 voiceManager.speakGreeting("move_away", stu.name)
             } else {
-                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है (मैच: $matchPct%)", 3500)
+                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है (मैच: $matchPct%)", 3200)
                 voiceManager.speakGreeting("warning", stu.name)
             }
         }
