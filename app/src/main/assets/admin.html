@@ -453,7 +453,7 @@
   function handleDeleteBtnPressEnd() {
     clearTimeout(deleteBtnTimer);
     if (!deleteBtnLongTriggered) {
-      showToast('⚠️ छात्र को हटाने के लिए [🗑️ हटाएं] को 1.5 सेकंड दबाए रखें');
+      showToast('⚠️ छात्र को हटाने के लिए [🗑️] को 1.5 सेकंड दबाए रखें');
     }
   }
   function handleDeleteBtnPressCancel() {
@@ -470,7 +470,7 @@
       '<div style="background:#fef2f2;border:2px solid #dc2626;border-radius:12px;padding:12px;margin-top:10px;text-align:center;">' +
         '<div style="font-size:14.5px;font-weight:900;color:#b91c1c;margin-bottom:4px;">🚨 अंतिम चेतावनी: डेटा स्थायी रूप से मिट जाएगा!</div>' +
         '<div style="font-size:13px;color:#0f172a;font-weight:700;margin-bottom:8px;">क्या आप वाकई <b>' + s.name + ' (रोल: ' + formatRollTwoDigits(s.roll) + ')</b> की प्रोफाइल और 192-D बायोमेट्रिक डेटा हटाना चाहते हैं?</div>' +
-        '<input type="password" id="delStuPinInput" maxlength="6" inputmode="numeric" placeholder="यहाँ 6-अंकों का एडमिन पिन डालें" style="text-align:center;background:#fff;border:2px solid #dc2626;margin-bottom:8px;font-size:16px;" oninput="if(this.value.length===6)confirmStudentDeleteWithPin(\'' + s.id + '\')">' +
+        '<input type="password" id="delStuPinInput" maxlength="6" inputmode="numeric" placeholder="यहाँ 6-अंकों का एडमिन पिन डालें" style="text-align:center;background:#fff;border:2px solid #dc2626;margin-bottom:8px;font-size:16px;">' +
         '<div style="display:flex;gap:8px;">' +
           '<button type="button" class="btn-danger" style="flex:1;background:#dc2626;color:#fff;" onclick="confirmStudentDeleteWithPin(\'' + s.id + '\')">🗑️ पिन जांचें व हटाएं</button>' +
           '<button type="button" class="btn-edit-sm" onclick="document.getElementById(\'deletePinConfirmZone\').style.display=\'none\'">रद्द करें</button>' +
@@ -1280,7 +1280,7 @@
       '<div class="att-summary-bar"><div style="font-weight:900;font-size:14.5px;color:#1e3a8a;">📊 उपस्थिति: ' + stStats.pct + '% (' + stStats.presentDays + '/' + stStats.totalDays + ')</div><div class="att-history-box">' + fullHistoryRows + '</div></div>' +
       '<div style="display:flex;justify-content:flex-end;gap:8px;">' +
         '<button type="button" class="btn-edit-sm" onclick="closeModal(\'studentFullDetailsModal\');openEditStudentModal(\'' + s.id + '\')">✏️ सुधारें</button>' +
-        '<button type="button" class="btn-danger" ' + delEvents + '>🗑️ हटाएं (1.5s दबाएं)</button>' +
+        '<button type="button" class="btn-danger" style="padding:8px 13px;font-size:16px;" ' + delEvents + '>🗑️</button>' +
       '</div>' +
       '<div id="deletePinConfirmZone" style="display:none;"></div>';
     document.getElementById('studentFullDetailsModal').classList.add('open');
