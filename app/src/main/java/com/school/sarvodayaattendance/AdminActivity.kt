@@ -256,8 +256,8 @@ class AdminActivity : AppCompatActivity() {
             return
         }
 
-        // लाइव स्कैनर के समान ही सटीक कोऑर्डिनेट और तेज़ डिटेक्शन के लिए 640p फ्रेम का उपयोग
-        val detectBmp = FaceMatcherEngine.downscaleFrameForFastDetection(rawFrameBmp, 640)
+        // लाइव स्कैनर के समान ही 480p फ्रेम का उपयोग ताकि KYC और Live Scan दोनों का 192-D वेक्टर 100% समान बने
+        val detectBmp = FaceMatcherEngine.downscaleFrameForFastDetection(rawFrameBmp, 480)
         val inputImage = InputImage.fromBitmap(detectBmp, 0)
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
@@ -272,7 +272,7 @@ class AdminActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortrait(detectBmp, primaryFace)
+                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortrait(rawFrameBmp, primaryFace)
                 val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
                 val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(detectBmp, primaryFace)
 
