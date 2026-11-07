@@ -442,8 +442,7 @@ object FaceMatcherEngine {
         try {
             val vm = RealisticVoiceManager(context)
             val rawKeys = vm.getGeminiKeysString()
-            val keyPool = rawKeys.split(",", "
-", ";", " ")
+            val keyPool = rawKeys.split(",", "\n", ";", " ")
                 .map { it.trim() }
                 .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
             val apiKey = keyPool.firstOrNull()
