@@ -24,6 +24,7 @@ import android.text.TextWatcher
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.Button
@@ -97,13 +98,18 @@ class MainActivity : AppCompatActivity() {
     private var sameStudentScanStreak: Int = 0
     private var emptyFrameCount: Int = 0
 
-    // एक चेहरा = एक हाज़िरी लॉक (ताकि एक व्यक्ति के खड़े रहने पर किसी दूसरे रोल नंबर की हाज़िरी कभी न लगे)
+    // एक चेहरा = एक हाज़िरी लॉक (ताकि एक ही चेहरे से अलग-अलग रोल नंबर की हाज़िरी कभी न लगे)
     private var lockedFaceSessionStudentId: String? = null
     private var lockedSessionTimestamp: Long = 0L
 
     private var pendingCandidateId: String? = null
     private var pendingCandidateHits: Int = 0
     private var pendingCandidateLastSeenMs: Long = 0L
+
+    // 192-D री-केवाईसी पुष्टि पॉप-अप (3.4 सेकंड टाइमआउट)
+    private var reKycDialog: AlertDialog? = null
+    private var isReKycDialogShowing = false
+    private var reKycTimeoutRunnable: Runnable? = null
 
     private val scanWorkerExecutor = Executors.newSingleThreadExecutor()
     private val uiHandler = Handler(Looper.getMainLooper())
@@ -251,6 +257,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         uiHandler.removeCallbacks(autoScanLoop)
+        dismissReKycDialogSilent()
     }
 
     private fun updateLiveSchoolTicker() {
@@ -326,7 +333,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun performLiveFrameCheck(isManualTap: Boolean) {
-        // यदि मैनुअल [स्कैन करें] बटन दबाया गया है, तो तुरंत प्राथमिकता दें
+        if (isReKycDialogShowing) return
         if (isProcessingFrame && !isManualTap) return
         val now = System.currentTimeMillis()
         if (!isManualTap && (now - lastScanTimestamp < 550)) return
@@ -351,7 +358,7 @@ class MainActivity : AppCompatActivity() {
                         tvLiveStatus.text = "🟢 लाइव स्कैन"
                     }
                     if (isManualTap) {
-                        showResultBanner("error", null, "कैमरे में चेहरा नहीं दिखा!", 2000)
+                        showResultBanner("error", null, "कैमरे में चेहरा नहीं दिखा!", 3400L)
                     }
                     isProcessingFrame = false
                     return@addOnSuccessListener
@@ -364,12 +371,10 @@ class MainActivity : AppCompatActivity() {
                     fastFrameBmp.height
                 )
 
-                // यदि चेहरा अधूरा है (जैसे केवल माथा) या बहुत दूर है, तो ऊपर लाइव स्टेटस में तुरंत स्पष्ट संदेश दिखाएं
-                // (लेकिन पिछला pendingCandidateHits तुरंत 0 न करें ताकि 1 फ्रेम की झपक से स्कैन अटक न जाए)
                 if (!isFaceValid) {
                     tvLiveStatus.text = gateMsg
                     if (isManualTap) {
-                        showResultBanner("error", null, gateMsg, 2200)
+                        showResultBanner("error", null, gateMsg, 3400L)
                     }
                     isProcessingFrame = false
                     return@addOnSuccessListener
@@ -388,7 +393,7 @@ class MainActivity : AppCompatActivity() {
                             if (matchedStudent != null) {
                                 val currentMs = System.currentTimeMillis()
 
-                                // एक चेहरा = एक हाज़िरी लॉक: जब तक पिछला व्यक्ति कैमरे के सामने से हट नहीं जाता (या 3.8 सेकंड पूरे नहीं होते),
+                                // एक चेहरा = एक हाज़िरी लॉक: जब तक पिछला व्यक्ति कैमरे के सामने से हट नहीं जाता (या 3.8s पूरे नहीं होते),
                                 // तब तक ऑटो-स्कैन में किसी दूसरे रोल नंबर की हाज़िरी नहीं लगेगी
                                 val activeLockId = lockedFaceSessionStudentId
                                 if (!isManualTap && activeLockId != null && activeLockId != matchedStudent.id && (currentMs - lockedSessionTimestamp < 3800L)) {
@@ -405,7 +410,7 @@ class MainActivity : AppCompatActivity() {
                                     return@post
                                 }
 
-                                // ऑटो-स्कैन में यदि स्कोर 74%..87% के बीच है, तो 2.2 सेकंड की विंडो में 2 हिट्स से पुष्टि करें
+                                // ऑटो-स्कैन में यदि स्कोर 74%..87% के बीच है, तो 2.2s की विंडो में 2 हिट्स से पुष्टि करें
                                 if (!isManualTap && matchResult.needsSecondFrameConfirm) {
                                     if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 2200L) {
                                         pendingCandidateHits++
@@ -423,11 +428,26 @@ class MainActivity : AppCompatActivity() {
 
                                 pendingCandidateHits = 0
                                 pendingCandidateId = null
-                                lastScanTimestamp = currentMs
-                                lockedFaceSessionStudentId = matchedStudent.id
-                                lockedSessionTimestamp = currentMs
-                                tvLiveStatus.text = "🟢 लाइव स्कैन"
-                                handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
+
+                                // ★ मुख्य सुरक्षा जांच: क्या इस छात्र के पास 192 पॉइंट्स वाला नया वेक्टर मौजूद है?
+                                if (!FaceMatcherEngine.hasVerified192D(matchedStudent)) {
+                                    // 192-D री-केवाईसी नहीं हुई है -> पॉप-अप (Dialog) और Name/Details BOX 3.4 सेकंड तक रहें!
+                                    tvLiveStatus.text = "⚠️ 192-D री-केवाईसी पुष्टि (3.4s)"
+                                    showResultBanner(
+                                        "warning",
+                                        matchedStudent,
+                                        "⚠️ 192-D री-केवाईसी पक्का करें (3.4s)",
+                                        3400L
+                                    )
+                                    showReKycApprovalDialog(matchedStudent, matchResult.matchPercentage, alignedFace)
+                                } else {
+                                    // 192-D पहले से मौजूद है -> सीधी उपस्थिति
+                                    lastScanTimestamp = currentMs
+                                    lockedFaceSessionStudentId = matchedStudent.id
+                                    lockedSessionTimestamp = currentMs
+                                    tvLiveStatus.text = "🟢 लाइव स्कैन"
+                                    handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
+                                }
                             } else {
                                 if (isVipInspectionModeActive) {
                                     tvLiveStatus.text = "✨ VIP स्वागत मोड"
@@ -439,9 +459,9 @@ class MainActivity : AppCompatActivity() {
                                 } else if (isManualTap) {
                                     lastScanTimestamp = System.currentTimeMillis()
                                     if (payload.students.isEmpty()) {
-                                        showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 2000)
+                                        showResultBanner("error", null, "कोई छात्र पंजीकृत नहीं है!", 3400L)
                                     } else {
-                                        showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (सर्वोच्च: ${matchResult.matchPercentage}%)", 2500)
+                                        showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (सर्वोच्च: ${matchResult.matchPercentage}%)", 3400L)
                                         voiceManager.speakGreeting("error", "")
                                     }
                                 } else {
@@ -462,7 +482,171 @@ class MainActivity : AppCompatActivity() {
             }
     }
 
-    private fun handleMatchedStudent(stu: Student, matchPct: Int = 92) {
+    // 192 पॉइंट्स वाले नए वेक्टर की पुष्टि के लिए पॉप-अप (Dialog) - 3.4 सेकंड टाइमआउट
+    private fun showReKycApprovalDialog(stu: Student, matchPct: Int, liveAlignedFace: Bitmap) {
+        dismissReKycDialogSilent()
+        isReKycDialogShowing = true
+
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(42, 36, 42, 36)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#0F172A"))
+                cornerRadius = 38f
+                setStroke(3, Color.parseColor("#F59E0B")) // आकर्षक अंबर बॉर्डर
+            }
+        }
+
+        val titleTv = TextView(this).apply {
+            text = "⚠️ 192-D री-केवाईसी पुष्टि"
+            textSize = 18f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.parseColor("#FBBF24"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 18)
+        }
+
+        // छात्र की फोटो
+        val ivPhoto = ImageView(this).apply {
+            val p0 = stu.photos.firstOrNull()
+            val bmp = if (!p0.isNullOrBlank()) FaceMatcherEngine.decodeBase64Bitmap(p0) else liveAlignedFace
+            if (bmp != null) {
+                setImageBitmap(FaceMatcherEngine.createFramedResultCardBitmap(bmp))
+            }
+            layoutParams = LinearLayout.LayoutParams(180, 180).apply {
+                gravity = Gravity.CENTER_HORIZONTAL
+                setMargins(0, 0, 0, 16)
+            }
+        }
+
+        val nameTv = TextView(this).apply {
+            text = stu.name
+            textSize = 21f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+
+        val detailsTv = TextView(this).apply {
+            text = "कक्षा: ${stu.className} | रोल: ${AppStorage.formatRoll(stu.roll)} | मैच: $matchPct%"
+            textSize = 14f
+            setTextColor(Color.parseColor("#38BDF8"))
+            gravity = Gravity.CENTER
+            setPadding(0, 6, 0, 14)
+        }
+
+        val promptTv = TextView(this).apply {
+            text = "क्या यह छात्र उपस्थित हैं? री-केवाईसी पक्का करें (3.4s):"
+            textSize = 13f
+            setTextColor(Color.parseColor("#CBD5E1"))
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 20)
+        }
+
+        // बटन कंटेनर
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        val btnCancel = Button(this).apply {
+            text = "✕ गलत (रद्द)"
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#475569"))
+                cornerRadius = 20f
+            }
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(0, 0, 14, 0)
+            }
+            layoutParams = lp
+            setOnClickListener {
+                dismissReKycDialogSilent()
+            }
+        }
+
+        val btnConfirm = Button(this).apply {
+            text = "✔ पक्का करें (OK)"
+            textSize = 14f
+            setTypeface(null, Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            background = GradientDrawable().apply {
+                setColor(Color.parseColor("#16A34A"))
+                cornerRadius = 20f
+            }
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.25f)
+            layoutParams = lp
+            setOnClickListener {
+                // 1. लाइव चेहरे से शुद्ध 192-D वेक्टर निकालें
+                val emb192 = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(liveAlignedFace)
+                if (emb192.size == FaceMatcherEngine.getEmbeddingDimension()) {
+                    stu.embeddings.clear()
+                    stu.embeddings.add(emb192)
+                    AppStorage.saveData(this@MainActivity, payload)
+                    FaceMatcherEngine.updateSingleStudentCache(stu)
+                }
+
+                dismissReKycDialogSilent()
+
+                // 2. उपस्थिति दर्ज करें और परिणाम दिखाएं (3.4 सेकंड)
+                val nowMs = System.currentTimeMillis()
+                lastScanTimestamp = nowMs
+                lockedFaceSessionStudentId = stu.id
+                lockedSessionTimestamp = nowMs
+                tvLiveStatus.text = "🟢 लाइव स्कैन"
+                handleMatchedStudent(stu, matchPct, isReKycApproved = true)
+            }
+        }
+
+        btnRow.addView(btnCancel)
+        btnRow.addView(btnConfirm)
+
+        container.addView(titleTv)
+        container.addView(ivPhoto)
+        container.addView(nameTv)
+        container.addView(detailsTv)
+        container.addView(promptTv)
+        container.addView(btnRow)
+
+        val dialog = AlertDialog.Builder(this)
+            .setView(container)
+            .setCancelable(true)
+            .create()
+
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.setOnDismissListener {
+            dismissReKycDialogSilent()
+        }
+
+        reKycDialog = dialog
+        dialog.show()
+
+        // 3.4 सेकंड का टाइमआउट: यदि 3.4s में टच नहीं किया, तो अपने-आप बंद हो जाए और अगला स्कैन ले
+        reKycTimeoutRunnable = Runnable {
+            dismissReKycDialogSilent()
+        }
+        uiHandler.postDelayed(reKycTimeoutRunnable!!, 3400L)
+    }
+
+    private fun dismissReKycDialogSilent() {
+        reKycTimeoutRunnable?.let { uiHandler.removeCallbacks(it) }
+        reKycTimeoutRunnable = null
+        if (!isFinishing && !isDestroyed && reKycDialog?.isShowing == true) {
+            try {
+                reKycDialog?.dismiss()
+            } catch (e: Exception) {}
+        }
+        reKycDialog = null
+        isReKycDialogShowing = false
+    }
+
+    private fun handleMatchedStudent(stu: Student, matchPct: Int = 92, isReKycApproved: Boolean = false) {
         val todayKey = AppStorage.getTodayShortKey()
         if (AppStorage.isSundayOrHoliday(payload, todayKey, stu.className)) {
             Toast.makeText(this, "🏖️ अवकाश", Toast.LENGTH_SHORT).show()
@@ -477,25 +661,29 @@ class MainActivity : AppCompatActivity() {
         }
 
         val list = payload.attendance.getOrPut(todayKey) { mutableListOf() }
+        val notePrefix = if (isReKycApproved) "✔ 192-D री-केवाईसी व " else "✔ "
         if (!list.contains(stu.id)) {
             list.add(stu.id)
             AppStorage.saveData(this, payload)
             updateLiveSchoolTicker()
-            showResultBanner("success", stu, "✔ उपस्थित दर्ज (मैच: $matchPct%)", 3800)
+            showResultBanner("success", stu, "${notePrefix}उपस्थित दर्ज (मैच: $matchPct%)", 3400L)
             voiceManager.speakGreeting("success", stu.name)
         } else {
-            if (sameStudentScanStreak >= 3) {
+            if (isReKycApproved) {
+                showResultBanner("success", stu, "✔ 192-D री-केवाईसी पक्की (हाज़िरी पहले से दर्ज)", 3400L)
+                voiceManager.speakGreeting("success", stu.name)
+            } else if (sameStudentScanStreak >= 3) {
                 val firstName = stu.name.trim().substringBefore(" ")
-                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName! ($matchPct%)", 4000)
+                showResultBanner("warning", stu, "😊 चलो अब आगे बढ़ो $firstName! ($matchPct%)", 3400L)
                 voiceManager.speakGreeting("move_away", stu.name)
             } else {
-                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है (मैच: $matchPct%)", 3200)
+                showResultBanner("warning", stu, "⚠️ पहले से दर्ज है (मैच: $matchPct%)", 3400L)
                 voiceManager.speakGreeting("warning", stu.name)
             }
         }
     }
 
-    private fun showResultBanner(type: String, stu: Student?, note: String, durationMs: Long) {
+    private fun showResultBanner(type: String, stu: Student?, note: String, durationMs: Long = 3400L) {
         tvResultDate.text = AppStorage.getTodayFullDot()
 
         if (stu != null && stu.photos.isNotEmpty()) {
@@ -688,6 +876,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        dismissReKycDialogSilent()
         scanWorkerExecutor.shutdown()
         voiceManager.shutdown()
     }
