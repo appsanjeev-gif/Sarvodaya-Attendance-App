@@ -11,7 +11,6 @@ import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.Color
-import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
@@ -98,6 +97,10 @@ class MainActivity : AppCompatActivity() {
     private var sameStudentScanStreak: Int = 0
     private var emptyFrameCount: Int = 0
 
+    // एक चेहरा = एक हाज़िरी लॉक: जब तक वर्तमान व्यक्ति कैमरे के सामने से हट नहीं जाता, किसी दूसरे रोल नंबर की हाज़िरी नहीं लगेगी
+    private var lockedFaceSessionStudentId: String? = null
+    private var lockedSessionTimestamp: Long = 0L
+
     private var pendingCandidateId: String? = null
     private var pendingCandidateHits: Int = 0
     private var pendingCandidateLastSeenMs: Long = 0L
@@ -112,7 +115,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 128-D जैसी सुपर-फास्ट स्पीड के लिए हर 260ms पर नॉन-ब्लॉकिंग फ्रेम चेक
     private val autoScanLoop = object : Runnable {
         override fun run() {
             performLiveFrameCheck(false)
@@ -325,13 +327,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun performLiveFrameCheck(isManualTap: Boolean) {
         if (isProcessingFrame) return
+        if (!FaceMatcherEngine.isReadyForLiveScan()) {
+            tvLiveStatus.text = "⏳ 192-D डेटा तैयार हो रहा है..."
+            return
+        }
+
         val now = System.currentTimeMillis()
-        if (!isManualTap && (now - lastScanTimestamp < 550)) return
+        // किसी एक छात्र की हाज़िरी लगने के बाद कम से कम 3.2 सेकंड का ग्लोबल विराम ताकि एक ही चेहरे से दूसरे छात्र की हाज़िरी न लगे
+        if (!isManualTap && (now - lastScanTimestamp < 700)) return
 
         val rawFrameBmp: Bitmap = previewView.bitmap ?: return
         isProcessingFrame = true
 
-        // 480px पर डाउनस्केल करके ML Kit को दें ताकि फेस डिटेक्शन 20ms में पूरा हो जाए
         val fastFrameBmp = FaceMatcherEngine.downscaleFrameForFastDetection(rawFrameBmp, 480)
         val inputImage = InputImage.fromBitmap(fastFrameBmp, 0)
 
@@ -341,8 +348,10 @@ class MainActivity : AppCompatActivity() {
                     emptyFrameCount++
                     pendingCandidateId = null
                     pendingCandidateHits = 0
+                    // जब व्यक्ति कैमरे के सामने से हट जाए (लगातार 3 खाली फ्रेम), तभी सेशन लॉक खोलें
                     if (emptyFrameCount >= 3) {
                         lastSpokenStudentId = null
+                        lockedFaceSessionStudentId = null
                         sameStudentScanStreak = 0
                         hasSpokenVipForCurrentFace = false
                         tvLiveStatus.text = "🟢 लाइव स्कैन"
@@ -354,18 +363,22 @@ class MainActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                emptyFrameCount = 0
+                // यदि एक से अधिक बड़े चेहरे बिल्कुल पास हों, तो केवल सबसे प्रमुख चेहरे को लें लेकिन पूरा चेहरा फ्रेम के अंदर होना अनिवार्य है
                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
 
-                if (!FaceMatcherEngine.isLiveFaceValidForScan(primaryFace)) {
+                if (!FaceMatcherEngine.isLiveFaceValidForScan(primaryFace, fastFrameBmp.width, fastFrameBmp.height)) {
+                    pendingCandidateId = null
+                    pendingCandidateHits = 0
                     if (isManualTap) {
-                        showResultBanner("error", null, "कृपया कैमरे की ओर सीधे देखें!", 2000)
+                        showResultBanner("error", null, "कृपया पूरा चेहरा कैमरे के घेरे के बीच में सीधा रखें!", 2200)
                     }
                     isProcessingFrame = false
                     return@addOnSuccessListener
                 }
 
+                emptyFrameCount = 0
                 val studentsSnapshot = payload.students.toList()
+
                 scanWorkerExecutor.execute {
                     try {
                         val alignedFace = FaceMatcherEngine.alignAndCropFaceBitmap(fastFrameBmp, primaryFace)
@@ -375,25 +388,34 @@ class MainActivity : AppCompatActivity() {
                             val matchedStudent = if (matchResult.isHighConfidence) matchResult.student else null
                             if (matchedStudent != null) {
                                 val currentMs = System.currentTimeMillis()
-                                if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
-                                    isProcessingFrame = false
-                                    return@post
-                                }
-                                if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (currentMs - lastScanTimestamp < 3200)) {
+
+                                // सुरक्षा कवच 1: यदि अभी-अभी किसी छात्र की हाज़िरी लगी है और वही चेहरा कैमरे के सामने से हटा नहीं है,
+                                // तो 4.5 सेकंड तक किसी दूसरे छात्र (अलग ID) की हाज़िरी लगने से रोकें!
+                                val activeLockId = lockedFaceSessionStudentId
+                                if (!isManualTap && activeLockId != null && activeLockId != matchedStudent.id && (currentMs - lockedSessionTimestamp < 4500L)) {
                                     isProcessingFrame = false
                                     return@post
                                 }
 
-                                // यदि बॉर्डरलाइन केस (needsSecondFrameConfirm) है, तो अनजान चेहरे से बचाव के लिए लगातार 2 फ्रेम (~0.3s) की पुष्टि करें
+                                if (!isManualTap && voiceManager.isCurrentlySpeaking && matchedStudent.id == lastSpokenStudentId) {
+                                    isProcessingFrame = false
+                                    return@post
+                                }
+                                if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (currentMs - lastScanTimestamp < 3800L)) {
+                                    isProcessingFrame = false
+                                    return@post
+                                }
+
+                                // सुरक्षा कवच 2: ऑटो-स्कैन में लगातार 2 फ्रेम (~0.3s) में एक ही छात्र की पुष्टि होना अनिवार्य है
                                 if (!isManualTap && matchResult.needsSecondFrameConfirm) {
-                                    if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 1800L) {
+                                    if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 1600L) {
                                         pendingCandidateHits++
                                     } else {
                                         pendingCandidateId = matchedStudent.id
                                         pendingCandidateHits = 1
                                     }
                                     pendingCandidateLastSeenMs = currentMs
-                                    tvLiveStatus.text = "🔍 जाँच: ${matchedStudent.name.substringBefore(" ")} (${matchResult.matchPercentage}%)"
+                                    tvLiveStatus.text = "🔍 पुष्टि: ${matchedStudent.name.substringBefore(" ")} (${matchResult.matchPercentage}%)"
                                     if (pendingCandidateHits < 2) {
                                         isProcessingFrame = false
                                         return@post
@@ -403,6 +425,8 @@ class MainActivity : AppCompatActivity() {
                                 pendingCandidateHits = 0
                                 pendingCandidateId = null
                                 lastScanTimestamp = currentMs
+                                lockedFaceSessionStudentId = matchedStudent.id
+                                lockedSessionTimestamp = currentMs
                                 tvLiveStatus.text = "🟢 लाइव स्कैन"
                                 handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
                             } else {
