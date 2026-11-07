@@ -97,7 +97,7 @@ class MainActivity : AppCompatActivity() {
     private var sameStudentScanStreak: Int = 0
     private var emptyFrameCount: Int = 0
 
-    // एक चेहरा = एक हाज़िरी लॉक: जब तक वर्तमान व्यक्ति कैमरे के सामने से हट नहीं जाता, किसी दूसरे रोल नंबर की हाज़िरी नहीं लगेगी
+    // एक चेहरा = एक हाज़िरी लॉक (ताकि एक व्यक्ति के खड़े रहने पर किसी दूसरे रोल नंबर की हाज़िरी कभी न लगे)
     private var lockedFaceSessionStudentId: String? = null
     private var lockedSessionTimestamp: Long = 0L
 
@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
     private val autoScanLoop = object : Runnable {
         override fun run() {
             performLiveFrameCheck(false)
-            uiHandler.postDelayed(this, 260)
+            uiHandler.postDelayed(this, 240)
         }
     }
 
@@ -245,7 +245,7 @@ class MainActivity : AppCompatActivity() {
         FaceMatcherEngine.warmUpCache(payload.students, this)
         refreshScannerModeUI()
         updateLiveSchoolTicker()
-        uiHandler.postDelayed(autoScanLoop, 350)
+        uiHandler.postDelayed(autoScanLoop, 300)
     }
 
     override fun onPause() {
@@ -326,15 +326,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun performLiveFrameCheck(isManualTap: Boolean) {
-        if (isProcessingFrame) return
-        if (!FaceMatcherEngine.isReadyForLiveScan()) {
-            tvLiveStatus.text = "⏳ 192-D डेटा तैयार हो रहा है..."
-            return
-        }
-
+        // यदि मैनुअल [स्कैन करें] बटन दबाया गया है, तो तुरंत प्राथमिकता दें
+        if (isProcessingFrame && !isManualTap) return
         val now = System.currentTimeMillis()
-        // किसी एक छात्र की हाज़िरी लगने के बाद कम से कम 3.2 सेकंड का ग्लोबल विराम ताकि एक ही चेहरे से दूसरे छात्र की हाज़िरी न लगे
-        if (!isManualTap && (now - lastScanTimestamp < 700)) return
+        if (!isManualTap && (now - lastScanTimestamp < 550)) return
 
         val rawFrameBmp: Bitmap = previewView.bitmap ?: return
         isProcessingFrame = true
@@ -346,12 +341,11 @@ class MainActivity : AppCompatActivity() {
             .addOnSuccessListener { faces ->
                 if (faces.isEmpty()) {
                     emptyFrameCount++
-                    pendingCandidateId = null
-                    pendingCandidateHits = 0
-                    // जब व्यक्ति कैमरे के सामने से हट जाए (लगातार 3 खाली फ्रेम), तभी सेशन लॉक खोलें
-                    if (emptyFrameCount >= 3) {
+                    if (emptyFrameCount >= 4) {
                         lastSpokenStudentId = null
                         lockedFaceSessionStudentId = null
+                        pendingCandidateId = null
+                        pendingCandidateHits = 0
                         sameStudentScanStreak = 0
                         hasSpokenVipForCurrentFace = false
                         tvLiveStatus.text = "🟢 लाइव स्कैन"
@@ -363,14 +357,19 @@ class MainActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                // यदि एक से अधिक बड़े चेहरे बिल्कुल पास हों, तो केवल सबसे प्रमुख चेहरे को लें लेकिन पूरा चेहरा फ्रेम के अंदर होना अनिवार्य है
                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
+                val (isFaceValid, gateMsg) = FaceMatcherEngine.evaluateLiveFaceGate(
+                    primaryFace,
+                    fastFrameBmp.width,
+                    fastFrameBmp.height
+                )
 
-                if (!FaceMatcherEngine.isLiveFaceValidForScan(primaryFace, fastFrameBmp.width, fastFrameBmp.height)) {
-                    pendingCandidateId = null
-                    pendingCandidateHits = 0
+                // यदि चेहरा अधूरा है (जैसे केवल माथा) या बहुत दूर है, तो ऊपर लाइव स्टेटस में तुरंत स्पष्ट संदेश दिखाएं
+                // (लेकिन पिछला pendingCandidateHits तुरंत 0 न करें ताकि 1 फ्रेम की झपक से स्कैन अटक न जाए)
+                if (!isFaceValid) {
+                    tvLiveStatus.text = gateMsg
                     if (isManualTap) {
-                        showResultBanner("error", null, "कृपया पूरा चेहरा कैमरे के घेरे के बीच में सीधा रखें!", 2200)
+                        showResultBanner("error", null, gateMsg, 2200)
                     }
                     isProcessingFrame = false
                     return@addOnSuccessListener
@@ -382,17 +381,17 @@ class MainActivity : AppCompatActivity() {
                 scanWorkerExecutor.execute {
                     try {
                         val alignedFace = FaceMatcherEngine.alignAndCropFaceBitmap(fastFrameBmp, primaryFace)
-                        val matchResult = FaceMatcherEngine.findBestMatchDetailed(alignedFace, studentsSnapshot)
+                        val matchResult = FaceMatcherEngine.findBestMatchDetailed(alignedFace, studentsSnapshot, isManualTap)
 
                         uiHandler.post {
                             val matchedStudent = if (matchResult.isHighConfidence) matchResult.student else null
                             if (matchedStudent != null) {
                                 val currentMs = System.currentTimeMillis()
 
-                                // सुरक्षा कवच 1: यदि अभी-अभी किसी छात्र की हाज़िरी लगी है और वही चेहरा कैमरे के सामने से हटा नहीं है,
-                                // तो 4.5 सेकंड तक किसी दूसरे छात्र (अलग ID) की हाज़िरी लगने से रोकें!
+                                // एक चेहरा = एक हाज़िरी लॉक: जब तक पिछला व्यक्ति कैमरे के सामने से हट नहीं जाता (या 3.8 सेकंड पूरे नहीं होते),
+                                // तब तक ऑटो-स्कैन में किसी दूसरे रोल नंबर की हाज़िरी नहीं लगेगी
                                 val activeLockId = lockedFaceSessionStudentId
-                                if (!isManualTap && activeLockId != null && activeLockId != matchedStudent.id && (currentMs - lockedSessionTimestamp < 4500L)) {
+                                if (!isManualTap && activeLockId != null && activeLockId != matchedStudent.id && (currentMs - lockedSessionTimestamp < 3800L)) {
                                     isProcessingFrame = false
                                     return@post
                                 }
@@ -401,21 +400,21 @@ class MainActivity : AppCompatActivity() {
                                     isProcessingFrame = false
                                     return@post
                                 }
-                                if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (currentMs - lastScanTimestamp < 3800L)) {
+                                if (!isManualTap && matchedStudent.id == lastSpokenStudentId && (currentMs - lastScanTimestamp < 3500L)) {
                                     isProcessingFrame = false
                                     return@post
                                 }
 
-                                // सुरक्षा कवच 2: ऑटो-स्कैन में लगातार 2 फ्रेम (~0.3s) में एक ही छात्र की पुष्टि होना अनिवार्य है
+                                // ऑटो-स्कैन में यदि स्कोर 74%..87% के बीच है, तो 2.2 सेकंड की विंडो में 2 हिट्स से पुष्टि करें
                                 if (!isManualTap && matchResult.needsSecondFrameConfirm) {
-                                    if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 1600L) {
+                                    if (pendingCandidateId == matchedStudent.id && (currentMs - pendingCandidateLastSeenMs) < 2200L) {
                                         pendingCandidateHits++
                                     } else {
                                         pendingCandidateId = matchedStudent.id
                                         pendingCandidateHits = 1
                                     }
                                     pendingCandidateLastSeenMs = currentMs
-                                    tvLiveStatus.text = "🔍 पुष्टि: ${matchedStudent.name.substringBefore(" ")} (${matchResult.matchPercentage}%)"
+                                    tvLiveStatus.text = "🔍 पहचान: ${matchedStudent.name.substringBefore(" ")} (${matchResult.matchPercentage}%)"
                                     if (pendingCandidateHits < 2) {
                                         isProcessingFrame = false
                                         return@post
@@ -430,10 +429,8 @@ class MainActivity : AppCompatActivity() {
                                 tvLiveStatus.text = "🟢 लाइव स्कैन"
                                 handleMatchedStudent(matchedStudent, matchResult.matchPercentage)
                             } else {
-                                pendingCandidateHits = 0
-                                pendingCandidateId = null
-                                tvLiveStatus.text = "🟢 लाइव स्कैन"
                                 if (isVipInspectionModeActive) {
+                                    tvLiveStatus.text = "✨ VIP स्वागत मोड"
                                     if (!hasSpokenVipForCurrentFace && !voiceManager.isCurrentlySpeaking) {
                                         hasSpokenVipForCurrentFace = true
                                         lastScanTimestamp = System.currentTimeMillis()
@@ -447,6 +444,8 @@ class MainActivity : AppCompatActivity() {
                                         showResultBanner("error", null, "चेहरा मैच नहीं हुआ! (सर्वोच्च: ${matchResult.matchPercentage}%)", 2500)
                                         voiceManager.speakGreeting("error", "")
                                     }
+                                } else {
+                                    tvLiveStatus.text = "🔍 स्कैनिंग... (${matchResult.matchPercentage}%)"
                                 }
                             }
                             isProcessingFrame = false
