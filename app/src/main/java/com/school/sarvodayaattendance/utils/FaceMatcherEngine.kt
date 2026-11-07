@@ -61,9 +61,6 @@ object FaceMatcherEngine {
         val centroidEmbedding: FloatArray
     )
 
-    private const val CLEAN_MIGRATION_PREF = "SarvodayaCleanBiometricV7"
-    private const val KEY_V7_CLEANUP_DONE = "v7_raw_cleanup_done"
-
     @Volatile
     private var tfliteInterpreter: Interpreter? = null
     private var embeddingDim: Int = 192
@@ -78,14 +75,15 @@ object FaceMatcherEngine {
     // वैज्ञानिक रूप से संतुलित 192-D बायोमेट्रिक थ्रेशोल्ड (तेज़ + 100% सटीक):
     // 1. INSTANT_PASS_COSINE (0.74f): उच्च समानता होने पर पहले ही फ्रेम (0.15s) में तुरंत हाज़िरी
     // 2. PASS_COSINE_THRESHOLD (0.675f): सामान्य व पुराने छात्रों के लिए पासिंग थ्रेशोल्ड (2 फ्रेम पुष्टि + स्पष्ट अंतर)
-    // 3. MIN_COSINE_MARGIN_GAP (0.045f): पहले और दूसरे छात्र के बीच न्यूनतम आवश्यक अंतर
-    // 4. MIN_POPULATION_GAP (0.072f): अन्य छात्रों के औसत स्कोर से न्यूनतम आवश्यक अंतर (अनजान चेहरों को रोकने के लिए)
+    // 3. MANUAL_TAP_COSINE_MIN (0.650f): [📷 स्कैन करें] बटन दबाने पर न्यूनतम पासिंग थ्रेशोल्ड
+    // 4. MIN_COSINE_MARGIN_GAP (0.045f): पहले और दूसरे छात्र के बीच न्यूनतम आवश्यक अंतर
+    // 5. MIN_POPULATION_GAP (0.070f): अन्य छात्रों के औसत स्कोर से न्यूनतम आवश्यक अंतर (अनजान चेहरों को रोकने के लिए)
     const val INSTANT_PASS_COSINE = 0.74f
     const val PASS_COSINE_THRESHOLD = 0.675f
-    const val MANUAL_TAP_COSINE_MIN = 0.655f
+    const val MANUAL_TAP_COSINE_MIN = 0.650f
     const val AI_ASSIST_COSINE_MIN = 0.60f
     const val MIN_COSINE_MARGIN_GAP = 0.045f
-    const val MIN_POPULATION_GAP = 0.072f
+    const val MIN_POPULATION_GAP = 0.070f
 
     // लाइव कैमरे के लिए सुपर-फास्ट डिटेक्टर (बिना किसी बैकग्राउंड कंटेंशन के)
     val detector: FaceDetector by lazy {
@@ -101,6 +99,21 @@ object FaceMatcherEngine {
     fun isNeuralModelReady(): Boolean = (tfliteInterpreter != null)
 
     fun isReadyForLiveScan(): Boolean = (tfliteInterpreter != null && initialWarmUpDone)
+
+    fun getEmbeddingDimension(): Int = embeddingDim
+
+    // जांचें कि छात्र के पास 192-D का शुद्ध नया बायोमेट्रिक वेक्टर मौजूद है या नहीं
+    fun hasVerified192D(student: Student): Boolean {
+        return student.embeddings.isNotEmpty() && student.embeddings.any { it.size == embeddingDim }
+    }
+
+    // छात्र का नया 192-D वेक्टर बनने के बाद इन-मेमोरी टेम्पलेट कैश तुरंत अपडेट करना
+    fun updateSingleStudentCache(student: Student) {
+        val built = buildStudentTemplate(student)
+        if (built != null) {
+            templateCache[student.id] = built
+        }
+    }
 
     @Synchronized
     fun initEngine(context: Context) {
@@ -187,7 +200,8 @@ object FaceMatcherEngine {
         templateCache.clear()
     }
 
-    // बिना ML Kit को ब्लॉक किए ~1 सेकंड में सभी 82 छात्रों के शुद्ध रॉ 192-D वेक्टर तैयार करना
+    // बिना ML Kit को ब्लॉक किए ~0.5 सेकंड में सभी 82 छात्रों के इन-मेमोरी टेम्पलेट तैयार करना
+    // (नोट: यह stu.embeddings को कभी ओवरराइट नहीं करता, ताकि बिना Re-KYC वाले छात्र 3.4s पुष्टि में आ सकें)
     fun warmUpCache(students: List<Student>, context: Context? = null) {
         if (students.isEmpty()) {
             initialWarmUpDone = true
@@ -197,37 +211,8 @@ object FaceMatcherEngine {
 
         Thread {
             try {
-                val appCtx = context?.applicationContext
-                val prefs = appCtx?.getSharedPreferences(CLEAN_MIGRATION_PREF, Context.MODE_PRIVATE)
-                val isV7Cleaned = prefs?.getBoolean(KEY_V7_CLEANUP_DONE, false) ?: false
-
-                var storageModified = false
-
                 for (stu in students) {
                     if (stu.photos.isEmpty() && stu.embeddings.isEmpty()) continue
-
-                    val hasValidDim = stu.embeddings.isNotEmpty() && stu.embeddings.all { it.size == embeddingDim }
-
-                    // यदि पिछली V6 बिल्ड के फिल्टर वाले वेक्टर सेव हो गए थे (!isV7Cleaned) या 192-D वेक्टर नहीं हैं,
-                    // तो फोटो से बिना किसी फिल्टर के शुद्ध 192-D वेक्टर बनाकर सेव करें (Live KYC को इसके बाद कभी ओवरराइट न करें)
-                    if (stu.photos.isNotEmpty() && (!isV7Cleaned || !hasValidDim)) {
-                        val cleanList = mutableListOf<List<Float>>()
-                        for (b64 in stu.photos.take(2)) {
-                            val bmp = decodeBase64Bitmap(b64) ?: continue
-                            val exactCrop = extractExactBiometricFaceFromStoredDp(bmp, 0.593f, 0.0247f)
-                            val vec = extractHighPrecisionKycEmbeddingList(exactCrop)
-                            if (vec.size == embeddingDim) {
-                                cleanList.add(vec)
-                            }
-                        }
-                        if (cleanList.isNotEmpty()) {
-                            stu.embeddings.clear()
-                            stu.embeddings.addAll(cleanList)
-                            storageModified = true
-                            templateCache.remove(stu.id)
-                        }
-                    }
-
                     if (!templateCache.containsKey(stu.id)) {
                         val built = buildStudentTemplate(stu)
                         if (built != null) {
@@ -235,27 +220,7 @@ object FaceMatcherEngine {
                         }
                     }
                 }
-
                 initialWarmUpDone = true
-
-                if (appCtx != null) {
-                    if (!isV7Cleaned) {
-                        prefs?.edit()?.putBoolean(KEY_V7_CLEANUP_DONE, true)?.apply()
-                    }
-                    if (storageModified) {
-                        try {
-                            val masterPayload = AppStorage.loadData(appCtx)
-                            val mapById = students.associateBy { it.id }
-                            for (s in masterPayload.students) {
-                                val updated = mapById[s.id]
-                                if (updated != null && updated.embeddings.isNotEmpty()) {
-                                    s.embeddings = updated.embeddings
-                                }
-                            }
-                            AppStorage.saveData(appCtx, masterPayload)
-                        } catch (e: Exception) {}
-                    }
-                }
             } finally {
                 initialWarmUpDone = true
                 isWarmingUp.set(false)
@@ -477,7 +442,8 @@ object FaceMatcherEngine {
         try {
             val vm = RealisticVoiceManager(context)
             val rawKeys = vm.getGeminiKeysString()
-            val keyPool = rawKeys.split(",", "\n", ";", " ")
+            val keyPool = rawKeys.split(",", "
+", ";", " ")
                 .map { it.trim() }
                 .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
             val apiKey = keyPool.firstOrNull()
@@ -630,7 +596,6 @@ object FaceMatcherEngine {
         return Bitmap.createScaledBitmap(cropped, 112, 112, true)
     }
 
-    // 300x300 या 320x320 सेव की गई प्रोफाइल फोटो से बिना ML Kit के 0.1ms में सटीक 0.96*box बायोमेट्रिक क्रॉप निकालना
     private fun extractExactBiometricFaceFromStoredDp(
         dpBmp: Bitmap,
         ratio: Float = 0.593f,
@@ -658,7 +623,6 @@ object FaceMatcherEngine {
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }
 
-    // शुद्ध रॉ पिक्सेल वेक्टर (बिना 112x112 पर Studio Filter चलाए!)
     fun extractHighPrecisionKycEmbeddingList(alignedFaceBmp: Bitmap): List<Float> {
         val v1 = computeEmbedding(alignedFaceBmp) ?: return emptyList()
         val v2 = try { computeEmbedding(flipHorizontal(alignedFaceBmp)) } catch (e: Exception) { null }
