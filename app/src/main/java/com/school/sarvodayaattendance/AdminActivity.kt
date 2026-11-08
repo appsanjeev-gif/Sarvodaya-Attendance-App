@@ -123,6 +123,10 @@ class AdminActivity : AppCompatActivity() {
                 if (ok) {
                     val loaded = AppStorage.loadData(this)
                     loaded.isScannerOnlyPack = false
+                    val dim = FaceMatcherEngine.getEmbeddingDimension()
+                    for (s in loaded.students) {
+                        s.embeddings.removeAll { it.size != dim }
+                    }
                     AppStorage.saveData(this, loaded)
                     FaceMatcherEngine.clearCache()
                     FaceMatcherEngine.warmUpCache(loaded.students, this)
@@ -271,7 +275,7 @@ class AdminActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                // ★ KYC 1:1 DP क्रॉप फिक्स: detectBmp के कोऑर्डिनेट को rawFrameBmp के अनुपात में स्केल करके ठीक चेहरे के बीच से HD स्क्वायर काटें!
+                // KYC 1:1 DP क्रॉप फिक्स: detectBmp के कोऑर्डिनेट को rawFrameBmp के अनुपात में स्केल करके ठीक चेहरे के बीच से HD स्क्वायर काटें
                 val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortraitFromFrames(rawFrameBmp, detectBmp, primaryFace)
                 val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
                 val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(detectBmp, primaryFace)
@@ -327,8 +331,6 @@ class AdminActivity : AppCompatActivity() {
                 Toast.makeText(this, "⏳ AI स्टूडियो DP एवं 192-D डेटा तैयार हो रहा है...", Toast.LENGTH_SHORT).show()
                 Thread {
                     val embedding192D = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(workingBioBmp)
-                    // इस नए 192-D वेक्टर को सत्यापित (Verified 192-D) रजिस्टर में दर्ज करें
-                    FaceMatcherEngine.registerVerified192DEmbedding(this@AdminActivity, embedding192D)
 
                     val (finalDpBmp, usedGeminiCloud) = FaceMatcherEngine.enhancePortraitWithGeminiOrFallbackBlocking(
                         this@AdminActivity,
@@ -376,6 +378,11 @@ class AdminActivity : AppCompatActivity() {
                     val existing = AppStorage.loadData(this@AdminActivity)
                     if (parsed.sharedApiKeys.isBlank() && existing.sharedApiKeys.isNotBlank()) {
                         parsed.sharedApiKeys = existing.sharedApiKeys
+                    }
+                    // केवल शुद्ध 192-D वेक्टर ही सुरक्षित रखें (128-D के किसी भी पुराने वेक्टर को हटा दें)
+                    val dim = FaceMatcherEngine.getEmbeddingDimension()
+                    for (s in parsed.students) {
+                        s.embeddings.removeAll { it.size != dim }
                     }
                     AppStorage.saveData(this@AdminActivity, parsed)
                     FaceMatcherEngine.clearCache()
