@@ -1,6 +1,7 @@
 package com.school.sarvodayaattendance
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.ClipData
 import android.content.ContentValues
@@ -8,20 +9,28 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.print.PrintAttributes
 import android.print.PrintManager
 import android.provider.MediaStore
 import android.util.Base64
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebSettings
@@ -46,6 +55,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.google.gson.Gson
 import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
 import com.school.sarvodayaattendance.data.AppStorage
 import com.school.sarvodayaattendance.data.BackupPayload
 import com.school.sarvodayaattendance.utils.AiDiagnosticLogger
@@ -56,17 +66,39 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStreamReader
+import kotlin.math.min
 
 class AdminActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private var printWebView: WebView? = null
     private val gson = Gson()
+    private val kycHandler = Handler(Looper.getMainLooper())
 
     private var kycOverlayRoot: FrameLayout? = null
     private var kycPreviewView: PreviewView? = null
+    private var kycRingView: KycBiometricRingView? = null
     private var kycLensFacing = CameraSelector.LENS_FACING_BACK
     private var pendingRestoreMode = "RESTORE"
+
+    @Volatile
+    private var isKycMonitoringActive = false
+    @Volatile
+    private var isKycFrameBusy = false
+    @Volatile
+    private var isKycCaptureLocked = false
+    private var consecutivePerfectKycFrames = 0
+
+    // बिना किसी टेक्स्ट/नोटिफिकेशन के लाइव बायोमेट्रिक सर्कल एनीमेशन और 100% पूरा होने पर ऑटो-कैप्चर लूप
+    private val kycMonitorRunnable = object : Runnable {
+        override fun run() {
+            if (!isKycMonitoringActive || kycOverlayRoot == null) return
+            evaluateLiveKycFrameForCircle()
+            if (isKycMonitoringActive) {
+                kycHandler.postDelayed(this, 140L)
+            }
+        }
+    }
 
     private val filePickerLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
@@ -144,12 +176,118 @@ class AdminActivity : AppCompatActivity() {
         }
     }
 
+    // कस्टम सर्कल रिंग एनीमेशन व्यू (बिना किसी टेक्स्ट या नोटिफिकेशन के केवल सर्कल भरना और पूरा होने पर हरा ग्लो)
+    private inner class KycBiometricRingView(context: Context) : View(context) {
+        private var animatedProgress = 0f
+        private var isCompletedState = false
+        private var fillPulseAlpha = 0
+        private var progressAnimator: ValueAnimator? = null
+
+        private val overlayPath = Path()
+        private val arcRect = RectF()
+
+        private val dimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#B80F172A")
+            style = Paint.Style.FILL
+        }
+
+        private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#38475569")
+            style = Paint.Style.STROKE
+            strokeWidth = 18f
+        }
+
+        private val guideDashPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#5594A3B8")
+            style = Paint.Style.STROKE
+            strokeWidth = 3f
+        }
+
+        private val progressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 20f
+            strokeCap = Paint.Cap.ROUND
+        }
+
+        private val glowFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = Color.parseColor("#22C55E")
+        }
+
+        fun updateProgressSmooth(targetFraction: Float, isComplete: Boolean) {
+            val clamped = targetFraction.coerceIn(0f, 1f)
+            isCompletedState = isComplete
+
+            progressAnimator?.cancel()
+            progressAnimator = ValueAnimator.ofFloat(animatedProgress, clamped).apply {
+                duration = if (isComplete) 180L else 130L
+                interpolator = DecelerateInterpolator()
+                addUpdateListener { anim ->
+                    animatedProgress = anim.animatedValue as Float
+                    fillPulseAlpha = if (isCompletedState && animatedProgress >= 0.98f) 52 else 0
+                    invalidate()
+                }
+                start()
+            }
+        }
+
+        override fun onDraw(canvas: Canvas) {
+            super.onDraw(canvas)
+            val w = width.toFloat()
+            val h = height.toFloat()
+            if (w <= 0f || h <= 0f) return
+
+            val cx = w * 0.5f
+            val cy = h * 0.44f
+            val radius = min(w, h) * 0.36f
+
+            // 1. सर्कल के बाहर हल्का डार्क विग्नेट
+            overlayPath.reset()
+            overlayPath.addRect(0f, 0f, w, h, Path.Direction.CW)
+            overlayPath.addCircle(cx, cy, radius, Path.Direction.CCW)
+            overlayPath.fillType = Path.FillType.EVEN_ODD
+            canvas.drawPath(overlayPath, dimPaint)
+
+            // 2. जब सर्कल 100% पूरा भर जाए, तो अंदर हल्का हरा ग्लो फिल
+            if (fillPulseAlpha > 0) {
+                glowFillPaint.alpha = fillPulseAlpha
+                canvas.drawCircle(cx, cy, radius - 6f, glowFillPaint)
+            }
+
+            // 3. कंधे और सिर की सीध के लिए सूक्ष्म गाइड आर्क (बिना किसी टेक्स्ट के)
+            canvas.drawCircle(cx, cy, radius - 14f, guideDashPaint)
+
+            // 4. सर्कल का बैकग्राउंड ट्रैक
+            canvas.drawCircle(cx, cy, radius, trackPaint)
+
+            // 5. लाइव प्रोग्रेस सर्कल आर्क (अधूरे पर अंबर/सियान, 100% पूरे होने पर चमकदार हरा)
+            if (animatedProgress > 0.01f) {
+                progressPaint.color = when {
+                    isCompletedState || animatedProgress >= 0.99f -> Color.parseColor("#22C55E")
+                    animatedProgress >= 0.65f -> Color.parseColor("#38BDF8")
+                    else -> Color.parseColor("#F59E0B")
+                }
+                arcRect.set(cx - radius, cy - radius, cx + radius, cy + radius)
+                val sweepAngle = (animatedProgress * 360f).coerceIn(0f, 360f)
+                canvas.drawArc(arcRect, -90f, sweepAngle, false, progressPaint)
+            }
+        }
+    }
+
+    private fun stopKycMonitoring() {
+        isKycMonitoringActive = false
+        isKycFrameBusy = false
+        consecutivePerfectKycFrames = 0
+        kycHandler.removeCallbacks(kycMonitorRunnable)
+    }
+
     private fun showLiveKycCameraOverlay(rootContainer: FrameLayout) {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), 202)
             return
         }
 
+        stopKycMonitoring()
         kycOverlayRoot?.let { rootContainer.removeView(it) }
 
         val overlay = FrameLayout(this).apply {
@@ -168,41 +306,58 @@ class AdminActivity : AppCompatActivity() {
             )
         )
 
+        // सर्कल एनीमेशन व्यू जोड़ें
+        val ringView = KycBiometricRingView(this)
+        kycRingView = ringView
+        overlay.addView(
+            ringView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+
         val bottomBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(30, 30, 30, 50)
-            setBackgroundColor(0x99000000.toInt())
+            setPadding(36, 28, 36, 48)
+            setBackgroundColor(0x88000000.toInt())
         }
 
         val btnCancel = Button(this).apply {
-            text = "✕ बंद"
+            text = "✕"
+            textSize = 18f
             setTextColor(0xFFFFFFFF.toInt())
-            setBackgroundColor(0xFFDC2626.toInt())
+            background = GradientDrawable().apply {
+                setColor(0xFFDC2626.toInt())
+                cornerRadius = 28f
+            }
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(0, 0, 20, 0)
+            }
+            layoutParams = lp
             setOnClickListener {
+                stopKycMonitoring()
                 rootContainer.removeView(overlay)
                 kycOverlayRoot = null
             }
         }
 
-        val btnSnap = Button(this).apply {
-            text = "📸 फोटो खींचें"
-            textSize = 16f
+        val btnFlip = Button(this).apply {
+            text = "🔄"
+            textSize = 18f
             setTextColor(0xFFFFFFFF.toInt())
-            setBackgroundColor(0xFF16A34A.toInt())
-            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-            lp.setMargins(24, 0, 24, 0)
+            background = GradientDrawable().apply {
+                setColor(0xFF334155.toInt())
+                cornerRadius = 28f
+            }
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                setMargins(20, 0, 0, 0)
+            }
             layoutParams = lp
             setOnClickListener {
-                captureAndVerifyKycFace(rootContainer, overlay)
-            }
-        }
-
-        val btnFlip = Button(this).apply {
-            text = "🔄 पलटें"
-            setTextColor(0xFFFFFFFF.toInt())
-            setBackgroundColor(0xFF334155.toInt())
-            setOnClickListener {
+                consecutivePerfectKycFrames = 0
+                kycRingView?.updateProgressSmooth(0f, false)
                 kycLensFacing = if (kycLensFacing == CameraSelector.LENS_FACING_FRONT) {
                     CameraSelector.LENS_FACING_BACK
                 } else {
@@ -213,7 +368,6 @@ class AdminActivity : AppCompatActivity() {
         }
 
         bottomBar.addView(btnCancel)
-        bottomBar.addView(btnSnap)
         bottomBar.addView(btnFlip)
 
         val barParams = FrameLayout.LayoutParams(
@@ -232,7 +386,12 @@ class AdminActivity : AppCompatActivity() {
             )
         )
         kycOverlayRoot = overlay
+        isKycCaptureLocked = false
+        consecutivePerfectKycFrames = 0
         bindKycCamera()
+
+        isKycMonitoringActive = true
+        kycHandler.postDelayed(kycMonitorRunnable, 280L)
     }
 
     private fun bindKycCamera() {
@@ -253,55 +412,110 @@ class AdminActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun captureAndVerifyKycFace(rootContainer: FrameLayout, overlay: FrameLayout) {
-        val rawFrameBmp = kycPreviewView?.bitmap
-        if (rawFrameBmp == null) {
-            Toast.makeText(this, "कैमरा तैयार नहीं है", Toast.LENGTH_SHORT).show()
-            return
-        }
+    // हर फ्रेम पर 5° कोण, दोनों कान, सीधी नाक और खुली आँखों की जाँच कर सर्कल भरना और 100% होते ही ऑटो-कैप्चर करना
+    private fun evaluateLiveKycFrameForCircle() {
+        if (isKycFrameBusy || isKycCaptureLocked) return
+        val overlay = kycOverlayRoot ?: return
+        val rootContainer = window.decorView.findViewById<ViewGroup>(android.R.id.content) as? FrameLayout ?: return
+        val rawFrameBmp = kycPreviewView?.bitmap ?: return
 
+        isKycFrameBusy = true
         val detectBmp = FaceMatcherEngine.downscaleFrameForFastDetection(rawFrameBmp, 480)
         val inputImage = InputImage.fromBitmap(detectBmp, 0)
+
         FaceMatcherEngine.detector.process(inputImage)
             .addOnSuccessListener { faces ->
+                if (!isKycMonitoringActive || isKycCaptureLocked) {
+                    isKycFrameBusy = false
+                    return@addOnSuccessListener
+                }
+
                 if (faces.isEmpty()) {
-                    Toast.makeText(this, "❌ चेहरा साफ नहीं दिखा! सीधे देखें", Toast.LENGTH_SHORT).show()
+                    consecutivePerfectKycFrames = 0
+                    kycRingView?.updateProgressSmooth(0f, false)
+                    isKycFrameBusy = false
                     return@addOnSuccessListener
                 }
+
                 val primaryFace = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
-                val (isValid, qualityMsg) = FaceMatcherEngine.validateKycFaceQuality(primaryFace, detectBmp)
-                if (!isValid) {
-                    Toast.makeText(this, qualityMsg, Toast.LENGTH_LONG).show()
-                    return@addOnSuccessListener
+                val status = FaceMatcherEngine.evaluateStrictKycProgress(
+                    primaryFace,
+                    detectBmp.width,
+                    detectBmp.height
+                )
+
+                if (status.isPerfectFrame) {
+                    consecutivePerfectKycFrames++
+                    // 3 लगातार परफेक्ट फ्रेम (~0.42 सेकंड स्थिर रहने पर) सर्कल 88% -> 94% -> 100% पूरा भरकर ऑटो-कैप्चर करेगा
+                    val stepFraction = when (consecutivePerfectKycFrames) {
+                        1 -> 0.90f
+                        2 -> 0.96f
+                        else -> 1.0f
+                    }
+                    val isDone = consecutivePerfectKycFrames >= 3
+                    kycRingView?.updateProgressSmooth(stepFraction, isDone)
+
+                    if (isDone) {
+                        isKycCaptureLocked = true
+                        stopKycMonitoring()
+                        kycHandler.postDelayed({
+                            processApprovedKycCapture(rawFrameBmp, detectBmp, primaryFace, rootContainer, overlay)
+                        }, 190L)
+                    }
+                } else {
+                    consecutivePerfectKycFrames = 0
+                    kycRingView?.updateProgressSmooth(status.progressFraction, false)
                 }
 
-                // KYC 1:1 DP क्रॉप फिक्स: detectBmp के कोऑर्डिनेट को rawFrameBmp के अनुपात में स्केल करके ठीक चेहरे के बीच से HD स्क्वायर काटें
-                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortraitFromFrames(rawFrameBmp, detectBmp, primaryFace)
-                val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
-                val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(detectBmp, primaryFace)
-
-                showKycPhotoConfirmDialog(rawSquareBmp, previewDpBmp, alignedBiometricFace, rootContainer, overlay)
+                isKycFrameBusy = false
             }
             .addOnFailureListener {
-                Toast.makeText(this, "❌ त्रुटि", Toast.LENGTH_SHORT).show()
+                isKycFrameBusy = false
             }
+    }
+
+    private fun processApprovedKycCapture(
+        rawFrameBmp: Bitmap,
+        detectBmp: Bitmap,
+        primaryFace: Face,
+        rootContainer: FrameLayout,
+        overlay: FrameLayout
+    ) {
+        // 1. कंधों सहित पासपोर्ट/आईडी स्टाइल 1:1 स्क्वायर क्रॉप (400x400)
+        val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortraitFromFrames(rawFrameBmp, detectBmp, primaryFace)
+        // 2. अपग्रेडेड ऑन-डिवाइस स्टूडियो ब्यूटी फिल्टर
+        val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
+        // 3. 480p और फुल-एचडी दोनों से सटीक 112x112 बायोमेट्रिक अलाइनमेंट
+        val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(detectBmp, primaryFace)
+        val hdAlignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmapFromFrames(rawFrameBmp, detectBmp, primaryFace)
+
+        showKycPhotoConfirmDialog(
+            rawSquareBmp,
+            previewDpBmp,
+            alignedBiometricFace,
+            hdAlignedBiometricFace,
+            rootContainer,
+            overlay
+        )
     }
 
     private fun showKycPhotoConfirmDialog(
         rawSquareBmp: Bitmap,
         previewDpBmp: Bitmap,
         alignedBiometricBmp: Bitmap,
+        hdAlignedBiometricBmp: Bitmap,
         rootContainer: FrameLayout,
         overlay: FrameLayout
     ) {
         var workingRawSquare = rawSquareBmp
         var workingPreviewDp = previewDpBmp
         var workingBioBmp = alignedBiometricBmp
+        var workingHdBioBmp = hdAlignedBiometricBmp
 
         val imageView = ImageView(this).apply {
             setImageBitmap(workingPreviewDp)
             adjustViewBounds = true
-            maxHeight = 520
+            maxHeight = 540
             setPadding(24, 24, 24, 12)
         }
 
@@ -312,6 +526,7 @@ class AdminActivity : AppCompatActivity() {
                 workingRawSquare = Bitmap.createBitmap(workingRawSquare, 0, 0, workingRawSquare.width, workingRawSquare.height, matrix, true)
                 workingPreviewDp = Bitmap.createBitmap(workingPreviewDp, 0, 0, workingPreviewDp.width, workingPreviewDp.height, matrix, true)
                 workingBioBmp = Bitmap.createBitmap(workingBioBmp, 0, 0, workingBioBmp.width, workingBioBmp.height, matrix, true)
+                workingHdBioBmp = Bitmap.createBitmap(workingHdBioBmp, 0, 0, workingHdBioBmp.width, workingHdBioBmp.height, matrix, true)
                 imageView.setImageBitmap(workingPreviewDp)
             }
         }
@@ -324,42 +539,54 @@ class AdminActivity : AppCompatActivity() {
             addView(btnRotate)
         }
 
-        AlertDialog.Builder(this)
-            .setTitle("📸 1:1 KYC फोटो एवं 192-D बायोमेट्रिक पुष्टि")
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("📸 1:1 स्टूडियो DP एवं 192-D पुष्टि")
             .setView(box)
+            .setCancelable(false)
             .setPositiveButton("✔ यह फोटो जोड़ें") { _, _ ->
-                Toast.makeText(this, "⏳ AI स्टूडियो DP एवं 192-D डेटा तैयार हो रहा है...", Toast.LENGTH_SHORT).show()
                 Thread {
-                    val embedding192D = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(workingBioBmp)
+                    val embedding192D = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(
+                        workingBioBmp,
+                        workingHdBioBmp
+                    )
 
-                    val (finalDpBmp, usedGeminiCloud) = FaceMatcherEngine.enhancePortraitWithGeminiOrFallbackBlocking(
+                    val (finalDpBmp, _) = FaceMatcherEngine.enhancePortraitWithGeminiOrFallbackBlocking(
                         this@AdminActivity,
                         workingRawSquare
                     )
 
-                    val scaledDp = Bitmap.createScaledBitmap(finalDpBmp, 300, 300, true)
+                    val scaledDp = Bitmap.createScaledBitmap(finalDpBmp, 360, 360, true)
                     val baos = ByteArrayOutputStream()
-                    scaledDp.compress(Bitmap.CompressFormat.JPEG, 88, baos)
+                    scaledDp.compress(Bitmap.CompressFormat.JPEG, 90, baos)
                     val base64Str = "data:image/jpeg;base64," + Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
                     val escapedPhoto = gson.toJson(base64Str)
                     val escapedEmb = gson.toJson(embedding192D)
-                    val modeTag = if (usedGeminiCloud) "Gemini AI Studio" else "Studio Filter"
 
                     runOnUiThread {
+                        stopKycMonitoring()
                         rootContainer.removeView(overlay)
                         kycOverlayRoot = null
                         webView.evaluateJavascript("onLiveKycPhotoApproved($escapedPhoto, $escapedEmb);", null)
-                        Toast.makeText(
-                            this@AdminActivity,
-                            "✔ 1:1 DP ($modeTag) + 192-D डेटा (${embedding192D.size} पॉइंट्स) तैयार!",
-                            Toast.LENGTH_SHORT
-                        ).show()
                     }
                 }.start()
             }
-            .setNegativeButton("दोबारा लें", null)
-            .show()
+            .setNegativeButton("दोबारा लें") { _, _ ->
+                // दोबारा लेने पर सर्कल को 0% से फिर से शुरू करें
+                isKycCaptureLocked = false
+                consecutivePerfectKycFrames = 0
+                kycRingView?.updateProgressSmooth(0f, false)
+                isKycMonitoringActive = true
+                kycHandler.postDelayed(kycMonitorRunnable, 200L)
+            }
+            .create()
+
+        dialog.show()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        stopKycMonitoring()
     }
 
     inner class AdminWebBridge {
@@ -379,7 +606,6 @@ class AdminActivity : AppCompatActivity() {
                     if (parsed.sharedApiKeys.isBlank() && existing.sharedApiKeys.isNotBlank()) {
                         parsed.sharedApiKeys = existing.sharedApiKeys
                     }
-                    // केवल शुद्ध 192-D वेक्टर ही सुरक्षित रखें (128-D के किसी भी पुराने वेक्टर को हटा दें)
                     val dim = FaceMatcherEngine.getEmbeddingDimension()
                     for (s in parsed.students) {
                         s.embeddings.removeAll { it.size != dim }
@@ -491,6 +717,7 @@ class AdminActivity : AppCompatActivity() {
         @JavascriptInterface
         fun closeAdminAndOpenScanner() {
             runOnUiThread {
+                stopKycMonitoring()
                 finish()
             }
         }
