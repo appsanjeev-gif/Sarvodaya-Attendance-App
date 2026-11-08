@@ -12,6 +12,7 @@ import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
 import android.graphics.RectF
 import android.util.Base64
+import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
@@ -35,6 +36,8 @@ import java.nio.ByteOrder
 import java.nio.MappedByteBuffer
 import java.nio.channels.FileChannel
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.atan2
@@ -57,9 +60,16 @@ object FaceMatcherEngine {
 
     private data class StudentBiometricTemplate(
         val student: Student,
+        val isVerified192D: Boolean,
         val poseEmbeddings: List<FloatArray>,
         val centroidEmbedding: FloatArray
     )
+
+    private const val VERIFIED_KYC_PREF = "SarvodayaVerified192DKycV8"
+    private const val KEY_VERIFIED_STU_IDS = "verified_192d_student_ids"
+    private const val KEY_VERIFIED_EMB_SIGS = "verified_192d_emb_sigs"
+    private const val KEY_V8_INIT_CLEANED = "v8_polluted_emb_cleaned"
+    private const val OLD_PHOTO_VEC_CACHE_PREF = "SarvodayaOldPhotoVecCacheV8"
 
     @Volatile
     private var tfliteInterpreter: Interpreter? = null
@@ -67,25 +77,30 @@ object FaceMatcherEngine {
     private var inputImageSize: Int = 112
     private val templateCache = ConcurrentHashMap<String, StudentBiometricTemplate>()
 
+    private val verifiedStudentIds = ConcurrentHashMap.newKeySet<String>()
+    private val verifiedEmbeddingSigs = ConcurrentHashMap.newKeySet<String>()
+
     private val isWarmingUp = AtomicBoolean(false)
 
     @Volatile
     private var initialWarmUpDone = false
 
-    // वैज्ञानिक रूप से संतुलित 192-D बायोमेट्रिक थ्रेशोल्ड (तेज़ + 100% सटीक):
-    // 1. INSTANT_PASS_COSINE (0.74f): उच्च समानता होने पर पहले ही फ्रेम (0.15s) में तुरंत हाज़िरी
-    // 2. PASS_COSINE_THRESHOLD (0.675f): सामान्य व पुराने छात्रों के लिए पासिंग थ्रेशोल्ड (2 फ्रेम पुष्टि + स्पष्ट अंतर)
-    // 3. MANUAL_TAP_COSINE_MIN (0.650f): [📷 स्कैन करें] बटन दबाने पर न्यूनतम पासिंग थ्रेशोल्ड
-    // 4. MIN_COSINE_MARGIN_GAP (0.045f): पहले और दूसरे छात्र के बीच न्यूनतम आवश्यक अंतर
-    // 5. MIN_POPULATION_GAP (0.070f): अन्य छात्रों के औसत स्कोर से न्यूनतम आवश्यक अंतर (अनजान चेहरों को रोकने के लिए)
+    // 1. सत्यापित 192-D छात्रों (Verified 192-D) के लिए सख्त थ्रेशोल्ड (सीधी उपस्थिति):
     const val INSTANT_PASS_COSINE = 0.74f
-    const val PASS_COSINE_THRESHOLD = 0.675f
-    const val MANUAL_TAP_COSINE_MIN = 0.650f
-    const val AI_ASSIST_COSINE_MIN = 0.60f
-    const val MIN_COSINE_MARGIN_GAP = 0.045f
-    const val MIN_POPULATION_GAP = 0.070f
+    const val PASS_VERIFIED_COSINE = 0.675f
+    const val MANUAL_VERIFIED_COSINE = 0.645f
+    const val MIN_VERIFIED_MARGIN_GAP = 0.042f
+    const val MIN_VERIFIED_POP_GAP = 0.065f
 
-    // लाइव कैमरे के लिए सुपर-फास्ट डिटेक्टर (बिना किसी बैकग्राउंड कंटेंशन के)
+    // 2. पुराने 128-D KYC छात्रों (जिनका अभी नया 192-D वेक्टर पक्का नहीं हुआ है) के लिए थ्रेशोल्ड:
+    // (यह सीधे हाज़िरी नहीं लगाता, बल्कि 3.4 सेकंड वाला '✔ पक्का करें (OK)' पुष्टि पॉप-अप दिखाता है)
+    const val PASS_OLD_KYC_AUTO_COSINE = 0.545f
+    const val PASS_OLD_KYC_MANUAL_COSINE = 0.450f
+    const val MIN_OLD_KYC_MARGIN_GAP = 0.022f
+    const val MIN_OLD_KYC_POP_GAP = 0.038f
+    const val AI_ASSIST_COSINE_MIN = 0.50f
+
+    // लाइव कैमरे के लिए सुपर-फास्ट डिटेक्टर
     val detector: FaceDetector by lazy {
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
@@ -96,20 +111,95 @@ object FaceMatcherEngine {
         FaceDetection.getClient(options)
     }
 
+    // पुरानी सेव की गई प्रोफाइल फोटो (stu.photos) में सटीक चेहरा और आँखें ढूँढने के लिए अलग बैकग्राउंड डिटेक्टर
+    private val offlinePhotoDetector: FaceDetector by lazy {
+        val options = FaceDetectorOptions.Builder()
+            .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+            .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+            .setMinFaceSize(0.12f)
+            .build()
+        FaceDetection.getClient(options)
+    }
+
     fun isNeuralModelReady(): Boolean = (tfliteInterpreter != null)
 
     fun isReadyForLiveScan(): Boolean = (tfliteInterpreter != null && initialWarmUpDone)
 
     fun getEmbeddingDimension(): Int = embeddingDim
 
-    // जांचें कि छात्र के पास 192-D का शुद्ध नया बायोमेट्रिक वेक्टर मौजूद है या नहीं
-    fun hasVerified192D(student: Student): Boolean {
-        return student.embeddings.isNotEmpty() && student.embeddings.any { it.size == embeddingDim }
+    private fun computeEmbeddingSig(emb: List<Float>): String {
+        if (emb.size < 10) return ""
+        val sb = StringBuilder()
+        val step = max(1, emb.size / 12)
+        var i = 0
+        while (i < emb.size) {
+            sb.append(((emb[i] * 1000f).roundToInt())).append("_")
+            i += step
+        }
+        return sb.toString()
     }
 
-    // छात्र का नया 192-D वेक्टर बनने के बाद इन-मेमोरी टेम्पलेट कैश तुरंत अपडेट करना
+    private fun loadVerifiedRegistry(context: Context) {
+        try {
+            val prefs = context.applicationContext.getSharedPreferences(VERIFIED_KYC_PREF, Context.MODE_PRIVATE)
+            prefs.getStringSet(KEY_VERIFIED_STU_IDS, emptySet())?.let { verifiedStudentIds.addAll(it) }
+            prefs.getStringSet(KEY_VERIFIED_EMB_SIGS, emptySet())?.let { verifiedEmbeddingSigs.addAll(it) }
+        } catch (e: Exception) {}
+    }
+
+    private fun saveVerifiedRegistry(context: Context) {
+        try {
+            val prefs = context.applicationContext.getSharedPreferences(VERIFIED_KYC_PREF, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putStringSet(KEY_VERIFIED_STU_IDS, HashSet(verifiedStudentIds))
+                .putStringSet(KEY_VERIFIED_EMB_SIGS, HashSet(verifiedEmbeddingSigs))
+                .apply()
+        } catch (e: Exception) {}
+    }
+
+    // जब AdminActivity में लाइव KYC फोटो ली जाए, तो उसके 192-D वेक्टर को सत्यापित रजिस्टर में दर्ज करें
+    fun registerVerified192DEmbedding(context: Context, emb: List<Float>) {
+        if (emb.size != embeddingDim) return
+        loadVerifiedRegistry(context)
+        val sig = computeEmbeddingSig(emb)
+        if (sig.isNotEmpty()) {
+            verifiedEmbeddingSigs.add(sig)
+            saveVerifiedRegistry(context)
+        }
+    }
+
+    // जब MainActivity में 3.4s पॉप-अप पर [✔ पक्का करें (OK)] दबाया जाए, तो छात्र को स्थायी रूप से Verified 192-D मार्क करें
+    fun markStudentVerified192D(context: Context, studentId: String, emb: List<Float>) {
+        loadVerifiedRegistry(context)
+        if (studentId.isNotBlank()) {
+            verifiedStudentIds.add(studentId)
+        }
+        if (emb.size == embeddingDim) {
+            val sig = computeEmbeddingSig(emb)
+            if (sig.isNotEmpty()) verifiedEmbeddingSigs.add(sig)
+        }
+        saveVerifiedRegistry(context)
+    }
+
+    // जांचें कि छात्र के पास मानव-सत्यापित (Human-Verified) 192-D बायोमेट्रिक वेक्टर मौजूद है या नहीं
+    fun hasVerified192D(student: Student): Boolean {
+        val hasValidDim = student.embeddings.isNotEmpty() && student.embeddings.any { it.size == embeddingDim }
+        if (!hasValidDim) return false
+        if (verifiedStudentIds.contains(student.id)) return true
+        for (emb in student.embeddings) {
+            if (emb.size == embeddingDim) {
+                val sig = computeEmbeddingSig(emb)
+                if (sig.isNotEmpty() && verifiedEmbeddingSigs.contains(sig)) {
+                    verifiedStudentIds.add(student.id)
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
     fun updateSingleStudentCache(student: Student) {
-        val built = buildStudentTemplate(student)
+        val built = buildStudentTemplate(student, forceMlKitOnPhoto = false)
         if (built != null) {
             templateCache[student.id] = built
         }
@@ -117,6 +207,7 @@ object FaceMatcherEngine {
 
     @Synchronized
     fun initEngine(context: Context) {
+        loadVerifiedRegistry(context)
         if (tfliteInterpreter != null) return
         val appCtx = context.applicationContext
 
@@ -200,9 +291,13 @@ object FaceMatcherEngine {
         templateCache.clear()
     }
 
-    // बिना ML Kit को ब्लॉक किए ~0.5 सेकंड में सभी 82 छात्रों के इन-मेमोरी टेम्पलेट तैयार करना
-    // (नोट: यह stu.embeddings को कभी ओवरराइट नहीं करता, ताकि बिना Re-KYC वाले छात्र 3.4s पुष्टि में आ सकें)
+    // 2-चरणीय स्मार्ट वार्म-अप:
+    // चरण 1 (0.3 सेकंड): तुरंत फास्ट क्रॉप से सभी छात्रों के टेम्पलेट तैयार करें ताकि स्कैनर तुरंत काम करे।
+    // चरण 2 (बैकग्राउंड): पुराने बिना-ReKYC वाले छात्रों की फोटो पर अलग offlinePhotoDetector (ML Kit) चलाकर सटीक आँख-अलाइनमेंट करें।
     fun warmUpCache(students: List<Student>, context: Context? = null) {
+        if (context != null) {
+            loadVerifiedRegistry(context)
+        }
         if (students.isEmpty()) {
             initialWarmUpDone = true
             return
@@ -211,16 +306,68 @@ object FaceMatcherEngine {
 
         Thread {
             try {
+                val appCtx = context?.applicationContext
+                val kycPrefs = appCtx?.getSharedPreferences(VERIFIED_KYC_PREF, Context.MODE_PRIVATE)
+                val v8Cleaned = kycPrefs?.getBoolean(KEY_V8_INIT_CLEANED, false) ?: false
+
+                // यदि पिछले V5/V6/V7 बिल्ड ने बिना पूछे सभी छात्रों के stu.embeddings में ऑटो-क्रॉप वेक्टर भर दिए थे,
+                // तो एक बार उन असत्यापित वेक्टर्स को साफ करें ताकि प्रत्येक पुराने छात्र के लिए 3.4s वाला Re-KYC पॉप-अप सही से काम करे!
+                if (appCtx != null && !v8Cleaned) {
+                    var cleanedAny = false
+                    for (stu in students) {
+                        if (!hasVerified192D(stu) && stu.photos.isNotEmpty() && stu.embeddings.isNotEmpty()) {
+                            stu.embeddings.clear()
+                            cleanedAny = true
+                        }
+                    }
+                    if (cleanedAny) {
+                        try {
+                            val masterPayload = AppStorage.loadData(appCtx)
+                            for (s in masterPayload.students) {
+                                if (!hasVerified192D(s) && s.photos.isNotEmpty()) {
+                                    s.embeddings.clear()
+                                }
+                            }
+                            AppStorage.saveData(appCtx, masterPayload)
+                        } catch (e: Exception) {}
+                    }
+                    kycPrefs?.edit()?.putBoolean(KEY_V8_INIT_CLEANED, true)?.apply()
+                }
+
+                // किसी भी छात्र के पास यदि नया Verified 192-D सिग्नेचर मैच करता है तो उसकी ID रजिस्टर कर लें
+                if (appCtx != null) {
+                    var regChanged = false
+                    for (stu in students) {
+                        if (hasVerified192D(stu) && !verifiedStudentIds.contains(stu.id)) {
+                            verifiedStudentIds.add(stu.id)
+                            regChanged = true
+                        }
+                    }
+                    if (regChanged) saveVerifiedRegistry(appCtx)
+                }
+
+                // चरण 1: तुरंत फास्ट टेम्पलेट तैयार करें (< 0.4 सेकंड)
                 for (stu in students) {
                     if (stu.photos.isEmpty() && stu.embeddings.isEmpty()) continue
                     if (!templateCache.containsKey(stu.id)) {
-                        val built = buildStudentTemplate(stu)
-                        if (built != null) {
-                            templateCache[stu.id] = built
+                        val fastBuilt = buildStudentTemplate(stu, forceMlKitOnPhoto = false, context = appCtx)
+                        if (fastBuilt != null) {
+                            templateCache[stu.id] = fastBuilt
                         }
                     }
                 }
                 initialWarmUpDone = true
+
+                // चरण 2: पुराने छात्रों की सेव फोटो पर बैकग्राउंड में ML Kit offlinePhotoDetector चलाकर सटीक चेहरा निकालें
+                for (stu in students) {
+                    if (stu.photos.isEmpty()) continue
+                    if (!hasVerified192D(stu)) {
+                        val refined = buildStudentTemplate(stu, forceMlKitOnPhoto = true, context = appCtx)
+                        if (refined != null) {
+                            templateCache[stu.id] = refined
+                        }
+                    }
+                }
             } finally {
                 initialWarmUpDone = true
                 isWarmingUp.set(false)
@@ -287,7 +434,7 @@ object FaceMatcherEngine {
         return out
     }
 
-    // लाइव चेहरे की जांच + स्पष्ट हिंदी कारण (ताकि आधा माथा रिजेक्ट हो, पर सामान्य दूरी पर खड़ा छात्र तुरंत पास हो)
+    // लाइव चेहरे की जांच + स्पष्ट हिंदी कारण
     fun evaluateLiveFaceGate(face: Face, frameWidth: Int = 0, frameHeight: Int = 0): Pair<Boolean, String> {
         val box = face.boundingBox
         if (frameWidth > 0 && frameHeight > 0) {
@@ -297,7 +444,6 @@ object FaceMatcherEngine {
             }
         }
 
-        // पाँचों मुख्य बिंदु (दोनों आँखें, नाक, मुँह के दोनों कोने) मौजूद होने चाहिए (जिससे केवल माथा या आधा चेहरा कभी पास न हो)
         val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
             ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में रखें")
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
@@ -313,7 +459,6 @@ object FaceMatcherEngine {
         val mouthCenterY = (mouthLeft.y + mouthRight.y) * 0.5f
 
         if (frameWidth > 0 && frameHeight > 0) {
-            // यदि मुँह या आँखें स्क्रीन के बिल्कुल बाहर/किनारे पर कट रही हों (जैसे केवल माथा दिखना)
             if (mouthCenterY > frameHeight * 0.95f || eyeCenterY < frameHeight * 0.04f) {
                 return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में लाएं")
             }
@@ -330,7 +475,6 @@ object FaceMatcherEngine {
             return Pair(false, "⚠️ कृपया चेहरा सीधा रखें")
         }
 
-        // FAST मोड में जब eye probability null हो तो 0.85f मानें ताकि कभी झूठा रिजेक्शन न हो
         val leftOpen = face.leftEyeOpenProbability ?: 0.85f
         val rightOpen = face.rightEyeOpenProbability ?: 0.85f
         if (leftOpen < 0.20f && rightOpen < 0.20f) {
@@ -348,13 +492,20 @@ object FaceMatcherEngine {
         return evaluateLiveFaceGate(face, frameBmp.width, frameBmp.height)
     }
 
-    fun cropTrueSquarePortrait(source: Bitmap, face: Face): Bitmap {
+    // ★ KYC DP फोटो क्रॉप फिक्स: यदि डिटेक्शन 480p (detectBmp) पर हुआ है और फोटो फुल-एचडी (rawSource) से काटी जा रही है,
+    // तो कोऑर्डिनेट को सटीक अनुपात में स्केल करें ताकि छत/कोने के बजाय 100% चेहरे के बीचों-बीच से साफ 1:1 DP कटे!
+    fun cropTrueSquarePortraitFromFrames(rawSource: Bitmap, detectBmp: Bitmap, face: Face): Bitmap {
+        val scaleX = rawSource.width.toFloat() / detectBmp.width.toFloat().coerceAtLeast(1f)
+        val scaleY = rawSource.height.toFloat() / detectBmp.height.toFloat().coerceAtLeast(1f)
         val box = face.boundingBox
-        val cx = box.centerX()
-        val cy = (box.centerY() - (box.height() * 0.04f)).toInt()
 
-        val desiredSide = (max(box.width(), box.height()) * 1.62f).toInt()
-        val maxPossibleSide = min(source.width, source.height)
+        val cx = (box.exactCenterX() * scaleX).roundToInt()
+        val cy = ((box.exactCenterY() - (box.height() * 0.04f)) * scaleY).roundToInt()
+        val faceW = box.width() * scaleX
+        val faceH = box.height() * scaleY
+
+        val desiredSide = (max(faceW, faceH) * 1.62f).roundToInt()
+        val maxPossibleSide = min(rawSource.width, rawSource.height)
         val side = desiredSide.coerceIn(80, maxPossibleSide)
         val half = side / 2
 
@@ -363,15 +514,19 @@ object FaceMatcherEngine {
 
         if (left < 0) left = 0
         if (top < 0) top = 0
-        if (left + side > source.width) left = max(0, source.width - side)
-        if (top + side > source.height) top = max(0, source.height - side)
+        if (left + side > rawSource.width) left = max(0, rawSource.width - side)
+        if (top + side > rawSource.height) top = max(0, rawSource.height - side)
 
-        val actualW = min(side, source.width - left)
-        val actualH = min(side, source.height - top)
+        val actualW = min(side, rawSource.width - left)
+        val actualH = min(side, rawSource.height - top)
         val finalSquareSide = min(actualW, actualH).coerceAtLeast(1)
 
-        val squareCrop = Bitmap.createBitmap(source, left, top, finalSquareSide, finalSquareSide)
+        val squareCrop = Bitmap.createBitmap(rawSource, left, top, finalSquareSide, finalSquareSide)
         return Bitmap.createScaledBitmap(squareCrop, 320, 320, true)
+    }
+
+    fun cropTrueSquarePortrait(source: Bitmap, face: Face): Bitmap {
+        return cropTrueSquarePortraitFromFrames(source, source, face)
     }
 
     fun applyOnDeviceStudioPortraitFilter(squareBmp: Bitmap): Bitmap {
@@ -617,6 +772,27 @@ object FaceMatcherEngine {
         }
     }
 
+    // पुरानी सेव की गई प्रोफाइल फोटो पर अलग बैकग्राउंड डिटेक्टर चलाकर असली आँख-नाक के अनुसार 112x112 चेहरा निकालना
+    private fun detectAndAlignStoredPhotoBlocking(dpBmp: Bitmap): Bitmap? {
+        var detectedAligned: Bitmap? = null
+        val latch = CountDownLatch(1)
+        try {
+            val inputImg = InputImage.fromBitmap(dpBmp, 0)
+            offlinePhotoDetector.process(inputImg)
+                .addOnSuccessListener { faces ->
+                    if (faces.isNotEmpty()) {
+                        val primary = faces.maxByOrNull { it.boundingBox.width() * it.boundingBox.height() }!!
+                        detectedAligned = alignAndCropFaceBitmap(dpBmp, primary)
+                    }
+                }
+                .addOnCompleteListener {
+                    latch.countDown()
+                }
+            latch.await(650, TimeUnit.MILLISECONDS)
+        } catch (e: Exception) {}
+        return detectedAligned
+    }
+
     private fun flipHorizontal(bmp: Bitmap): Bitmap {
         val m = Matrix().apply { preScale(-1f, 1f) }
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
@@ -692,20 +868,45 @@ object FaceMatcherEngine {
         return dot.coerceIn(-1f, 1f)
     }
 
-    private fun cosineToPercentage(cos: Float): Int {
-        if (cos <= 0.35f) return ((cos.coerceAtLeast(0f) / 0.35f) * 30f).roundToInt()
-        if (cos < PASS_COSINE_THRESHOLD) {
-            val norm = (cos - 0.35f) / (PASS_COSINE_THRESHOLD - 0.35f)
+    private fun cosineToPercentage(cos: Float, isVerified: Boolean): Int {
+        val passThreshold = if (isVerified) PASS_VERIFIED_COSINE else PASS_OLD_KYC_AUTO_COSINE
+        if (cos <= 0.30f) return ((cos.coerceAtLeast(0f) / 0.30f) * 30f).roundToInt()
+        if (cos < passThreshold) {
+            val norm = (cos - 0.30f) / (passThreshold - 0.30f)
             return (30f + norm * 44f).roundToInt().coerceIn(30, 74)
         }
-        val passNorm = ((cos - PASS_COSINE_THRESHOLD) / (0.88f - PASS_COSINE_THRESHOLD)).coerceIn(0f, 1f)
-        return (78f + passNorm * 21f).roundToInt().coerceIn(78, 99)
+        val passNorm = ((cos - passThreshold) / (0.88f - passThreshold)).coerceIn(0f, 1f)
+        return (76f + passNorm * 23f).roundToInt().coerceIn(76, 99)
     }
 
-    private fun buildStudentTemplate(student: Student): StudentBiometricTemplate? {
-        val vectors = mutableListOf<FloatArray>()
+    private fun serializeFloatArray(arr: FloatArray): String {
+        return arr.joinToString(",") { "%.5f".format(java.util.Locale.US, it) }
+    }
 
-        // 1. छात्र के सेव किए गए 192-D वेक्टर
+    private fun deserializeFloatArray(str: String): FloatArray? {
+        if (str.isBlank()) return null
+        val parts = str.split(",")
+        if (parts.size != embeddingDim) return null
+        return try {
+            val out = FloatArray(embeddingDim)
+            for (i in 0 until embeddingDim) {
+                out[i] = parts[i].toFloat()
+            }
+            l2Normalize(out)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun buildStudentTemplate(
+        student: Student,
+        forceMlKitOnPhoto: Boolean = false,
+        context: Context? = null
+    ): StudentBiometricTemplate? {
+        val vectors = mutableListOf<FloatArray>()
+        val isVerified = hasVerified192D(student)
+
+        // 1. यदि छात्र के पास सत्यापित 192-D वेक्टर है, तो उसे सर्वोच्च प्राथमिकता दें
         if (student.embeddings.isNotEmpty()) {
             for (savedList in student.embeddings) {
                 if (savedList.size == embeddingDim) {
@@ -718,16 +919,42 @@ object FaceMatcherEngine {
             }
         }
 
-        // 2. साथ ही सेव की गई प्रोफाइल फोटो का शुद्ध 0.593f क्रॉप भी पोज़ लिस्ट में रखें (ताकि पुराने बिना-ReKYC वाले छात्र भी 100% पहचाने जाएं)
+        // 2. पुरानी सेव की गई प्रोफाइल फोटो (stu.photos) से मल्टी-स्केल और ML-Kit अलाइन्ड वेक्टर बनाएं
         if (student.photos.isNotEmpty()) {
+            val p0 = student.photos[0]
+            val photoCacheKey = "mlvec_${student.id}_${p0.length}_${p0.takeLast(32).hashCode()}"
+            val cachePrefs = context?.applicationContext?.getSharedPreferences(OLD_PHOTO_VEC_CACHE_PREF, Context.MODE_PRIVATE)
+
+            val cachedVecStr = cachePrefs?.getString(photoCacheKey, null)
+            if (!cachedVecStr.isNullOrBlank()) {
+                deserializeFloatArray(cachedVecStr)?.let { vectors.add(it) }
+            } else if (forceMlKitOnPhoto) {
+                val bmp0 = decodeBase64Bitmap(p0)
+                if (bmp0 != null) {
+                    val mlAligned = detectAndAlignStoredPhotoBlocking(bmp0)
+                    if (mlAligned != null) {
+                        val v1 = computeEmbedding(mlAligned)
+                        val v2 = try { computeEmbedding(flipHorizontal(mlAligned)) } catch (e: Exception) { null }
+                        val merged = if (v1 != null && v2 != null) averageEmbeddings(listOf(v1, v2)) else v1
+                        if (merged != null) {
+                            vectors.add(merged)
+                            cachePrefs?.edit()?.putString(photoCacheKey, serializeFloatArray(merged))?.apply()
+                        }
+                    }
+                }
+            }
+
+            // साथ ही सेव की गई DP के 3 अनुपातिक क्रॉप (0.55f, 0.60f, 0.68f) + मिरर फ्लिप भी रखें ताकि पुराने 128-D के हर ज़ूम के फोटो पकड़ में आएं
             for (b64 in student.photos.take(2)) {
                 val bmp = decodeBase64Bitmap(b64) ?: continue
-                val exactCrop = extractExactBiometricFaceFromStoredDp(bmp, 0.593f, 0.0247f)
-                val v1 = computeEmbedding(exactCrop)
-                val v2 = try { computeEmbedding(flipHorizontal(exactCrop)) } catch (e: Exception) { null }
-                if (v1 != null) vectors.add(v1)
-                if (v1 != null && v2 != null) {
-                    vectors.add(averageEmbeddings(listOf(v1, v2)))
+                for (ratio in floatArrayOf(0.593f, 0.66f, 0.53f)) {
+                    val crop = extractExactBiometricFaceFromStoredDp(bmp, ratio, 0.022f)
+                    val v1 = computeEmbedding(crop)
+                    val v2 = try { computeEmbedding(flipHorizontal(crop)) } catch (e: Exception) { null }
+                    if (v1 != null) vectors.add(v1)
+                    if (v1 != null && v2 != null) {
+                        vectors.add(averageEmbeddings(listOf(v1, v2)))
+                    }
                 }
             }
         }
@@ -736,6 +963,7 @@ object FaceMatcherEngine {
         val centroid = averageEmbeddings(vectors)
         return StudentBiometricTemplate(
             student = student,
+            isVerified192D = isVerified,
             poseEmbeddings = vectors,
             centroidEmbedding = centroid
         )
@@ -750,79 +978,118 @@ object FaceMatcherEngine {
             return MatchResult(null, 999f, 0, 0f, false, false, emptyList())
         }
 
-        val vPrimary = computeEmbedding(liveFaceBmp)
+        // 1. शुद्ध रॉ लाइव वेक्टर (Verified 192-D छात्रों के लिए)
+        val vRawPrimary = computeEmbedding(liveFaceBmp)
             ?: return MatchResult(null, 999f, 0, 0f, false, false, emptyList())
-        val vFlipped = try { computeEmbedding(flipHorizontal(liveFaceBmp)) } catch (e: Exception) { null }
-        val liveMerged = if (vFlipped != null) averageEmbeddings(listOf(vPrimary, vFlipped)) else vPrimary
+        val vRawFlipped = try { computeEmbedding(flipHorizontal(liveFaceBmp)) } catch (e: Exception) { null }
+        val liveRawMerged = if (vRawFlipped != null) averageEmbeddings(listOf(vRawPrimary, vRawFlipped)) else vRawPrimary
 
-        val scoredList = ArrayList<Triple<Student, Float, Float>>(candidates.size)
+        // 2. स्टूडियो-नॉर्मलाइज्ड लाइव वेक्टर (ताकि पुरानी फिल्टर लगी हुई सेव फोटो stu.photos[0] के साथ 100% समान कंट्रास्ट मिले!)
+        val studioLiveBmp = applyOnDeviceStudioPortraitFilter(liveFaceBmp)
+        val vStudioPrimary = computeEmbedding(studioLiveBmp) ?: vRawPrimary
+        val vStudioFlipped = try { computeEmbedding(flipHorizontal(studioLiveBmp)) } catch (e: Exception) { null }
+        val liveStudioMerged = if (vStudioFlipped != null) averageEmbeddings(listOf(vStudioPrimary, vStudioFlipped)) else vStudioPrimary
+
+        data class ScoredCandidate(
+            val student: Student,
+            val isVerified: Boolean,
+            val distance: Float,
+            val cosine: Float
+        )
+
+        val scoredList = ArrayList<ScoredCandidate>(candidates.size)
 
         for (stu in candidates) {
             if (stu.photos.isEmpty() && stu.embeddings.isEmpty()) continue
             var template = templateCache[stu.id]
             if (template == null) {
-                template = buildStudentTemplate(stu)
+                template = buildStudentTemplate(stu, forceMlKitOnPhoto = false)
                 if (template != null) {
                     templateCache[stu.id] = template
                 }
             }
             if (template == null) continue
 
+            val isStuVerified = hasVerified192D(stu)
             var maxPoseCos = -1f
             for (poseVec in template.poseEmbeddings) {
-                val c1 = calculateCosineSimilarity(vPrimary, poseVec)
-                val c2 = calculateCosineSimilarity(liveMerged, poseVec)
-                val cMax = max(c1, c2)
+                val cRaw = max(
+                    calculateCosineSimilarity(vRawPrimary, poseVec),
+                    calculateCosineSimilarity(liveRawMerged, poseVec)
+                )
+                val cMax = if (isStuVerified) {
+                    cRaw
+                } else {
+                    val cStudio = max(
+                        calculateCosineSimilarity(vStudioPrimary, poseVec),
+                        calculateCosineSimilarity(liveStudioMerged, poseVec)
+                    )
+                    max(cRaw, cStudio)
+                }
                 if (cMax > maxPoseCos) maxPoseCos = cMax
             }
-            val centroidCos = calculateCosineSimilarity(liveMerged, template.centroidEmbedding)
-            val bestScore = (maxPoseCos * 0.85f) + (centroidCos * 0.15f)
+
+            val centroidRaw = calculateCosineSimilarity(liveRawMerged, template.centroidEmbedding)
+            val centroidScore = if (isStuVerified) {
+                centroidRaw
+            } else {
+                max(centroidRaw, calculateCosineSimilarity(liveStudioMerged, template.centroidEmbedding))
+            }
+
+            val bestScore = (maxPoseCos * 0.86f) + (centroidScore * 0.14f)
             val distance = (1f - bestScore) * 10.0f
 
-            scoredList.add(Triple(stu, distance, bestScore))
+            scoredList.add(ScoredCandidate(stu, isStuVerified, distance, bestScore))
         }
 
         if (scoredList.isEmpty()) {
             return MatchResult(null, 999f, 0, 0f, false, false, emptyList())
         }
 
-        scoredList.sortByDescending { it.third }
+        scoredList.sortByDescending { it.cosine }
 
-        val bestStudent = scoredList[0].first
-        val bestDistance = scoredList[0].second
-        val bestCosine = scoredList[0].third
-        val secondBestCosine = if (scoredList.size > 1) scoredList[1].third else 0f
-        val cosineGap = bestCosine - secondBestCosine
+        val best = scoredList[0]
+        val secondBestCosine = if (scoredList.size > 1) scoredList[1].cosine else 0f
+        val cosineGap = best.cosine - secondBestCosine
 
-        // Top-2 से Top-6 अन्य छात्रों के औसत से अंतर (अनजान चेहरे को रोकने का सरल व अचूक नियम)
         val otherSlice = scoredList.drop(1).take(5)
         val avgOthers = if (otherSlice.isNotEmpty()) {
-            otherSlice.map { it.third }.average().toFloat()
+            otherSlice.map { it.cosine }.average().toFloat()
         } else {
             0f
         }
-        val populationGap = bestCosine - avgOthers
-        val bestPct = cosineToPercentage(bestCosine)
+        val populationGap = best.cosine - avgOthers
+        val bestPct = cosineToPercentage(best.cosine, best.isVerified)
 
         val topCandidates = scoredList
-            .filter { it.third >= AI_ASSIST_COSINE_MIN }
+            .filter { it.cosine >= AI_ASSIST_COSINE_MIN }
             .take(3)
-            .map { it.first }
+            .map { it.student }
 
         val isSingleStudent = (scoredList.size == 1)
-        val requiredMinCos = if (isManualTap) MANUAL_TAP_COSINE_MIN else PASS_COSINE_THRESHOLD
-        val requiredMarginGap = if (isManualTap) 0.036f else MIN_COSINE_MARGIN_GAP
-        val requiredPopGap = if (isManualTap) 0.058f else MIN_POPULATION_GAP
 
-        val isHighConf = (bestCosine >= requiredMinCos) &&
-                (isSingleStudent || bestCosine >= 0.78f || (cosineGap >= requiredMarginGap && populationGap >= requiredPopGap))
+        val isHighConf = if (best.isVerified) {
+            // सत्यापित 192-D छात्र -> सख्त जांच के बाद सीधी हाज़िरी
+            val reqCos = if (isManualTap) MANUAL_VERIFIED_COSINE else PASS_VERIFIED_COSINE
+            val reqMargin = if (isManualTap) 0.032f else MIN_VERIFIED_MARGIN_GAP
+            val reqPop = if (isManualTap) 0.052f else MIN_VERIFIED_POP_GAP
+            (best.cosine >= reqCos) &&
+                (isSingleStudent || best.cosine >= 0.77f || (cosineGap >= reqMargin && populationGap >= reqPop))
+        } else {
+            // पुराना 128-D KYC छात्र -> पहचान कर 3.4s वाला '✔ पक्का करें (OK)' री-केवाईसी पॉप-अप दिखाने के लिए
+            val reqCos = if (isManualTap) PASS_OLD_KYC_MANUAL_COSINE else PASS_OLD_KYC_AUTO_COSINE
+            val reqMargin = if (isManualTap) 0.012f else MIN_OLD_KYC_MARGIN_GAP
+            val reqPop = if (isManualTap) 0.022f else MIN_OLD_KYC_POP_GAP
+            (best.cosine >= reqCos) &&
+                (isSingleStudent || best.cosine >= 0.65f || (cosineGap >= reqMargin && populationGap >= reqPop))
+        }
 
-        val needsSecondFrame = !isManualTap && (bestCosine < INSTANT_PASS_COSINE)
+        val needsSecondFrame = !isManualTap && (!best.isVerified || best.cosine < INSTANT_PASS_COSINE)
 
         return if (isHighConf) {
-            MatchResult(bestStudent, bestDistance, bestPct, bestCosine, true, needsSecondFrame, topCandidates)
+            MatchResult(best.student, best.distance, bestPct, best.cosine, true, needsSecondFrame, topCandidates)
         } else {
-            MatchResult(null, bestDistance, bestPct, bestCosine, false, true, topCandidates)
+            MatchResult(null, best.distance, bestPct, best.cosine, false, true, topCandidates)
         }
     }
 
