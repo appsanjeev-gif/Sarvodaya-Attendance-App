@@ -7,6 +7,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
@@ -38,8 +39,10 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
@@ -53,6 +56,12 @@ object FaceMatcherEngine {
         val isHighConfidence: Boolean,
         val needsSecondFrameConfirm: Boolean,
         val topCandidates: List<Student>
+    )
+
+    // सख्त 192-D KYC सर्कल एनीमेशन के लिए लाइव प्रोग्रेस डेटा (बिना किसी टेक्स्ट या नोटिफिकेशन के)
+    data class StrictKycProgress(
+        val progressFraction: Float, // 0.0f से 1.0f
+        val isPerfectFrame: Boolean  // जब 5° कोण, दोनों कान, सीधी नाक और खुली आँखें 100% सटीक हों
     )
 
     private data class StudentBiometricTemplate(
@@ -73,9 +82,6 @@ object FaceMatcherEngine {
     private var initialWarmUpDone = false
 
     // शुद्ध 192-D बायोमेट्रिक थ्रेशोल्ड (सुपर-फास्ट और सटीक पहचान):
-    // 1. INSTANT_PASS_COSINE (0.73f): उच्च समानता होने पर पहले ही फ्रेम में तुरंत उपस्थिति
-    // 2. PASS_COSINE_THRESHOLD (0.67f): मानक 192-D पासिंग थ्रेशोल्ड (2-फ्रेम पुष्टि + स्पष्ट अंतर)
-    // 3. MANUAL_TAP_COSINE_MIN (0.64f): [📷 स्कैन करें] बटन दबाने पर पासिंग थ्रेशोल्ड
     const val INSTANT_PASS_COSINE = 0.73f
     const val PASS_COSINE_THRESHOLD = 0.67f
     const val MANUAL_TAP_COSINE_MIN = 0.64f
@@ -83,7 +89,12 @@ object FaceMatcherEngine {
     const val MIN_COSINE_MARGIN_GAP = 0.042f
     const val MIN_POPULATION_GAP = 0.065f
 
-    // लाइव कैमरे के लिए सुपर-फास्ट डिटेक्टर
+    // सख्त KYC मानक (5° कोण सीमा + दोनों कान बराबर + नाक सीधी + आँखें कैमरे पर):
+    const val STRICT_KYC_MAX_ANGLE_DEG = 5.0f
+    const val STRICT_KYC_MIN_EAR_SYMMETRY = 0.76f
+    const val STRICT_KYC_MIN_EYE_OPEN = 0.68f
+
+    // लाइव कैमरे के लिए सुपर-फास्ट डिटेक्टर (सभी लैंडमार्क व क्लासिफिकेशन सहित)
     val detector: FaceDetector by lazy {
         val options = FaceDetectorOptions.Builder()
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
@@ -185,7 +196,7 @@ object FaceMatcherEngine {
         templateCache.clear()
     }
 
-    // केवल शुद्ध 192-D वेक्टर को मेमोरी में लोड करना (कोई 128-D या फोटो-क्रॉप जुगाड़ नहीं — 0.01 सेकंड में सुपर-फास्ट स्टार्टअप!)
+    // केवल शुद्ध 192-D वेक्टर को मेमोरी में लोड करना (0.01 सेकंड में सुपर-फास्ट स्टार्टअप)
     fun warmUpCache(students: List<Student>, context: Context? = null) {
         if (students.isEmpty()) {
             initialWarmUpDone = true
@@ -197,7 +208,6 @@ object FaceMatcherEngine {
             try {
                 val appCtx = context?.applicationContext
                 if (appCtx != null) {
-                    // पुराने बिल्ड्स के सभी अस्थायी कैश प्रेफरेंसेज को पूरी तरह साफ करें
                     val legacyPrefs = listOf(
                         "SarvodayaBiometricAlignCacheV6",
                         "SarvodayaCleanBiometricV7",
@@ -215,7 +225,6 @@ object FaceMatcherEngine {
                 var ready192DCount = 0
 
                 for (stu in students) {
-                    // यदि किसी छात्र में पुराने 128-D वेक्टर पड़े हों, तो उन्हें हटा दें
                     val beforeSize = stu.embeddings.size
                     stu.embeddings.removeAll { it.size != embeddingDim }
                     if (stu.embeddings.size != beforeSize) {
@@ -320,7 +329,7 @@ object FaceMatcherEngine {
         return out
     }
 
-    // लाइव चेहरे की जांच + स्पष्ट हिंदी कारण
+    // दैनिक उपस्थिति (Live Attendance Scan) के लिए व्यावहारिक फेस गेट
     fun evaluateLiveFaceGate(face: Face, frameWidth: Int = 0, frameHeight: Int = 0): Pair<Boolean, String> {
         val box = face.boundingBox
         if (frameWidth > 0 && frameHeight > 0) {
@@ -357,7 +366,7 @@ object FaceMatcherEngine {
             return Pair(false, "⚠️ कृपया कैमरे की ओर सीधे देखें")
         }
 
-        if (abs(face.headEulerAngleY) > 26f || abs(face.headEulerAngleZ) > 24f) {
+        if (abs(face.headEulerAngleY) > 24f || abs(face.headEulerAngleZ) > 22f) {
             return Pair(false, "⚠️ कृपया चेहरा सीधा रखें")
         }
 
@@ -374,24 +383,168 @@ object FaceMatcherEngine {
         return evaluateLiveFaceGate(face, frameWidth, frameHeight).first
     }
 
-    fun validateKycFaceQuality(face: Face, frameBmp: Bitmap): Pair<Boolean, String> {
-        return evaluateLiveFaceGate(face, frameBmp.width, frameBmp.height)
+    // ★ सख्त 192-D KYC सर्कल मूल्यांकन (बिना किसी टेक्स्ट के केवल गोल लाइन भरने के लिए):
+    // शर्तें:
+    // 1. दोनों कान (LEFT_EAR व RIGHT_EAR) दिखने अनिवार्य और दोनों की नाक से दूरी बराबर अनुपात में हो।
+    // 2. सिर का घुमाव (Yaw Y, Roll Z, Pitch X) सख्त 5.0° के भीतर हो।
+    // 3. नाक (NOSE_BASE) दोनों आँखों के ठीक बीचों-बीच सीधी हो और मुँह के केंद्र के ठीक ऊपर हो।
+    // 4. दोनों आँखें कैमरे पर खुली हों (>= 0.68f) और एक सीधी क्षैतिज रेखा में हों।
+    // 5. चेहरा सर्कल के केंद्र में हो और नीचे कंधों के लिए पर्याप्त जगह हो।
+    fun evaluateStrictKycProgress(face: Face?, frameWidth: Int, frameHeight: Int): StrictKycProgress {
+        if (face == null || frameWidth <= 0 || frameHeight <= 0) {
+            return StrictKycProgress(0f, false)
+        }
+
+        val box = face.boundingBox
+        val minSide = min(frameWidth, frameHeight).toFloat()
+        val faceSizeRatio = min(box.width(), box.height()) / minSide
+
+        // 1. चेहरे का आकार और फ्रेम के बीच में स्थिति (कंधे आने के लिए नीचे स्पेस सहित)
+        val sizeOk = faceSizeRatio in 0.22f..0.68f
+        val cxRatio = box.exactCenterX() / frameWidth.toFloat()
+        val cyRatio = box.exactCenterY() / frameHeight.toFloat()
+        val centerOk = (cxRatio in 0.32f..0.68f) && (cyRatio in 0.24f..0.64f)
+
+        val sizeAndCenterScore = when {
+            sizeOk && centerOk -> 0.20f
+            faceSizeRatio >= 0.16f && (cxRatio in 0.22f..0.78f) && (cyRatio in 0.16f..0.75f) -> 0.11f
+            else -> 0.04f
+        }
+
+        // 2. मुख्य लैंडमार्क (आँखें, नाक, मुँह)
+        val leftEye: PointF = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
+            ?: return StrictKycProgress(sizeAndCenterScore, false)
+        val rightEye: PointF = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
+            ?: return StrictKycProgress(sizeAndCenterScore, false)
+        val noseBase: PointF = face.getLandmark(FaceLandmark.NOSE_BASE)?.position
+            ?: return StrictKycProgress(sizeAndCenterScore, false)
+        val mouthLeft: PointF = face.getLandmark(FaceLandmark.MOUTH_LEFT)?.position
+            ?: return StrictKycProgress(sizeAndCenterScore, false)
+        val mouthRight: PointF = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
+            ?: return StrictKycProgress(sizeAndCenterScore, false)
+
+        // 3. आँखें कैमरे पर खुली और सीधी रेखा में
+        val leftOpen = face.leftEyeOpenProbability ?: 0f
+        val rightOpen = face.rightEyeOpenProbability ?: 0f
+        val eyeLineAngleDeg = abs(
+            Math.toDegrees(
+                atan2(
+                    (rightEye.y - leftEye.y).toDouble(),
+                    abs(rightEye.x - leftEye.x).toDouble().coerceAtLeast(1.0)
+                )
+            ).toFloat()
+        )
+        val eyesPerfect = (leftOpen >= STRICT_KYC_MIN_EYE_OPEN) &&
+                (rightOpen >= STRICT_KYC_MIN_EYE_OPEN) &&
+                (eyeLineAngleDeg <= 4.5f)
+        val eyeScore = when {
+            eyesPerfect -> 0.20f
+            leftOpen >= 0.45f && rightOpen >= 0.45f && eyeLineAngleDeg <= 8.0f -> 0.11f
+            else -> 0.03f
+        }
+
+        // 4. नाक एकदम सीधी और दोनों आँखों व मुँह के ठीक केंद्र में
+        val eyeMidX = (leftEye.x + rightEye.x) * 0.5f
+        val eyeMidY = (leftEye.y + rightEye.y) * 0.5f
+        val mouthMidX = (mouthLeft.x + mouthRight.x) * 0.5f
+        val mouthMidY = (mouthLeft.y + mouthRight.y) * 0.5f
+        val eyeDist = hypot((rightEye.x - leftEye.x).toDouble(), (rightEye.y - leftEye.y).toDouble()).toFloat().coerceAtLeast(12f)
+
+        val noseOffsetRatio = abs(noseBase.x - eyeMidX) / eyeDist
+        val mouthOffsetRatio = abs(mouthMidX - noseBase.x) / eyeDist
+        val verticalOrderOk = (noseBase.y > eyeMidY + box.height() * 0.08f) &&
+                (mouthMidY > noseBase.y + box.height() * 0.08f)
+
+        val nosePerfect = verticalOrderOk && (noseOffsetRatio <= 0.13f) && (mouthOffsetRatio <= 0.15f)
+        val noseScore = when {
+            nosePerfect -> 0.20f
+            verticalOrderOk && noseOffsetRatio <= 0.24f -> 0.11f
+            else -> 0.03f
+        }
+
+        // 5. दोनों कान (LEFT_EAR & RIGHT_EAR) दिखने और बराबर अनुपात में होने की सख्त जाँच
+        val leftEar: PointF? = face.getLandmark(FaceLandmark.LEFT_EAR)?.position
+        val rightEar: PointF? = face.getLandmark(FaceLandmark.RIGHT_EAR)?.position
+
+        var earsPerfect = false
+        var earScore = 0.0f
+        if (leftEar != null && rightEar != null) {
+            val minEarX = min(leftEar.x, rightEar.x)
+            val maxEarX = max(leftEar.x, rightEar.x)
+            val minEyeX = min(leftEye.x, rightEye.x)
+            val maxEyeX = max(leftEye.x, rightEye.x)
+
+            // दोनों कान आँखों के बाहरी किनारों से बाहर साफ दिखने चाहिए
+            val earsOutsideEyes = (minEarX < minEyeX - eyeDist * 0.08f) && (maxEarX > maxEyeX + eyeDist * 0.08f)
+            val distLeftEarToNose = noseBase.x - minEarX
+            val distRightEarToNose = maxEarX - noseBase.x
+
+            if (earsOutsideEyes && distLeftEarToNose > 4f && distRightEarToNose > 4f) {
+                val earSymmetryRatio = min(distLeftEarToNose, distRightEarToNose) / max(distLeftEarToNose, distRightEarToNose)
+                if (earSymmetryRatio >= STRICT_KYC_MIN_EAR_SYMMETRY) {
+                    earsPerfect = true
+                    earScore = 0.20f
+                } else {
+                    earScore = (earSymmetryRatio * 0.15f).coerceIn(0.04f, 0.14f)
+                }
+            } else {
+                earScore = 0.05f
+            }
+        } else if (leftEar != null || rightEar != null) {
+            // केवल एक कान दिख रहा है -> अधूरा
+            earScore = 0.06f
+        }
+
+        // 6. सख्त 5.0° कोण जाँच (Yaw Y, Roll Z, Pitch X सभी <= 5.0°)
+        val yaw = abs(face.headEulerAngleY)
+        val roll = abs(face.headEulerAngleZ)
+        val pitch = abs(face.headEulerAngleX)
+
+        val anglesPerfect = (yaw <= STRICT_KYC_MAX_ANGLE_DEG) &&
+                (roll <= STRICT_KYC_MAX_ANGLE_DEG) &&
+                (pitch <= STRICT_KYC_MAX_ANGLE_DEG)
+
+        val maxAngle = max(yaw, max(roll, pitch))
+        val angleScore = when {
+            anglesPerfect -> 0.20f
+            maxAngle <= 9.0f -> 0.12f
+            maxAngle <= 15.0f -> 0.06f
+            else -> 0.01f
+        }
+
+        val allStrictConditionsMet = sizeOk && centerOk && eyesPerfect && nosePerfect && earsPerfect && anglesPerfect
+        val rawTotal = (sizeAndCenterScore + eyeScore + noseScore + earScore + angleScore).coerceIn(0f, 1f)
+
+        // जब तक सारी शर्तें 100% पूरी न हों, सर्कल 84% से ऊपर कभी न भरे!
+        val finalFraction = if (allStrictConditionsMet) {
+            1.0f
+        } else {
+            min(rawTotal, 0.84f)
+        }
+
+        return StrictKycProgress(finalFraction, allStrictConditionsMet)
     }
 
-    // KYC DP फोटो क्रॉप फिक्स: detectBmp के कोऑर्डिनेट को rawSource के अनुपात में स्केल करके चेहरे के बीचों-बीच से साफ 1:1 DP काटना
+    fun validateKycFaceQuality(face: Face, frameBmp: Bitmap): Pair<Boolean, String> {
+        val status = evaluateStrictKycProgress(face, frameBmp.width, frameBmp.height)
+        return Pair(status.isPerfectFrame, "")
+    }
+
+    // ★ पासपोर्ट/आईडी कार्ड जैसी सुंदर 1:1 DP क्रॉप (जिसमें सिर के ऊपर स्पेस और नीचे दोनों कंधे साफ और बराबर दिखें!):
     fun cropTrueSquarePortraitFromFrames(rawSource: Bitmap, detectBmp: Bitmap, face: Face): Bitmap {
         val scaleX = rawSource.width.toFloat() / detectBmp.width.toFloat().coerceAtLeast(1f)
         val scaleY = rawSource.height.toFloat() / detectBmp.height.toFloat().coerceAtLeast(1f)
         val box = face.boundingBox
 
         val cx = (box.exactCenterX() * scaleX).roundToInt()
-        val cy = ((box.exactCenterY() - (box.height() * 0.04f)) * scaleY).roundToInt()
+        // केंद्र को +0.20f नीचे (गर्दन की ओर) रखें और साइज़ 2.25f रखें ताकि दोनों कंधे (Shoulders) और कॉलर साफ दिखें
+        val cy = ((box.exactCenterY() + (box.height() * 0.20f)) * scaleY).roundToInt()
         val faceW = box.width() * scaleX
         val faceH = box.height() * scaleY
 
-        val desiredSide = (max(faceW, faceH) * 1.62f).roundToInt()
+        val desiredSide = (max(faceW, faceH) * 2.25f).roundToInt()
         val maxPossibleSide = min(rawSource.width, rawSource.height)
-        val side = desiredSide.coerceIn(80, maxPossibleSide)
+        val side = desiredSide.coerceIn(120, maxPossibleSide)
         val half = side / 2
 
         var left = cx - half
@@ -407,68 +560,182 @@ object FaceMatcherEngine {
         val finalSquareSide = min(actualW, actualH).coerceAtLeast(1)
 
         val squareCrop = Bitmap.createBitmap(rawSource, left, top, finalSquareSide, finalSquareSide)
-        return Bitmap.createScaledBitmap(squareCrop, 320, 320, true)
+        return Bitmap.createScaledBitmap(squareCrop, 400, 400, true)
     }
 
     fun cropTrueSquarePortrait(source: Bitmap, face: Face): Bitmap {
         return cropTrueSquarePortraitFromFrames(source, source, face)
     }
 
+    // ★ अपग्रेडेड AI स्टूडियो ब्यूटी पोर्ट्रेट फिल्टर (Auto White-Balance + Shadow Fill-Light + Bilateral Skin Smoothing + Crisp Eyes):
     fun applyOnDeviceStudioPortraitFilter(squareBmp: Bitmap): Bitmap {
         val w = squareBmp.width
         val h = squareBmp.height
-        val pixels = IntArray(w * h)
-        squareBmp.getPixels(pixels, 0, w, 0, 0, w, h)
+        if (w < 16 || h < 16) return squareBmp
 
-        var minLum = 255
-        var maxLum = 0
+        val inPixels = IntArray(w * h)
+        squareBmp.getPixels(inPixels, 0, w, 0, 0, w, h)
+
+        // 1. चेहरे के मध्य भाग (Center 60%) से औसत ब्राइटनेस और RGB संतुलन (Auto White Balance) निकालें
+        var sumR = 0L
+        var sumG = 0L
+        var sumB = 0L
         var sumLum = 0L
-        for (px in pixels) {
-            val r = (px shr 16) and 0xFF
-            val g = (px shr 8) and 0xFF
-            val b = px and 0xFF
-            val lum = (r * 77 + g * 150 + b * 29) shr 8
-            if (lum < minLum) minLum = lum
-            if (lum > maxLum) maxLum = lum
-            sumLum += lum
+        var count = 0
+        val xStart = (w * 0.20f).toInt()
+        val xEnd = (w * 0.80f).toInt()
+        val yStart = (h * 0.15f).toInt()
+        val yEnd = (h * 0.75f).toInt()
+
+        for (y in yStart until yEnd) {
+            val rowOffset = y * w
+            for (x in xStart until xEnd) {
+                val px = inPixels[rowOffset + x]
+                val r = (px shr 16) and 0xFF
+                val g = (px shr 8) and 0xFF
+                val b = px and 0xFF
+                val lum = (r * 77 + g * 150 + b * 29) shr 8
+                if (lum in 18..242) {
+                    sumR += r
+                    sumG += g
+                    sumB += b
+                    sumLum += lum
+                    count++
+                }
+            }
         }
-        val avgLum = (sumLum / pixels.size).toInt()
-        val gamma = when {
-            avgLum < 95 -> 0.76
-            avgLum < 125 -> 0.86
-            avgLum > 185 -> 1.05
+
+        val safeCount = max(count, 1)
+        val avgR = (sumR / safeCount).toFloat().coerceAtLeast(25f)
+        val avgG = (sumG / safeCount).toFloat().coerceAtLeast(25f)
+        val avgB = (sumB / safeCount).toFloat().coerceAtLeast(25f)
+        val avgLum = (sumLum / safeCount).toFloat().coerceIn(30f, 220f)
+
+        // कमरे की नीली या पीली रोशनी को हटाकर प्राकृतिक वार्म स्किन टोन देना
+        val grayTarget = (avgR + avgG + avgB) / 3.0f
+        val gainR = ((grayTarget / avgR) * 1.035f).coerceIn(0.88f, 1.24f)
+        val gainG = ((grayTarget / avgG) * 1.005f).coerceIn(0.90f, 1.18f)
+        val gainB = ((grayTarget / avgB) * 0.965f).coerceIn(0.82f, 1.18f)
+
+        // अंधेरे चेहरे को चमकाने के लिए स्मार्ट स्टूडियो गामा और शैडो लिफ्ट
+        val targetGamma = when {
+            avgLum < 75f -> 0.64
+            avgLum < 105f -> 0.74
+            avgLum < 135f -> 0.84
+            avgLum > 185f -> 1.04
             else -> 0.92
         }
+        val shadowLift = if (avgLum < 120f) ((120f - avgLum) * 0.32f).coerceIn(0f, 24f) else 0f
 
-        val lut = IntArray(256)
-        val lowCut = (minLum * 0.35).toInt().coerceIn(0, 40)
-        val highCut = max(maxLum, 215).coerceIn(190, 255)
-        val range = max(highCut - lowCut, 60).toDouble()
-
+        val toneLut = IntArray(256)
         for (i in 0..255) {
-            val norm = ((i - lowCut).coerceAtLeast(0) / range).coerceIn(0.0, 1.0)
-            val curved = Math.pow(norm, gamma)
-            val sCurve = curved * curved * (3.0 - 2.0 * curved)
-            val blended = (curved * 0.65 + sCurve * 0.35) * 255.0
-            lut[i] = blended.roundToInt().coerceIn(0, 255)
+            val norm = (i / 255.0).coerceIn(0.0, 1.0)
+            // सॉफ्ट शैडो फिल + गामा ब्राइटनिंग
+            val gammaVal = norm.pow(targetGamma)
+            // हल्का S-curve ताकि चेहरा धुंधला न होकर चमकदार और स्पष्ट दिखे
+            val contrastVal = gammaVal * gammaVal * (3.0 - 2.0 * gammaVal)
+            val blended = (gammaVal * 0.68 + contrastVal * 0.32) * 255.0 + shadowLift * (1.0 - norm)
+            toneLut[i] = blended.roundToInt().coerceIn(0, 255)
         }
 
-        val exposedPixels = IntArray(w * h)
-        for (i in pixels.indices) {
-            val px = pixels[i]
-            var r = lut[(px shr 16) and 0xFF]
-            var g = lut[(px shr 8) and 0xFF]
-            var b = lut[px and 0xFF]
+        // 2. टोन मैपिंग + वाइब्रेंस (Natural Portrait Vibrance)
+        val tonedPixels = IntArray(w * h)
+        for (i in inPixels.indices) {
+            val px = inPixels[i]
+            val r0 = ((px shr 16) and 0xFF) * gainR
+            val g0 = ((px shr 8) and 0xFF) * gainG
+            val b0 = (px and 0xFF) * gainB
 
-            r = (r * 1.03f + 3f).toInt().coerceIn(0, 255)
-            g = (g * 1.01f + 1f).toInt().coerceIn(0, 255)
-            b = (b * 0.99f).toInt().coerceIn(0, 255)
+            var r = toneLut[r0.roundToInt().coerceIn(0, 255)]
+            var g = toneLut[g0.roundToInt().coerceIn(0, 255)]
+            var b = toneLut[b0.roundToInt().coerceIn(0, 255)]
 
-            exposedPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+            // स्मार्ट वाइब्रेंस: फीके रंगों को प्राकृतिक चमक दें
+            val mean = (r + g + b) / 3
+            val maxC = max(r, max(g, b))
+            val minC = min(r, min(g, b))
+            val sat = maxC - minC
+            val vibFactor = if (sat < 85) 1.14f else 1.05f
+
+            r = (mean + (r - mean) * vibFactor).roundToInt().coerceIn(0, 255)
+            g = (mean + (g - mean) * vibFactor).roundToInt().coerceIn(0, 255)
+            b = (mean + (b - mean) * vibFactor).roundToInt().coerceIn(0, 255)
+
+            tonedPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        }
+
+        // 3. Edge-Preserving Bilateral Skin Smoothing + Eye/Collar Detail Sharpening:
+        // यह त्वचा के दाग/ग्रेन को मुलायम (Smooth) करता है और आँखों, भौंहों व बालों को एकदम शार्प रखता है
+        val finalPixels = IntArray(w * h)
+        val colorThreshold = 26
+
+        for (y in 0 until h) {
+            val row = y * w
+            for (x in 0 until w) {
+                val idx = row + x
+                if (x < 2 || x >= w - 2 || y < 2 || y >= h - 2) {
+                    finalPixels[idx] = tonedPixels[idx]
+                    continue
+                }
+
+                val centerPx = tonedPixels[idx]
+                val cr = (centerPx shr 16) and 0xFF
+                val cg = (centerPx shr 8) and 0xFF
+                val cb = centerPx and 0xFF
+
+                var wSum = 4
+                var rAcc = cr * 4
+                var gAcc = cg * 4
+                var bAcc = cb * 4
+
+                // 5x5 स्पैशियल-रेंज सैंपलिंग
+                val offsetsY = intArrayOf(-2, -1, 0, 1, 2)
+                val offsetsX = intArrayOf(-2, -1, 0, 1, 2)
+                for (dy in offsetsY) {
+                    val ny = (y + dy) * w
+                    for (dx in offsetsX) {
+                        if (dx == 0 && dy == 0) continue
+                        val nPx = tonedPixels[ny + x + dx]
+                        val nr = (nPx shr 16) and 0xFF
+                        val ng = (nPx shr 8) and 0xFF
+                        val nb = nPx and 0xFF
+
+                        val diff = abs(cr - nr) + abs(cg - ng) + abs(cb - nb)
+                        if (diff < colorThreshold * 3) {
+                            val weight = if (diff < colorThreshold) 2 else 1
+                            rAcc += nr * weight
+                            gAcc += ng * weight
+                            bAcc += nb * weight
+                            wSum += weight
+                        }
+                    }
+                }
+
+                val smoothR = rAcc / wSum
+                val smoothG = gAcc / wSum
+                val smoothB = bAcc / wSum
+
+                // यदि यह किनारा (आँख/बाल/कॉलर) है तो हल्का Unsharp Mask लगाएं, और यदि त्वचा है तो मुलायम रखें
+                val edgeDiff = abs(cr - smoothR) + abs(cg - smoothG) + abs(cb - smoothB)
+                val outR: Int
+                val outG: Int
+                val outB: Int
+                if (edgeDiff > 18) {
+                    outR = (cr + (cr - smoothR) * 0.35f).roundToInt().coerceIn(0, 255)
+                    outG = (cg + (cg - smoothG) * 0.35f).roundToInt().coerceIn(0, 255)
+                    outB = (cb + (cb - smoothB) * 0.35f).roundToInt().coerceIn(0, 255)
+                } else {
+                    outR = (smoothR * 0.78f + cr * 0.22f).roundToInt().coerceIn(0, 255)
+                    outG = (smoothG * 0.78f + cg * 0.22f).roundToInt().coerceIn(0, 255)
+                    outB = (smoothB * 0.78f + cb * 0.22f).roundToInt().coerceIn(0, 255)
+                }
+
+                finalPixels[idx] = (0xFF shl 24) or (outR shl 16) or (outG shl 8) or outB
+            }
         }
 
         val outBmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        outBmp.setPixels(exposedPixels, 0, w, 0, 0, w, h)
+        outBmp.setPixels(finalPixels, 0, w, 0, 0, w, h)
         return outBmp
     }
 
@@ -477,20 +744,17 @@ object FaceMatcherEngine {
         return applyOnDeviceStudioPortraitFilter(squareCrop)
     }
 
+    // ★ सभी 10+ Gemini Keys पर रोटेशन + हाई-क्वालिटी ऑन-डिवाइस स्टूडियो ब्यूटी फॉलबैक:
     fun enhancePortraitWithGeminiOrFallbackBlocking(context: Context, squareBaseBmp: Bitmap): Pair<Bitmap, Boolean> {
-        var fallbackReason = "Gemini Key उपलब्ध नहीं है — ऑन-डिवाइस स्टूडियो फिल्टर लगाया गया"
+        var fallbackReason = "Gemini Key उपलब्ध नहीं है — ऑन-डिवाइस AI स्टूडियो ब्यूटी फिल्टर लगाया गया"
         try {
             val vm = RealisticVoiceManager(context)
-            val rawKeys = vm.getGeminiKeysString()
-            val keyPool = rawKeys.split(",", "\n", ";", " ")
-                .map { it.trim() }
-                .filter { it.length > 15 && !it.startsWith("sk_", ignoreCase = true) }
-            val apiKey = keyPool.firstOrNull()
+            val keyPool = vm.getGeminiKeysListPublic()
 
-            if (apiKey != null) {
+            if (keyPool.isNotEmpty()) {
                 val inputBaos = ByteArrayOutputStream()
-                Bitmap.createScaledBitmap(squareBaseBmp, 320, 320, true)
-                    .compress(Bitmap.CompressFormat.JPEG, 90, inputBaos)
+                Bitmap.createScaledBitmap(squareBaseBmp, 400, 400, true)
+                    .compress(Bitmap.CompressFormat.JPEG, 92, inputBaos)
                 val inputB64 = Base64.encodeToString(inputBaos.toByteArray(), Base64.NO_WRAP)
 
                 val modelsToTry = listOf(
@@ -498,79 +762,86 @@ object FaceMatcherEngine {
                     "gemini-2.5-flash-image-preview"
                 )
 
-                for (modelName in modelsToTry) {
-                    try {
-                        val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
-                        val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
-                            requestMethod = "POST"
-                            connectTimeout = 10000
-                            readTimeout = 18000
-                            doOutput = true
-                            setRequestProperty("Content-Type", "application/json; charset=UTF-8")
-                        }
+                // पहली Key फेल होने पर रुकने के बजाय अधिकतम 4 उपलब्ध Keys तक प्रयास करें
+                for (apiKey in keyPool.take(4)) {
+                    for (modelName in modelsToTry) {
+                        try {
+                            val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
+                            val conn = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+                                requestMethod = "POST"
+                                connectTimeout = 8000
+                                readTimeout = 14000
+                                doOutput = true
+                                setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+                            }
 
-                        val prompt = "Enhance this student ID portrait photo into a clean, bright, studio-lit 1:1 square passport photo. Keep the person's exact facial identity, bone structure, eyes, nose, and expression 100% unchanged. Only improve lighting, clarity, and natural skin tone."
+                            val prompt = "Enhance this passport/ID card portrait photo (showing head and both shoulders) into a clean, bright, professional studio-lit 1:1 square photo. Keep the person's exact facial identity, eyes, nose, ears, hair, and clothing 100% unchanged. Improve lighting, skin clarity, natural warm skin tone, and crispness."
 
-                        val partsArray = JSONArray().apply {
-                            put(JSONObject().put("text", prompt))
-                            put(JSONObject().put("inlineData", JSONObject().apply {
-                                put("mimeType", "image/jpeg")
-                                put("data", inputB64)
-                            }))
-                        }
+                            val partsArray = JSONArray().apply {
+                                put(JSONObject().put("text", prompt))
+                                put(JSONObject().put("inlineData", JSONObject().apply {
+                                    put("mimeType", "image/jpeg")
+                                    put("data", inputB64)
+                                }))
+                            }
 
-                        val genConfig = JSONObject().apply {
-                            put("responseModalities", JSONArray().put("TEXT").put("IMAGE"))
-                        }
+                            val genConfig = JSONObject().apply {
+                                put("responseModalities", JSONArray().put("TEXT").put("IMAGE"))
+                            }
 
-                        val payload = JSONObject().apply {
-                            put("contents", JSONArray().put(JSONObject().put("parts", partsArray)))
-                            put("generationConfig", genConfig)
-                        }
+                            val payload = JSONObject().apply {
+                                put("contents", JSONArray().put(JSONObject().put("parts", partsArray)))
+                                put("generationConfig", genConfig)
+                            }
 
-                        conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
-                        val code = conn.responseCode
-                        if (code == 200) {
-                            val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
-                            val parts = JSONObject(resp)
-                                .optJSONArray("candidates")?.optJSONObject(0)
-                                ?.optJSONObject("content")?.optJSONArray("parts")
-                            if (parts != null) {
-                                for (i in 0 until parts.length()) {
-                                    val p = parts.optJSONObject(i) ?: continue
-                                    val inlineData = p.optJSONObject("inlineData") ?: p.optJSONObject("inline_data")
-                                    if (inlineData != null) {
-                                        val b64Data = inlineData.optString("data", "")
-                                        if (b64Data.length > 100) {
-                                            val decoded = decodeBase64Bitmap(b64Data)
-                                            if (decoded != null) {
-                                                val side = min(decoded.width, decoded.height)
-                                                val x = (decoded.width - side) / 2
-                                                val y = (decoded.height - side) / 2
-                                                val sq = Bitmap.createBitmap(decoded, x, y, side, side)
-                                                AiDiagnosticLogger.recordEvent(
-                                                    context,
-                                                    "DP_EDIT",
-                                                    "3. AI स्टूडियो DP सुधार (KYC)",
-                                                    "✅ क्लाउड AI से बना",
-                                                    "Gemini Image Model ($modelName) से 1:1 फोटो एडिट होकर आई"
-                                                )
-                                                return Pair(Bitmap.createScaledBitmap(sq, 320, 320, true), true)
+                            conn.outputStream.use { it.write(payload.toString().toByteArray(Charsets.UTF_8)) }
+                            val code = conn.responseCode
+                            if (code == 200) {
+                                val resp = conn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+                                val parts = JSONObject(resp)
+                                    .optJSONArray("candidates")?.optJSONObject(0)
+                                    ?.optJSONObject("content")?.optJSONArray("parts")
+                                if (parts != null) {
+                                    for (i in 0 until parts.length()) {
+                                        val p = parts.optJSONObject(i) ?: continue
+                                        val inlineData = p.optJSONObject("inlineData") ?: p.optJSONObject("inline_data")
+                                        if (inlineData != null) {
+                                            val b64Data = inlineData.optString("data", "")
+                                            if (b64Data.length > 100) {
+                                                val decoded = decodeBase64Bitmap(b64Data)
+                                                if (decoded != null) {
+                                                    val side = min(decoded.width, decoded.height)
+                                                    val x = (decoded.width - side) / 2
+                                                    val y = (decoded.height - side) / 2
+                                                    val sq = Bitmap.createBitmap(decoded, x, y, side, side)
+                                                    AiDiagnosticLogger.recordEvent(
+                                                        context,
+                                                        "DP_EDIT",
+                                                        "3. AI स्टूडियो DP सुधार (KYC)",
+                                                        "✅ क्लाउड AI से बना",
+                                                        "Gemini Image Model ($modelName) से कंधों सहित सुंदर 1:1 DP बनी"
+                                                    )
+                                                    return Pair(Bitmap.createScaledBitmap(sq, 400, 400, true), true)
+                                                }
                                             }
                                         }
                                     }
                                 }
+                                fallbackReason = "Gemini ($modelName) ने इमेज नहीं लौटाई — ऑन-डिवाइस स्टूडियो ब्यूटी फिल्टर लगा"
+                            } else {
+                                fallbackReason = "Gemini Image API HTTP $code — ऑन-डिवाइस स्टूडियो ब्यूटी फिल्टर से 1:1 DP बनी"
+                                if (code == 400 || code == 403 || code == 429) break
                             }
-                            fallbackReason = "Gemini ($modelName) ने इमेज बाइनरी नहीं लौटाई — ऑन-डिवाइस स्टूडियो फिल्टर लगा"
-                        } else {
-                            fallbackReason = "Gemini Image API HTTP $code — ऑन-डिवाइस स्टूडियो फिल्टर से 1:1 DP बनी"
+                        } catch (e: UnknownHostException) {
+                            fallbackReason = "इंटरनेट बंद था — ऑन-डिवाइस स्टूडियो ब्यूटी फिल्टर से 1:1 DP बनाई गई"
+                            break
+                        } catch (e: SocketTimeoutException) {
+                            fallbackReason = "नेटवर्क धीमा (Timeout) था — ऑन-डिवाइस स्टूडियो ब्यूटी फिल्टर से 1:1 DP बनाई गई"
+                            break
+                        } catch (e: Exception) {
+                            fallbackReason = "कनेक्शन त्रुटि (${e.javaClass.simpleName}) — ऑन-डिवाइस स्टूडियो ब्यूटी फिल्टर लगा"
+                            break
                         }
-                    } catch (e: UnknownHostException) {
-                        fallbackReason = "इंटरनेट बंद था — ऑन-डिवाइस स्टूडियो फिल्टर से 1:1 DP बनाई गई"
-                    } catch (e: SocketTimeoutException) {
-                        fallbackReason = "नेटवर्क धीमा (Timeout) था — ऑन-डिवाइस स्टूडियो फिल्टर से 1:1 DP बनाई गई"
-                    } catch (e: Exception) {
-                        fallbackReason = "कनेक्शन त्रुटि (${e.javaClass.simpleName}) — ऑन-डिवाइस स्टूडियो फिल्टर लगा"
                     }
                 }
             }
@@ -580,26 +851,29 @@ object FaceMatcherEngine {
             context,
             "DP_EDIT",
             "3. AI स्टूडियो DP सुधार (KYC)",
-            "🔄 ऑन-डिवाइस स्टूडियो फिल्टर",
+            "🔄 ऑन-डिवाइस स्टूडियो ब्यूटी",
             fallbackReason
         )
         return Pair(applyOnDeviceStudioPortraitFilter(squareBaseBmp), false)
     }
 
-    fun alignAndCropFaceBitmap(source: Bitmap, face: Face): Bitmap {
+    // फुल-एचडी और 480p दोनों फ्रेम्स से सटीक 112x112 बायोमेट्रिक चेहरा अलाइन करना
+    fun alignAndCropFaceBitmapFromFrames(rawSource: Bitmap, detectBmp: Bitmap, face: Face): Bitmap {
+        val scaleX = rawSource.width.toFloat() / detectBmp.width.toFloat().coerceAtLeast(1f)
+        val scaleY = rawSource.height.toFloat() / detectBmp.height.toFloat().coerceAtLeast(1f)
         val box = face.boundingBox
-        val cx = box.exactCenterX()
-        val cy = box.exactCenterY()
-        val cropSide = (max(box.width(), box.height()) * 0.96f).coerceAtLeast(48f)
+        val cx = box.exactCenterX() * scaleX
+        val cy = box.exactCenterY() * scaleY
+        val cropSide = (max(box.width() * scaleX, box.height() * scaleY) * 0.96f).coerceAtLeast(48f)
 
         var angleDeg = 0f
         val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
         if (leftEye != null && rightEye != null) {
-            val dy = (rightEye.y - leftEye.y).toDouble()
-            val dx = (rightEye.x - leftEye.x).toDouble()
+            val dy = ((rightEye.y - leftEye.y) * scaleY).toDouble()
+            val dx = ((rightEye.x - leftEye.x) * scaleX).toDouble()
             val rawAngle = Math.toDegrees(atan2(dy, dx)).toFloat()
-            if (abs(rawAngle) in 1.5f..26.0f) {
+            if (abs(rawAngle) in 1.0f..26.0f) {
                 angleDeg = rawAngle
             }
         }
@@ -617,8 +891,12 @@ object FaceMatcherEngine {
             postTranslate(targetSize / 2f, targetSize / 2f)
         }
         val paint = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
-        canvas.drawBitmap(source, matrix, paint)
+        canvas.drawBitmap(rawSource, matrix, paint)
         return outBmp
+    }
+
+    fun alignAndCropFaceBitmap(source: Bitmap, face: Face): Bitmap {
+        return alignAndCropFaceBitmapFromFrames(source, source, face)
     }
 
     fun cropFaceBitmap(source: Bitmap, boundingBox: Rect): Bitmap {
@@ -640,10 +918,16 @@ object FaceMatcherEngine {
         return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
     }
 
-    fun extractHighPrecisionKycEmbeddingList(alignedFaceBmp: Bitmap): List<Float> {
+    fun extractHighPrecisionKycEmbeddingList(alignedFaceBmp: Bitmap, hdAlignedFaceBmp: Bitmap? = null): List<Float> {
         val v1 = computeEmbedding(alignedFaceBmp) ?: return emptyList()
         val v2 = try { computeEmbedding(flipHorizontal(alignedFaceBmp)) } catch (e: Exception) { null }
-        val merged = if (v2 != null) averageEmbeddings(listOf(v1, v2)) else v1
+        val v3 = if (hdAlignedFaceBmp != null) computeEmbedding(hdAlignedFaceBmp) else null
+        val v4 = if (hdAlignedFaceBmp != null) {
+            try { computeEmbedding(flipHorizontal(hdAlignedFaceBmp)) } catch (e: Exception) { null }
+        } else null
+
+        val list = listOfNotNull(v1, v2, v3, v4)
+        val merged = averageEmbeddings(list)
         return merged.map { (it * 100000f).roundToInt() / 100000f }
     }
 
@@ -720,7 +1004,6 @@ object FaceMatcherEngine {
         return (78f + passNorm * 21f).roundToInt().coerceIn(78, 99)
     }
 
-    // केवल छात्र के शुद्ध 192-D वेक्टर (student.embeddings) से टेम्पलेट बनाना (0ms समय, शून्य लैग)
     private fun buildStudentTemplate(student: Student): StudentBiometricTemplate? {
         if (student.embeddings.isEmpty()) return null
         val vectors = mutableListOf<FloatArray>()
