@@ -256,7 +256,6 @@ class AdminActivity : AppCompatActivity() {
             return
         }
 
-        // लाइव स्कैनर के समान ही 480p फ्रेम का उपयोग ताकि KYC और Live Scan दोनों का 192-D वेक्टर 100% समान बने
         val detectBmp = FaceMatcherEngine.downscaleFrameForFastDetection(rawFrameBmp, 480)
         val inputImage = InputImage.fromBitmap(detectBmp, 0)
         FaceMatcherEngine.detector.process(inputImage)
@@ -272,7 +271,8 @@ class AdminActivity : AppCompatActivity() {
                     return@addOnSuccessListener
                 }
 
-                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortrait(rawFrameBmp, primaryFace)
+                // ★ KYC 1:1 DP क्रॉप फिक्स: detectBmp के कोऑर्डिनेट को rawFrameBmp के अनुपात में स्केल करके ठीक चेहरे के बीच से HD स्क्वायर काटें!
+                val rawSquareBmp = FaceMatcherEngine.cropTrueSquarePortraitFromFrames(rawFrameBmp, detectBmp, primaryFace)
                 val previewDpBmp = FaceMatcherEngine.applyOnDeviceStudioPortraitFilter(rawSquareBmp)
                 val alignedBiometricFace = FaceMatcherEngine.alignAndCropFaceBitmap(detectBmp, primaryFace)
 
@@ -327,6 +327,8 @@ class AdminActivity : AppCompatActivity() {
                 Toast.makeText(this, "⏳ AI स्टूडियो DP एवं 192-D डेटा तैयार हो रहा है...", Toast.LENGTH_SHORT).show()
                 Thread {
                     val embedding192D = FaceMatcherEngine.extractHighPrecisionKycEmbeddingList(workingBioBmp)
+                    // इस नए 192-D वेक्टर को सत्यापित (Verified 192-D) रजिस्टर में दर्ज करें
+                    FaceMatcherEngine.registerVerified192DEmbedding(this@AdminActivity, embedding192D)
 
                     val (finalDpBmp, usedGeminiCloud) = FaceMatcherEngine.enhancePortraitWithGeminiOrFallbackBlocking(
                         this@AdminActivity,
