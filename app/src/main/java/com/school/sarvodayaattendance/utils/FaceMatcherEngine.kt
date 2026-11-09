@@ -403,7 +403,7 @@ object FaceMatcherEngine {
         val faceSizeRatio = min(box.width(), box.height()) / minSide
 
         // 1. चेहरे का आकार (0.15f..0.75f) और फ्रेम के बीच में स्थिति ताकि गोले के बराबर चेहरा आने पर 84% पर न अटके
-        val sizeOk = faceSizeRatio in 0.15f..0.75f
+        val sizeOk = faceSizeRatio in 0.22f..0.68f
         val cxRatio = box.exactCenterX() / frameWidth.toFloat()
         val cyRatio = box.exactCenterY() / frameHeight.toFloat()
         val centerOk = (cxRatio in 0.28f..0.72f) && (cyRatio in 0.22f..0.68f)
@@ -530,9 +530,14 @@ object FaceMatcherEngine {
         return Pair(status.isPerfectFrame, "")
     }
 
-    // ★ संदर्भ चित्र (Reference Image) के अनुसार 100% सटीक लैंडमार्क-लॉक 1:1 पासपोर्ट DP क्रॉप:
-    // 1. दोनों आँखों के बीच का सटीक मध्य बिंदु (eyeMidX) हमेशा DP के बीच की वर्टिकल लाइन (x = 200 / 400) पर लॉक रहेगा (Symmetrical Clamp से चेहरा कभी दाएँ-बाएँ नहीं खिसकेगा)।
-    // 2. आँखों से मुँह की दूरी (eyeToMouth) और आँखों की दूरी (eyeDist) से स्क्वायर का आकार तय किया गया है, जिससे सिर के ऊपर बस हल्की सी जगह (~3.5%-5%) छूटेगी, पूरे बाल आएंगे और नीचे गर्दन व दोनों कंधे बराबर दिखेंगे।
+    // ★ हर परिस्थिति (नजदीक या दूर) में 100% एक समान (Uniform) पासपोर्ट DP बनाने वाला Virtual Canvas & Anatomical Lock इंजन:
+    // - युक्ति 1 (Pure Anatomical Scale): दोनों आँखों की दूरी (eyeDist) और आँख-से-मुँह की दूरी (eyeToMouth) से सीधा अनुपात तय होता है (boundingBox के घटने-बढ़ने का असर पूरी तरह समाप्त)।
+    //   अंतिम 400x400 DP में आँखों की दूरी हमेशा ~102px और आँख-से-मुँह की दूरी ~92px ही रहेगी, चाहे फोटो पास से ली जाए या दूर से!
+    // - युक्ति 2 (Virtual Canvas Out-of-Bounds Normalization): यदि KYC नजदीक से की गई हो और आदर्श पासपोर्ट स्क्वायर कैमरा फ्रेम से बाहर निकल रहा हो,
+    //   तो क्रॉप को छोटा करने (जिससे DP चेहरे से सट जाती थी) के बजाय यह BitmapShader (CLAMP मोड) व Matrix ट्रांसफॉर्मेशन की मदद से
+    //   सीधे 400x400 के वर्चुअल कैनवास पर चेहरे को ठीक उसी आदर्श आकार में ड्रॉ करता है:
+    //   • दोनों आँखों का मध्य बिंदु (eyeMidX) हमेशा वर्टिकल सेंटर लाइन (X = 200) पर लॉक रहता है।
+    //   • आँखों की रेखा ऊपर से ठीक 46.5% (Y = 186) पर लॉक रहती है (सिर के ऊपर बस हल्की जगह और नीचे दोनों कंधे)।
     fun cropTrueSquarePortraitFromFrames(rawSource: Bitmap, detectBmp: Bitmap, face: Face): Bitmap {
         val scaleX = rawSource.width.toFloat() / detectBmp.width.toFloat().coerceAtLeast(1f)
         val scaleY = rawSource.height.toFloat() / detectBmp.height.toFloat().coerceAtLeast(1f)
@@ -544,7 +549,7 @@ object FaceMatcherEngine {
         val mouthRight = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
         val mouthBottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position
 
-        // 1. दोनों आँखों के बीच का सटीक बिंदु (यह DP की बीच वाली वर्टिकल लाइन पर 100% लॉक रहेगा)
+        // 1. दोनों आँखों का सटीक मध्य बिंदु (rawSource कोऑर्डिनेट्स में)
         val eyeMidX: Float = if (leftEye != null && rightEye != null) {
             ((leftEye.x + rightEye.x) * 0.5f) * scaleX
         } else {
@@ -557,14 +562,14 @@ object FaceMatcherEngine {
             (box.top + box.height() * 0.36f) * scaleY
         }
 
-        // 2. आँखों की दूरी (eyeDist) और आँख-से-मुँह की दूरी (eyeToMouth) का स्थिर शारीरिक पैमाना
+        // 2. चेहरे का शुद्ध शारीरिक पैमाना (Pure Anatomical Scale — दूर या पास हर स्थिति में एक समान अनुपात)
         val eyeDistScaled: Float = if (leftEye != null && rightEye != null) {
             hypot(
                 ((rightEye.x - leftEye.x) * scaleX).toDouble(),
                 ((rightEye.y - leftEye.y) * scaleY).toDouble()
             ).toFloat()
         } else {
-            box.width() * scaleX * 0.44f
+            box.width() * scaleX * 0.43f
         }
 
         val mouthMidY: Float = when {
@@ -574,38 +579,54 @@ object FaceMatcherEngine {
         }
         val eyeToMouthScaled = abs(mouthMidY - eyeMidY).coerceAtLeast(eyeDistScaled * 0.78f)
 
-        // 3. आदर्श पासपोर्ट फोटो अनुपात:
-        //    side = max(eyeDist * 3.90f, eyeToMouth * 4.35f)
-        //    आँखों की रेखा ऊपर से 46.5% (0.465f * side) पर लॉक होगी:
-        //    - ऊपर के 46.5% में: ~42.5% माथा व पूरे बाल + ऊपर ~4% हल्की सी जगह (सिर कभी नहीं कटेगा, और ऊपर ज्यादा जगह भी नहीं छूटेगी)
-        //    - नीचे के 53.5% में: ~36.5% नाक व ठोड़ी + नीचे ~17% गर्दन, कॉलर व दोनों कंधे
-        val anatomicalSide = max(eyeDistScaled * 3.90f, eyeToMouthScaled * 4.35f)
-        val fallbackSide = max(box.width() * scaleX, box.height() * scaleY) * 2.08f
-        val idealSide = max(anatomicalSide, fallbackSide * 0.90f)
+        // केवल लैंडमार्क अनुपात से आदर्श स्क्वायर साइड निकालें (fallbackSide हटाया गया ताकि दूर से लेने पर फालतू जगह न छूटे)
+        val idealSide = max(eyeDistScaled * 3.92f, eyeToMouthScaled * 4.35f).coerceAtLeast(140f)
 
-        // 4. वर्टिकल सेंटर लाइन लॉक (Symmetrical Horizontal Clamping):
-        //    ताकि फ्रेम के किनारे पर होने पर भी दोनों आँखों के बीच का बिंदु DP के ठीक बीच (x = 200) से कभी न हिले!
-        val maxHalfWidth = min(eyeMidX, rawSource.width.toFloat() - eyeMidX).coerceAtLeast(60f)
-        val maxSymmetricalSide = min(maxHalfWidth * 2.0f, min(rawSource.width, rawSource.height).toFloat())
-        val side = idealSide.roundToInt().coerceIn(120, maxSymmetricalSide.roundToInt().coerceAtLeast(120))
+        // 3. मामूली सिर झुकाव (Roll angle) को भी सीधा कर दें ताकि दोनों आँखें एकदम क्षैतिज रेखा में रहें
+        var rollAngleDeg = 0f
+        if (leftEye != null && rightEye != null) {
+            val dy = ((rightEye.y - leftEye.y) * scaleY).toDouble()
+            val dx = ((rightEye.x - leftEye.x) * scaleX).toDouble()
+            val rawAngle = Math.toDegrees(atan2(dy, dx)).toFloat()
+            if (abs(rawAngle) in 0.5f..18.0f) {
+                rollAngleDeg = rawAngle
+            }
+        }
 
-        val left = (eyeMidX - side * 0.50f).roundToInt().coerceIn(0, max(0, rawSource.width - side))
+        // 4. Virtual Canvas रेंडरिंग (400x400):
+        //    चाहे idealSide कैमरा फ्रेम के अंदर हो या नजदीक होने के कारण फ्रेम से बाहर निकल रहा हो,
+        //    हम इसे कभी छोटा (Clamp) नहीं करेंगे! BitmapShader(CLAMP) बाहरी किनारों को स्मूथ बैकग्राउंड से भर देगा
+        //    जिससे हर छात्र का चेहरा 400x400 DP में 100% एक ही आकार और एक ही स्थान पर बनेगा।
+        val targetSize = 400
+        val outBmp = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(outBmp)
 
-        // आँखों के ऊपर ठीक 46.5% हिस्सा रखें ताकि सिर के ऊपर बस हल्की जगह रहे और नीचे कंधे आएं
-        var top = (eyeMidY - side * 0.465f).roundToInt()
-        if (top < 0) top = 0
-        if (top + side > rawSource.height) top = max(0, rawSource.height - side)
+        val scaleFactor = targetSize.toFloat() / idealSide
+        val targetEyeX = targetSize * 0.50f   // X = 200px (ठीक बीच की वर्टिकल लाइन पर)
+        val targetEyeY = targetSize * 0.465f  // Y = 186px (ऊपर से 46.5%: सिर के ऊपर हल्की जगह और नीचे कंधे)
 
-        val actualW = min(side, rawSource.width - left).coerceAtLeast(1)
-        val actualH = min(side, rawSource.height - top).coerceAtLeast(1)
-        val finalSquareSide = min(actualW, actualH)
+        val matrix = Matrix().apply {
+            postTranslate(-eyeMidX, -eyeMidY)
+            if (rollAngleDeg != 0f) {
+                postRotate(-rollAngleDeg)
+            }
+            postScale(scaleFactor, scaleFactor)
+            postTranslate(targetEyeX, targetEyeY)
+        }
 
-        // यदि ऊपर या नीचे क्लैम्प होने से चौड़ाई थोड़ी घटी हो, तब भी क्षैतिज केंद्र eyeMidX पर ही लॉक रखें
-        val finalLeft = (eyeMidX - finalSquareSide * 0.50f).roundToInt().coerceIn(0, max(0, rawSource.width - finalSquareSide))
-        val finalTop = top.coerceIn(0, max(0, rawSource.height - finalSquareSide))
+        val shader = android.graphics.BitmapShader(
+            rawSource,
+            android.graphics.Shader.TileMode.CLAMP,
+            android.graphics.Shader.TileMode.CLAMP
+        )
+        shader.setLocalMatrix(matrix)
 
-        val squareCrop = Bitmap.createBitmap(rawSource, finalLeft, finalTop, finalSquareSide, finalSquareSide)
-        return Bitmap.createScaledBitmap(squareCrop, 400, 400, true)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            this.shader = shader
+        }
+        canvas.drawRect(0f, 0f, targetSize.toFloat(), targetSize.toFloat(), paint)
+
+        return outBmp
     }
 
     fun cropTrueSquarePortrait(source: Bitmap, face: Face): Bitmap {
