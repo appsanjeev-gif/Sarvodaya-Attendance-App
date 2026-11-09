@@ -530,51 +530,81 @@ object FaceMatcherEngine {
         return Pair(status.isPerfectFrame, "")
     }
 
-    // ★ संदर्भ चित्र (Reference Image) के अनुसार परफेक्ट 1:1 पासपोर्ट DP क्रॉप:
-    // - दोनों आँखों के बीच का सटीक मध्य बिंदु (eyeMidX) DP के बीच की वर्टिकल लाइन पर 100% लॉक होगा।
-    // - सिर के ऊपर बस हल्की सी जगह (Hair margin ~13%) छूटेगी (बाल और सिर कभी नहीं कटेंगे और न ही ऊपर ज्यादा खाली जगह छूटेगी)।
-    // - नीचे थोड़ी सी गर्दन और दोनों कंधे (Shoulders) साफ दिखेंगे।
+    // ★ संदर्भ चित्र (Reference Image) के अनुसार 100% सटीक लैंडमार्क-लॉक 1:1 पासपोर्ट DP क्रॉप:
+    // 1. दोनों आँखों के बीच का सटीक मध्य बिंदु (eyeMidX) हमेशा DP के बीच की वर्टिकल लाइन (x = 200 / 400) पर लॉक रहेगा (Symmetrical Clamp से चेहरा कभी दाएँ-बाएँ नहीं खिसकेगा)।
+    // 2. आँखों से मुँह की दूरी (eyeToMouth) और आँखों की दूरी (eyeDist) से स्क्वायर का आकार तय किया गया है, जिससे सिर के ऊपर बस हल्की सी जगह (~3.5%-5%) छूटेगी, पूरे बाल आएंगे और नीचे गर्दन व दोनों कंधे बराबर दिखेंगे।
     fun cropTrueSquarePortraitFromFrames(rawSource: Bitmap, detectBmp: Bitmap, face: Face): Bitmap {
         val scaleX = rawSource.width.toFloat() / detectBmp.width.toFloat().coerceAtLeast(1f)
         val scaleY = rawSource.height.toFloat() / detectBmp.height.toFloat().coerceAtLeast(1f)
+        val box = face.boundingBox
 
         val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
+        val mouthLeft = face.getLandmark(FaceLandmark.MOUTH_LEFT)?.position
+        val mouthRight = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
+        val mouthBottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position
 
-        // 1. दोनों आँखों का सटीक मध्य बिंदु (यह DP की वर्टिकल सेंटर लाइन पर रहेगा)
+        // 1. दोनों आँखों के बीच का सटीक बिंदु (यह DP की बीच वाली वर्टिकल लाइन पर 100% लॉक रहेगा)
         val eyeMidX: Float = if (leftEye != null && rightEye != null) {
             ((leftEye.x + rightEye.x) * 0.5f) * scaleX
         } else {
-            face.boundingBox.exactCenterX() * scaleX
+            box.exactCenterX() * scaleX
         }
 
         val eyeMidY: Float = if (leftEye != null && rightEye != null) {
             ((leftEye.y + rightEye.y) * 0.5f) * scaleY
         } else {
-            (face.boundingBox.top + face.boundingBox.height() * 0.35f) * scaleY
+            (box.top + box.height() * 0.36f) * scaleY
         }
 
-        // 2. चेहरे की ऊँचाई (Face Box Height) से स्क्वायर का आकार तय करना
-        val faceBoxH = face.boundingBox.height() * scaleY
-        // अनुपात 1.90f रखने पर सिर के ऊपर बस हल्की जगह और नीचे कंधे आएंगे
-        val desiredSide = (faceBoxH * 1.90f).roundToInt()
-        val maxPossibleSide = min(rawSource.width, rawSource.height)
-        val side = desiredSide.coerceIn(160, maxPossibleSide)
+        // 2. आँखों की दूरी (eyeDist) और आँख-से-मुँह की दूरी (eyeToMouth) का स्थिर शारीरिक पैमाना
+        val eyeDistScaled: Float = if (leftEye != null && rightEye != null) {
+            hypot(
+                ((rightEye.x - leftEye.x) * scaleX).toDouble(),
+                ((rightEye.y - leftEye.y) * scaleY).toDouble()
+            ).toFloat()
+        } else {
+            box.width() * scaleX * 0.44f
+        }
 
-        // 3. वर्टिकल पोजीशन: आँखों का बिंदु फ्रेम के ऊपर से ठीक 34% (0.34) की गहराई पर हो (ताकि सिर के ऊपर ज्यादा जगह न छूटे और कंधे भी आएं)
-        var left = (eyeMidX - side * 0.50f).roundToInt()
-        var top = (eyeMidY - side * 0.34f).roundToInt()
+        val mouthMidY: Float = when {
+            mouthLeft != null && mouthRight != null -> ((mouthLeft.y + mouthRight.y) * 0.5f) * scaleY
+            mouthBottom != null -> mouthBottom.y * scaleY
+            else -> eyeMidY + (box.height() * scaleY * 0.36f)
+        }
+        val eyeToMouthScaled = abs(mouthMidY - eyeMidY).coerceAtLeast(eyeDistScaled * 0.78f)
 
-        if (left < 0) left = 0
+        // 3. आदर्श पासपोर्ट फोटो अनुपात:
+        //    side = max(eyeDist * 3.90f, eyeToMouth * 4.35f)
+        //    आँखों की रेखा ऊपर से 46.5% (0.465f * side) पर लॉक होगी:
+        //    - ऊपर के 46.5% में: ~42.5% माथा व पूरे बाल + ऊपर ~4% हल्की सी जगह (सिर कभी नहीं कटेगा, और ऊपर ज्यादा जगह भी नहीं छूटेगी)
+        //    - नीचे के 53.5% में: ~36.5% नाक व ठोड़ी + नीचे ~17% गर्दन, कॉलर व दोनों कंधे
+        val anatomicalSide = max(eyeDistScaled * 3.90f, eyeToMouthScaled * 4.35f)
+        val fallbackSide = max(box.width() * scaleX, box.height() * scaleY) * 2.08f
+        val idealSide = max(anatomicalSide, fallbackSide * 0.90f)
+
+        // 4. वर्टिकल सेंटर लाइन लॉक (Symmetrical Horizontal Clamping):
+        //    ताकि फ्रेम के किनारे पर होने पर भी दोनों आँखों के बीच का बिंदु DP के ठीक बीच (x = 200) से कभी न हिले!
+        val maxHalfWidth = min(eyeMidX, rawSource.width.toFloat() - eyeMidX).coerceAtLeast(60f)
+        val maxSymmetricalSide = min(maxHalfWidth * 2.0f, min(rawSource.width, rawSource.height).toFloat())
+        val side = idealSide.roundToInt().coerceIn(120, maxSymmetricalSide.roundToInt().coerceAtLeast(120))
+
+        val left = (eyeMidX - side * 0.50f).roundToInt().coerceIn(0, max(0, rawSource.width - side))
+
+        // आँखों के ऊपर ठीक 46.5% हिस्सा रखें ताकि सिर के ऊपर बस हल्की जगह रहे और नीचे कंधे आएं
+        var top = (eyeMidY - side * 0.465f).roundToInt()
         if (top < 0) top = 0
-        if (left + side > rawSource.width) left = max(0, rawSource.width - side)
         if (top + side > rawSource.height) top = max(0, rawSource.height - side)
 
-        val actualW = min(side, rawSource.width - left)
-        val actualH = min(side, rawSource.height - top)
-        val finalSquareSide = min(actualW, actualH).coerceAtLeast(1)
+        val actualW = min(side, rawSource.width - left).coerceAtLeast(1)
+        val actualH = min(side, rawSource.height - top).coerceAtLeast(1)
+        val finalSquareSide = min(actualW, actualH)
 
-        val squareCrop = Bitmap.createBitmap(rawSource, left, top, finalSquareSide, finalSquareSide)
+        // यदि ऊपर या नीचे क्लैम्प होने से चौड़ाई थोड़ी घटी हो, तब भी क्षैतिज केंद्र eyeMidX पर ही लॉक रखें
+        val finalLeft = (eyeMidX - finalSquareSide * 0.50f).roundToInt().coerceIn(0, max(0, rawSource.width - finalSquareSide))
+        val finalTop = top.coerceIn(0, max(0, rawSource.height - finalSquareSide))
+
+        val squareCrop = Bitmap.createBitmap(rawSource, finalLeft, finalTop, finalSquareSide, finalSquareSide)
         return Bitmap.createScaledBitmap(squareCrop, 400, 400, true)
     }
 
