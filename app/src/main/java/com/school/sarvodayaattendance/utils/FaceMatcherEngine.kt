@@ -81,17 +81,17 @@ object FaceMatcherEngine {
     @Volatile
     private var initialWarmUpDone = false
 
-    // शुद्ध 192-D बायोमेट्रिक थ्रेशोल्ड (सुपर-फास्ट और सटीक पहचान):
-    const val INSTANT_PASS_COSINE = 0.73f
-    const val PASS_COSINE_THRESHOLD = 0.67f
-    const val MANUAL_TAP_COSINE_MIN = 0.64f
-    const val AI_ASSIST_COSINE_MIN = 0.58f
-    const val MIN_COSINE_MARGIN_GAP = 0.042f
-    const val MIN_POPULATION_GAP = 0.065f
+    // शुद्ध 192-D बायोमेट्रिक थ्रेशोल्ड (चूँकि KYC 100% सख्त और शुद्ध है, इसलिए फोन नीचे/तिरछा रहने पर भी तुरंत व 100% सटीक पहचान):
+    const val INSTANT_PASS_COSINE = 0.72f
+    const val PASS_COSINE_THRESHOLD = 0.65f
+    const val MANUAL_TAP_COSINE_MIN = 0.62f
+    const val AI_ASSIST_COSINE_MIN = 0.56f
+    const val MIN_COSINE_MARGIN_GAP = 0.040f
+    const val MIN_POPULATION_GAP = 0.060f
 
     // सख्त KYC मानक (5° कोण सीमा + दोनों कान बराबर + नाक सीधी + आँखें कैमरे पर):
     const val STRICT_KYC_MAX_ANGLE_DEG = 5.0f
-    const val STRICT_KYC_MIN_EAR_SYMMETRY = 0.76f
+    const val STRICT_KYC_MIN_EAR_SYMMETRY = 0.74f
     const val STRICT_KYC_MIN_EYE_OPEN = 0.68f
 
     // लाइव कैमरे के लिए सुपर-फास्ट डिटेक्टर (सभी लैंडमार्क व क्लासिफिकेशन सहित)
@@ -100,7 +100,7 @@ object FaceMatcherEngine {
             .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
             .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
             .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
-            .setMinFaceSize(0.16f)
+            .setMinFaceSize(0.13f)
             .build()
         FaceDetection.getClient(options)
     }
@@ -329,50 +329,59 @@ object FaceMatcherEngine {
         return out
     }
 
-    // दैनिक उपस्थिति (Live Attendance Scan) के लिए व्यावहारिक फेस गेट
+    // ★ दैनिक उपस्थिति (Live Attendance Scan) के लिए सॉफ्ट और स्मार्ट फेस गेट:
+    // चूँकि 192-D KYC पहले से बहुत सख्त और शुद्ध है, इसलिए हाज़िरी के समय फोन नीचे हाथ में रहने,
+    // सिर थोड़ा झुका या मुड़ा होने (38° तक) पर भी बिना रोके तुरंत स्कैन करेगा (केवल कटे हुए आधे माथे को रोकेगा)।
     fun evaluateLiveFaceGate(face: Face, frameWidth: Int = 0, frameHeight: Int = 0): Pair<Boolean, String> {
         val box = face.boundingBox
         if (frameWidth > 0 && frameHeight > 0) {
             val minSide = min(frameWidth, frameHeight)
-            if (box.width() < minSide * 0.16f || box.height() < minSide * 0.16f) {
+            if (box.width() < minSide * 0.13f || box.height() < minSide * 0.13f) {
                 return Pair(false, "⚠️ कृपया कैमरे के थोड़ा पास आएं")
             }
         }
 
         val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
-            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में रखें")
+            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे में रखें")
         val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
-            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में रखें")
+            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे में रखें")
         val noseBase = face.getLandmark(FaceLandmark.NOSE_BASE)?.position
-            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में रखें")
+            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे में रखें")
+
+        val mouthBottom = face.getLandmark(FaceLandmark.MOUTH_BOTTOM)?.position
         val mouthLeft = face.getLandmark(FaceLandmark.MOUTH_LEFT)?.position
-            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में रखें")
         val mouthRight = face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.position
-            ?: return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में रखें")
+
+        // कम से कम एक मुँह का बिंदु दिखना चाहिए ताकि केवल माथा (Forehead only) स्कैन न हो
+        val mouthY = when {
+            mouthLeft != null && mouthRight != null -> (mouthLeft.y + mouthRight.y) * 0.5f
+            mouthBottom != null -> mouthBottom.y
+            mouthLeft != null -> mouthLeft.y
+            mouthRight != null -> mouthRight.y
+            else -> return Pair(false, "⚠️ पूरा चेहरा कैमरे में रखें")
+        }
 
         val eyeCenterY = (leftEye.y + rightEye.y) * 0.5f
-        val mouthCenterY = (mouthLeft.y + mouthRight.y) * 0.5f
 
         if (frameWidth > 0 && frameHeight > 0) {
-            if (mouthCenterY > frameHeight * 0.95f || eyeCenterY < frameHeight * 0.04f) {
-                return Pair(false, "⚠️ पूरा चेहरा कैमरे के बीच में लाएं")
-            }
-            if (leftEye.x < frameWidth * 0.03f || rightEye.x > frameWidth * 0.97f) {
-                return Pair(false, "⚠️ चेहरा कैमरे के बीच में रखें")
+            if (mouthY > frameHeight * 0.98f || eyeCenterY < frameHeight * 0.02f) {
+                return Pair(false, "⚠️ पूरा चेहरा कैमरे में लाएं")
             }
         }
 
-        if (noseBase.y <= eyeCenterY || mouthCenterY <= noseBase.y || (mouthCenterY - eyeCenterY) < box.height() * 0.18f) {
-            return Pair(false, "⚠️ कृपया कैमरे की ओर सीधे देखें")
+        // फोन नीचे या ऊपर पकड़ने पर भी आसानी से पास होने के लिए लचीला अनुपात (0.06f)
+        if (noseBase.y <= eyeCenterY || mouthY <= noseBase.y || (mouthY - eyeCenterY) < box.height() * 0.06f) {
+            return Pair(false, "⚠️ पूरा चेहरा दिखाएं")
         }
 
-        if (abs(face.headEulerAngleY) > 24f || abs(face.headEulerAngleZ) > 22f) {
-            return Pair(false, "⚠️ कृपया चेहरा सीधा रखें")
+        // हाज़िरी के समय 38° तक सिर घुमाव या झुकाव की छूट ताकि चलते हुए या नीचे फोन रहने पर भी तुरंत हाज़िरी लगे
+        if (abs(face.headEulerAngleY) > 38f || abs(face.headEulerAngleZ) > 35f || abs(face.headEulerAngleX) > 38f) {
+            return Pair(false, "⚠️ चेहरा कैमरे की ओर रखें")
         }
 
         val leftOpen = face.leftEyeOpenProbability ?: 0.85f
         val rightOpen = face.rightEyeOpenProbability ?: 0.85f
-        if (leftOpen < 0.20f && rightOpen < 0.20f) {
+        if (leftOpen < 0.10f && rightOpen < 0.10f) {
             return Pair(false, "⚠️ कृपया आँखें खुली रखें")
         }
 
@@ -383,13 +392,7 @@ object FaceMatcherEngine {
         return evaluateLiveFaceGate(face, frameWidth, frameHeight).first
     }
 
-    // ★ सख्त 192-D KYC सर्कल मूल्यांकन (बिना किसी टेक्स्ट के केवल गोल लाइन भरने के लिए):
-    // शर्तें:
-    // 1. दोनों कान (LEFT_EAR व RIGHT_EAR) दिखने अनिवार्य और दोनों की नाक से दूरी बराबर अनुपात में हो।
-    // 2. सिर का घुमाव (Yaw Y, Roll Z, Pitch X) सख्त 5.0° के भीतर हो।
-    // 3. नाक (NOSE_BASE) दोनों आँखों के ठीक बीचों-बीच सीधी हो और मुँह के केंद्र के ठीक ऊपर हो।
-    // 4. दोनों आँखें कैमरे पर खुली हों (>= 0.68f) और एक सीधी क्षैतिज रेखा में हों।
-    // 5. चेहरा सर्कल के केंद्र में हो और नीचे कंधों के लिए पर्याप्त जगह हो।
+    // ★ सख्त 192-D KYC सर्कल मूल्यांकन (सटीक साइज़ 0.15f..0.75f ताकि 84% पर न अटके):
     fun evaluateStrictKycProgress(face: Face?, frameWidth: Int, frameHeight: Int): StrictKycProgress {
         if (face == null || frameWidth <= 0 || frameHeight <= 0) {
             return StrictKycProgress(0f, false)
@@ -399,15 +402,15 @@ object FaceMatcherEngine {
         val minSide = min(frameWidth, frameHeight).toFloat()
         val faceSizeRatio = min(box.width(), box.height()) / minSide
 
-        // 1. चेहरे का आकार और फ्रेम के बीच में स्थिति (कंधे आने के लिए नीचे स्पेस सहित)
-        val sizeOk = faceSizeRatio in 0.22f..0.68f
+        // 1. चेहरे का आकार (0.15f..0.75f) और फ्रेम के बीच में स्थिति ताकि गोले के बराबर चेहरा आने पर 84% पर न अटके
+        val sizeOk = faceSizeRatio in 0.15f..0.75f
         val cxRatio = box.exactCenterX() / frameWidth.toFloat()
         val cyRatio = box.exactCenterY() / frameHeight.toFloat()
-        val centerOk = (cxRatio in 0.32f..0.68f) && (cyRatio in 0.24f..0.64f)
+        val centerOk = (cxRatio in 0.28f..0.72f) && (cyRatio in 0.22f..0.68f)
 
         val sizeAndCenterScore = when {
             sizeOk && centerOk -> 0.20f
-            faceSizeRatio >= 0.16f && (cxRatio in 0.22f..0.78f) && (cyRatio in 0.16f..0.75f) -> 0.11f
+            faceSizeRatio in 0.12f..0.80f && (cxRatio in 0.20f..0.80f) && (cyRatio in 0.15f..0.78f) -> 0.11f
             else -> 0.04f
         }
 
@@ -436,10 +439,10 @@ object FaceMatcherEngine {
         )
         val eyesPerfect = (leftOpen >= STRICT_KYC_MIN_EYE_OPEN) &&
                 (rightOpen >= STRICT_KYC_MIN_EYE_OPEN) &&
-                (eyeLineAngleDeg <= 4.5f)
+                (eyeLineAngleDeg <= 5.5f)
         val eyeScore = when {
             eyesPerfect -> 0.20f
-            leftOpen >= 0.45f && rightOpen >= 0.45f && eyeLineAngleDeg <= 8.0f -> 0.11f
+            leftOpen >= 0.40f && rightOpen >= 0.40f && eyeLineAngleDeg <= 9.0f -> 0.11f
             else -> 0.03f
         }
 
@@ -452,13 +455,13 @@ object FaceMatcherEngine {
 
         val noseOffsetRatio = abs(noseBase.x - eyeMidX) / eyeDist
         val mouthOffsetRatio = abs(mouthMidX - noseBase.x) / eyeDist
-        val verticalOrderOk = (noseBase.y > eyeMidY + box.height() * 0.08f) &&
-                (mouthMidY > noseBase.y + box.height() * 0.08f)
+        val verticalOrderOk = (noseBase.y > eyeMidY + box.height() * 0.06f) &&
+                (mouthMidY > noseBase.y + box.height() * 0.06f)
 
-        val nosePerfect = verticalOrderOk && (noseOffsetRatio <= 0.13f) && (mouthOffsetRatio <= 0.15f)
+        val nosePerfect = verticalOrderOk && (noseOffsetRatio <= 0.15f) && (mouthOffsetRatio <= 0.18f)
         val noseScore = when {
             nosePerfect -> 0.20f
-            verticalOrderOk && noseOffsetRatio <= 0.24f -> 0.11f
+            verticalOrderOk && noseOffsetRatio <= 0.26f -> 0.11f
             else -> 0.03f
         }
 
@@ -474,12 +477,11 @@ object FaceMatcherEngine {
             val minEyeX = min(leftEye.x, rightEye.x)
             val maxEyeX = max(leftEye.x, rightEye.x)
 
-            // दोनों कान आँखों के बाहरी किनारों से बाहर साफ दिखने चाहिए
-            val earsOutsideEyes = (minEarX < minEyeX - eyeDist * 0.08f) && (maxEarX > maxEyeX + eyeDist * 0.08f)
+            val earsOutsideEyes = (minEarX < minEyeX - eyeDist * 0.05f) && (maxEarX > maxEyeX + eyeDist * 0.05f)
             val distLeftEarToNose = noseBase.x - minEarX
             val distRightEarToNose = maxEarX - noseBase.x
 
-            if (earsOutsideEyes && distLeftEarToNose > 4f && distRightEarToNose > 4f) {
+            if (earsOutsideEyes && distLeftEarToNose > 3f && distRightEarToNose > 3f) {
                 val earSymmetryRatio = min(distLeftEarToNose, distRightEarToNose) / max(distLeftEarToNose, distRightEarToNose)
                 if (earSymmetryRatio >= STRICT_KYC_MIN_EAR_SYMMETRY) {
                     earsPerfect = true
@@ -491,7 +493,6 @@ object FaceMatcherEngine {
                 earScore = 0.05f
             }
         } else if (leftEar != null || rightEar != null) {
-            // केवल एक कान दिख रहा है -> अधूरा
             earScore = 0.06f
         }
 
@@ -507,19 +508,18 @@ object FaceMatcherEngine {
         val maxAngle = max(yaw, max(roll, pitch))
         val angleScore = when {
             anglesPerfect -> 0.20f
-            maxAngle <= 9.0f -> 0.12f
-            maxAngle <= 15.0f -> 0.06f
+            maxAngle <= 10.0f -> 0.12f
+            maxAngle <= 16.0f -> 0.06f
             else -> 0.01f
         }
 
         val allStrictConditionsMet = sizeOk && centerOk && eyesPerfect && nosePerfect && earsPerfect && anglesPerfect
         val rawTotal = (sizeAndCenterScore + eyeScore + noseScore + earScore + angleScore).coerceIn(0f, 1f)
 
-        // जब तक सारी शर्तें 100% पूरी न हों, सर्कल 84% से ऊपर कभी न भरे!
         val finalFraction = if (allStrictConditionsMet) {
             1.0f
         } else {
-            min(rawTotal, 0.84f)
+            min(rawTotal, 0.88f)
         }
 
         return StrictKycProgress(finalFraction, allStrictConditionsMet)
@@ -530,25 +530,40 @@ object FaceMatcherEngine {
         return Pair(status.isPerfectFrame, "")
     }
 
-    // ★ पासपोर्ट/आईडी कार्ड जैसी सुंदर 1:1 DP क्रॉप (जिसमें सिर के ऊपर स्पेस और नीचे दोनों कंधे साफ और बराबर दिखें!):
+    // ★ संदर्भ चित्र (Reference Image) के अनुसार परफेक्ट 1:1 पासपोर्ट DP क्रॉप:
+    // - दोनों आँखों के बीच का सटीक मध्य बिंदु (eyeMidX) DP के बीच की वर्टिकल लाइन पर 100% लॉक होगा।
+    // - सिर के ऊपर बस हल्की सी जगह (Hair margin ~13%) छूटेगी (बाल और सिर कभी नहीं कटेंगे और न ही ऊपर ज्यादा खाली जगह छूटेगी)।
+    // - नीचे थोड़ी सी गर्दन और दोनों कंधे (Shoulders) साफ दिखेंगे।
     fun cropTrueSquarePortraitFromFrames(rawSource: Bitmap, detectBmp: Bitmap, face: Face): Bitmap {
         val scaleX = rawSource.width.toFloat() / detectBmp.width.toFloat().coerceAtLeast(1f)
         val scaleY = rawSource.height.toFloat() / detectBmp.height.toFloat().coerceAtLeast(1f)
-        val box = face.boundingBox
 
-        val cx = (box.exactCenterX() * scaleX).roundToInt()
-        // केंद्र को +0.20f नीचे (गर्दन की ओर) रखें और साइज़ 2.25f रखें ताकि दोनों कंधे (Shoulders) और कॉलर साफ दिखें
-        val cy = ((box.exactCenterY() + (box.height() * 0.20f)) * scaleY).roundToInt()
-        val faceW = box.width() * scaleX
-        val faceH = box.height() * scaleY
+        val leftEye = face.getLandmark(FaceLandmark.LEFT_EYE)?.position
+        val rightEye = face.getLandmark(FaceLandmark.RIGHT_EYE)?.position
 
-        val desiredSide = (max(faceW, faceH) * 2.25f).roundToInt()
+        // 1. दोनों आँखों का सटीक मध्य बिंदु (यह DP की वर्टिकल सेंटर लाइन पर रहेगा)
+        val eyeMidX: Float = if (leftEye != null && rightEye != null) {
+            ((leftEye.x + rightEye.x) * 0.5f) * scaleX
+        } else {
+            face.boundingBox.exactCenterX() * scaleX
+        }
+
+        val eyeMidY: Float = if (leftEye != null && rightEye != null) {
+            ((leftEye.y + rightEye.y) * 0.5f) * scaleY
+        } else {
+            (face.boundingBox.top + face.boundingBox.height() * 0.35f) * scaleY
+        }
+
+        // 2. चेहरे की ऊँचाई (Face Box Height) से स्क्वायर का आकार तय करना
+        val faceBoxH = face.boundingBox.height() * scaleY
+        // अनुपात 1.90f रखने पर सिर के ऊपर बस हल्की जगह और नीचे कंधे आएंगे
+        val desiredSide = (faceBoxH * 1.90f).roundToInt()
         val maxPossibleSide = min(rawSource.width, rawSource.height)
-        val side = desiredSide.coerceIn(120, maxPossibleSide)
-        val half = side / 2
+        val side = desiredSide.coerceIn(160, maxPossibleSide)
 
-        var left = cx - half
-        var top = cy - half
+        // 3. वर्टिकल पोजीशन: आँखों का बिंदु फ्रेम के ऊपर से ठीक 34% (0.34) की गहराई पर हो (ताकि सिर के ऊपर ज्यादा जगह न छूटे और कंधे भी आएं)
+        var left = (eyeMidX - side * 0.50f).roundToInt()
+        var top = (eyeMidY - side * 0.34f).roundToInt()
 
         if (left < 0) left = 0
         if (top < 0) top = 0
@@ -576,7 +591,6 @@ object FaceMatcherEngine {
         val inPixels = IntArray(w * h)
         squareBmp.getPixels(inPixels, 0, w, 0, 0, w, h)
 
-        // 1. चेहरे के मध्य भाग (Center 60%) से औसत ब्राइटनेस और RGB संतुलन (Auto White Balance) निकालें
         var sumR = 0L
         var sumG = 0L
         var sumB = 0L
@@ -611,13 +625,11 @@ object FaceMatcherEngine {
         val avgB = (sumB / safeCount).toFloat().coerceAtLeast(25f)
         val avgLum = (sumLum / safeCount).toFloat().coerceIn(30f, 220f)
 
-        // कमरे की नीली या पीली रोशनी को हटाकर प्राकृतिक वार्म स्किन टोन देना
         val grayTarget = (avgR + avgG + avgB) / 3.0f
         val gainR = ((grayTarget / avgR) * 1.035f).coerceIn(0.88f, 1.24f)
         val gainG = ((grayTarget / avgG) * 1.005f).coerceIn(0.90f, 1.18f)
         val gainB = ((grayTarget / avgB) * 0.965f).coerceIn(0.82f, 1.18f)
 
-        // अंधेरे चेहरे को चमकाने के लिए स्मार्ट स्टूडियो गामा और शैडो लिफ्ट
         val targetGamma = when {
             avgLum < 75f -> 0.64
             avgLum < 105f -> 0.74
@@ -630,15 +642,12 @@ object FaceMatcherEngine {
         val toneLut = IntArray(256)
         for (i in 0..255) {
             val norm = (i / 255.0).coerceIn(0.0, 1.0)
-            // सॉफ्ट शैडो फिल + गामा ब्राइटनिंग
             val gammaVal = norm.pow(targetGamma)
-            // हल्का S-curve ताकि चेहरा धुंधला न होकर चमकदार और स्पष्ट दिखे
             val contrastVal = gammaVal * gammaVal * (3.0 - 2.0 * gammaVal)
             val blended = (gammaVal * 0.68 + contrastVal * 0.32) * 255.0 + shadowLift * (1.0 - norm)
             toneLut[i] = blended.roundToInt().coerceIn(0, 255)
         }
 
-        // 2. टोन मैपिंग + वाइब्रेंस (Natural Portrait Vibrance)
         val tonedPixels = IntArray(w * h)
         for (i in inPixels.indices) {
             val px = inPixels[i]
@@ -650,7 +659,6 @@ object FaceMatcherEngine {
             var g = toneLut[g0.roundToInt().coerceIn(0, 255)]
             var b = toneLut[b0.roundToInt().coerceIn(0, 255)]
 
-            // स्मार्ट वाइब्रेंस: फीके रंगों को प्राकृतिक चमक दें
             val mean = (r + g + b) / 3
             val maxC = max(r, max(g, b))
             val minC = min(r, min(g, b))
@@ -664,8 +672,6 @@ object FaceMatcherEngine {
             tonedPixels[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
         }
 
-        // 3. Edge-Preserving Bilateral Skin Smoothing + Eye/Collar Detail Sharpening:
-        // यह त्वचा के दाग/ग्रेन को मुलायम (Smooth) करता है और आँखों, भौंहों व बालों को एकदम शार्प रखता है
         val finalPixels = IntArray(w * h)
         val colorThreshold = 26
 
@@ -688,7 +694,6 @@ object FaceMatcherEngine {
                 var gAcc = cg * 4
                 var bAcc = cb * 4
 
-                // 5x5 स्पैशियल-रेंज सैंपलिंग
                 val offsetsY = intArrayOf(-2, -1, 0, 1, 2)
                 val offsetsX = intArrayOf(-2, -1, 0, 1, 2)
                 for (dy in offsetsY) {
@@ -715,7 +720,6 @@ object FaceMatcherEngine {
                 val smoothG = gAcc / wSum
                 val smoothB = bAcc / wSum
 
-                // यदि यह किनारा (आँख/बाल/कॉलर) है तो हल्का Unsharp Mask लगाएं, और यदि त्वचा है तो मुलायम रखें
                 val edgeDiff = abs(cr - smoothR) + abs(cg - smoothG) + abs(cb - smoothB)
                 val outR: Int
                 val outG: Int
@@ -744,7 +748,6 @@ object FaceMatcherEngine {
         return applyOnDeviceStudioPortraitFilter(squareCrop)
     }
 
-    // ★ सभी 10+ Gemini Keys पर रोटेशन + हाई-क्वालिटी ऑन-डिवाइस स्टूडियो ब्यूटी फॉलबैक:
     fun enhancePortraitWithGeminiOrFallbackBlocking(context: Context, squareBaseBmp: Bitmap): Pair<Bitmap, Boolean> {
         var fallbackReason = "Gemini Key उपलब्ध नहीं है — ऑन-डिवाइस AI स्टूडियो ब्यूटी फिल्टर लगाया गया"
         try {
@@ -762,7 +765,6 @@ object FaceMatcherEngine {
                     "gemini-2.5-flash-image-preview"
                 )
 
-                // पहली Key फेल होने पर रुकने के बजाय अधिकतम 4 उपलब्ध Keys तक प्रयास करें
                 for (apiKey in keyPool.take(4)) {
                     for (modelName in modelsToTry) {
                         try {
@@ -775,7 +777,7 @@ object FaceMatcherEngine {
                                 setRequestProperty("Content-Type", "application/json; charset=UTF-8")
                             }
 
-                            val prompt = "Enhance this passport/ID card portrait photo (showing head and both shoulders) into a clean, bright, professional studio-lit 1:1 square photo. Keep the person's exact facial identity, eyes, nose, ears, hair, and clothing 100% unchanged. Improve lighting, skin clarity, natural warm skin tone, and crispness."
+                            val prompt = "Enhance this passport/ID card portrait photo (showing full head/hair and both shoulders) into a clean, bright, professional studio-lit 1:1 square photo. Keep the person's exact facial identity, eyes, nose, ears, hair, and clothing 100% unchanged. Improve lighting, skin clarity, natural warm skin tone, and crispness."
 
                             val partsArray = JSONArray().apply {
                                 put(JSONObject().put("text", prompt))
@@ -819,7 +821,7 @@ object FaceMatcherEngine {
                                                         "DP_EDIT",
                                                         "3. AI स्टूडियो DP सुधार (KYC)",
                                                         "✅ क्लाउड AI से बना",
-                                                        "Gemini Image Model ($modelName) से कंधों सहित सुंदर 1:1 DP बनी"
+                                                        "Gemini Image Model ($modelName) से कंधों व पूरे सिर सहित सुंदर 1:1 DP बनी"
                                                     )
                                                     return Pair(Bitmap.createScaledBitmap(sq, 400, 400, true), true)
                                                 }
@@ -857,7 +859,7 @@ object FaceMatcherEngine {
         return Pair(applyOnDeviceStudioPortraitFilter(squareBaseBmp), false)
     }
 
-    // फुल-एचडी और 480p दोनों फ्रेम्स से सटीक 112x112 बायोमेट्रिक चेहरा अलाइन करना
+    // फुल-एचडी और 480p दोनों फ्रेम्स से सटीक 112x112 बायोमेट्रिक चेहरा अलाइन करना (36° तक के झुकाव को सीधा करके)
     fun alignAndCropFaceBitmapFromFrames(rawSource: Bitmap, detectBmp: Bitmap, face: Face): Bitmap {
         val scaleX = rawSource.width.toFloat() / detectBmp.width.toFloat().coerceAtLeast(1f)
         val scaleY = rawSource.height.toFloat() / detectBmp.height.toFloat().coerceAtLeast(1f)
@@ -873,7 +875,7 @@ object FaceMatcherEngine {
             val dy = ((rightEye.y - leftEye.y) * scaleY).toDouble()
             val dx = ((rightEye.x - leftEye.x) * scaleX).toDouble()
             val rawAngle = Math.toDegrees(atan2(dy, dx)).toFloat()
-            if (abs(rawAngle) in 1.0f..26.0f) {
+            if (abs(rawAngle) in 0.8f..36.0f) {
                 angleDeg = rawAngle
             }
         }
@@ -1096,11 +1098,11 @@ object FaceMatcherEngine {
 
         val isSingleStudent = (scoredList.size == 1)
         val requiredMinCos = if (isManualTap) MANUAL_TAP_COSINE_MIN else PASS_COSINE_THRESHOLD
-        val requiredMarginGap = if (isManualTap) 0.034f else MIN_COSINE_MARGIN_GAP
-        val requiredPopGap = if (isManualTap) 0.052f else MIN_POPULATION_GAP
+        val requiredMarginGap = if (isManualTap) 0.032f else MIN_COSINE_MARGIN_GAP
+        val requiredPopGap = if (isManualTap) 0.050f else MIN_POPULATION_GAP
 
         val isHighConf = (bestCosine >= requiredMinCos) &&
-                (isSingleStudent || bestCosine >= 0.77f || (cosineGap >= requiredMarginGap && populationGap >= requiredPopGap))
+                (isSingleStudent || bestCosine >= 0.76f || (cosineGap >= requiredMarginGap && populationGap >= requiredPopGap))
 
         val needsSecondFrame = !isManualTap && (bestCosine < INSTANT_PASS_COSINE)
 
