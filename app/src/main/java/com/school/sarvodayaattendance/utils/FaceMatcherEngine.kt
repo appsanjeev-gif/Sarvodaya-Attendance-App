@@ -579,8 +579,8 @@ object FaceMatcherEngine {
         }
         val eyeToMouthScaled = abs(mouthMidY - eyeMidY).coerceAtLeast(eyeDistScaled * 0.78f)
 
-        // केवल लैंडमार्क अनुपात से आदर्श स्क्वायर साइड निकालें (fallbackSide हटाया गया ताकि दूर से लेने पर फालतू जगह न छूटे)
-        val idealSide = max(eyeDistScaled * 3.92f, eyeToMouthScaled * 4.35f).coerceAtLeast(140f)
+        // केवल लैंडमार्क अनुपात से आदर्श स्क्वायर साइड निकालें (ऊपर से अतिरिक्त खाली जगह हटाकर सिर के बाल के ऊपर बस हल्की जगह रखने के लिए सटीक अनुपात)
+        val idealSide = max(eyeDistScaled * 3.65f, eyeToMouthScaled * 4.05f).coerceAtLeast(140f)
 
         // 3. मामूली सिर झुकाव (Roll angle) को भी सीधा कर दें ताकि दोनों आँखें एकदम क्षैतिज रेखा में रहें
         var rollAngleDeg = 0f
@@ -603,7 +603,7 @@ object FaceMatcherEngine {
 
         val scaleFactor = targetSize.toFloat() / idealSide
         val targetEyeX = targetSize * 0.50f   // X = 200px (ठीक बीच की वर्टिकल लाइन पर)
-        val targetEyeY = targetSize * 0.465f  // Y = 186px (ऊपर से 46.5%: सिर के ऊपर हल्की जगह और नीचे कंधे)
+        val targetEyeY = targetSize * 0.385f  // Y = 154px (ऊपर से 38.5%: सिर के बाल से बस हल्की जगह छूटेगी और नीचे कंधे दिखेंगे)
 
         val matrix = Matrix().apply {
             postTranslate(-eyeMidX, -eyeMidY)
